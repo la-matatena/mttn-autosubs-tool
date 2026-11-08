@@ -1,0 +1,57 @@
+{
+	Tools = ordered() {
+		AutoSubs_ES_Reels_Impacto = MacroOperator {
+			Inputs = ordered() {
+				MainInput1 = InstanceInput {
+					SourceOp = "TextPlus1",
+					Source = "StyledText",
+				},
+			},
+			Outputs = ordered() {
+				MainOutput1 = InstanceOutput {
+					SourceOp = "TextPlus1",
+					Source = "Output",
+				},
+			},
+			ViewInfo = GroupInfo { Pos = { 0, 0 } },
+			Tools = ordered() {
+				TextPlus1 = TextPlus {
+					CtrlWZoom = false,
+					NameSet = true,
+					Inputs = {
+						UseFrameFormatSettings = Input { Value = 1, },
+						Width = Input { Value = 1080, },
+						Height = Input { Value = 1920, },
+						["Gamut.SLogVersion"] = Input { Value = FuID { "SLog2" }, },
+						Center = Input { Value = { 0.5, 0.28 }, },
+						StyledText = Input { Value = "REELS\nIMPACTO", },
+						Font = Input { Value = "Montserrat", },
+						Style = Input { Value = "ExtraBold", },
+						Size = Input { Value = 0.075, },
+						Red1 = Input { Value = 1, },
+						Green1 = Input { Value = 1, },
+						Blue1 = Input { Value = 1, },
+						Alpha1 = Input { Value = 1, },
+						Enabled2 = Input { Value = 1, },
+						Name2 = Input { Value = "Borde Grueso", },
+						ElementShape2 = Input { Value = 1, },
+						Thickness2 = Input { Value = 0.16, },
+						Red2 = Input { Value = 0.04, },
+						Green2 = Input { Value = 0.04, },
+						Blue2 = Input { Value = 0.06, },
+						Alpha2 = Input { Value = 1, },
+						Enabled3 = Input { Value = 1, },
+						Name3 = Input { Value = "Sombra", },
+						Opacity3 = Input { Value = 0.85, },
+						Position3 = Input { Value = 1, },
+						Offset3 = Input { Value = { 0.003, -0.004 }, },
+						Red3 = Input { Value = 0, },
+						Green3 = Input { Value = 0, },
+						Blue3 = Input { Value = 0, },
+					},
+					ViewInfo = OperatorInfo { Pos = { 300, 120 } },
+				},
+			},
+		},
+	},
+}

@@ -1,0 +1,62 @@
+{
+	Tools = ordered() {
+		AutoSubs_ES_Cine_Netflix = MacroOperator {
+			Inputs = ordered() {
+				MainInput1 = InstanceInput {
+					SourceOp = "TextPlus1",
+					Source = "StyledText",
+				},
+			},
+			Outputs = ordered() {
+				MainOutput1 = InstanceOutput {
+					SourceOp = "TextPlus1",
+					Source = "Output",
+				},
+			},
+			ViewInfo = GroupInfo { Pos = { 0, 0 } },
+			Tools = ordered() {
+				TextPlus1 = TextPlus {
+					CtrlWZoom = false,
+					NameSet = true,
+					Inputs = {
+						UseFrameFormatSettings = Input { Value = 1, },
+						Width = Input { Value = 1920, },
+						Height = Input { Value = 1080, },
+						["Gamut.SLogVersion"] = Input { Value = FuID { "SLog2" }, },
+						Center = Input { Value = { 0.5, 0.14 }, },
+						StyledText = Input { Value = "AutoSubs ES\nSubtítulo en español", },
+						Font = Input { Value = "Open Sans", },
+						Style = Input { Value = "Semibold", },
+						Size = Input { Value = 0.056, },
+						VerticalJustificationNew = Input { Value = 3, },
+						HorizontalJustificationNew = Input { Value = 3, },
+						Red1 = Input { Value = 1, },
+						Green1 = Input { Value = 1, },
+						Blue1 = Input { Value = 1, },
+						Alpha1 = Input { Value = 1, },
+						Enabled2 = Input { Value = 1, },
+						Name2 = Input { Value = "Contorno", },
+						ElementShape2 = Input { Value = 1, },
+						Thickness2 = Input { Value = 0.085, },
+						Red2 = Input { Value = 0.04, },
+						Green2 = Input { Value = 0.05, },
+						Blue2 = Input { Value = 0.07, },
+						Alpha2 = Input { Value = 1, },
+						Enabled3 = Input { Value = 1, },
+						Name3 = Input { Value = "Sombra Ligera", },
+						Opacity3 = Input { Value = 0.65, },
+						Softness3 = Input { Value = 1, },
+						SoftnessX3 = Input { Value = 4, },
+						SoftnessY3 = Input { Value = 4, },
+						Position3 = Input { Value = 1, },
+						Offset3 = Input { Value = { 0.002, -0.003 }, },
+						Red3 = Input { Value = 0, },
+						Green3 = Input { Value = 0, },
+						Blue3 = Input { Value = 0, },
+					},
+					ViewInfo = OperatorInfo { Pos = { 300, 120 } },
+				},
+			},
+		},
+	},
+}

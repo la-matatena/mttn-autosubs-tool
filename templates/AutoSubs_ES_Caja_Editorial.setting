@@ -1,0 +1,52 @@
+{
+	Tools = ordered() {
+		AutoSubs_ES_Caja_Editorial = MacroOperator {
+			Inputs = ordered() {
+				MainInput1 = InstanceInput {
+					SourceOp = "TextPlus1",
+					Source = "StyledText",
+				},
+			},
+			Outputs = ordered() {
+				MainOutput1 = InstanceOutput {
+					SourceOp = "TextPlus1",
+					Source = "Output",
+				},
+			},
+			ViewInfo = GroupInfo { Pos = { 0, 0 } },
+			Tools = ordered() {
+				TextPlus1 = TextPlus {
+					CtrlWZoom = false,
+					NameSet = true,
+					Inputs = {
+						UseFrameFormatSettings = Input { Value = 1, },
+						Width = Input { Value = 1920, },
+						Height = Input { Value = 1080, },
+						["Gamut.SLogVersion"] = Input { Value = FuID { "SLog2" }, },
+						Center = Input { Value = { 0.5, 0.14 }, },
+						StyledText = Input { Value = "AutoSubs ES — Caja editorial", },
+						Font = Input { Value = "SF Pro Display", },
+						Style = Input { Value = "Semibold", },
+						Size = Input { Value = 0.052, },
+						Red1 = Input { Value = 0.98, },
+						Green1 = Input { Value = 0.98, },
+						Blue1 = Input { Value = 0.99, },
+						Alpha1 = Input { Value = 1, },
+						Enabled4 = Input { Value = 1, },
+						Name4 = Input { Value = "Fondo Pastilla", },
+						ElementShape4 = Input { Value = 2, },
+						Level4 = Input { Value = 1, },
+						ExtendHorizontal4 = Input { Value = 0.25, },
+						ExtendVertical4 = Input { Value = 0.18, },
+						Round4 = Input { Value = 0.35, },
+						Red4 = Input { Value = 0.05, },
+						Green4 = Input { Value = 0.06, },
+						Blue4 = Input { Value = 0.09, },
+						Alpha4 = Input { Value = 0.78, },
+					},
+					ViewInfo = OperatorInfo { Pos = { 300, 120 } },
+				},
+			},
+		},
+	},
+}

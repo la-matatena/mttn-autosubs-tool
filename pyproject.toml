@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autosubs-es"
+version = "1.1.0"
+description = "Local Spanish AI subtitle studio and DaVinci Resolve 20 companion tuned for Intel & Apple Silicon macOS."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+autosubs-es = "autosubs_server:main"
+autosubs-es-pack = "package_bundle:main"
+
+[tool.setuptools]
+py-modules = [
+  "autosubs_server",
+  "exporters",
+  "font_manager",
+  "hardware_imac2017",
+  "package_bundle",
+  "resolve_bridge",
+  "spanish_nlp",
+]

@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoSubs ES — DaVinci Resolve 20 Studio</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style id="dynamic-fonts-style"></style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-logo">ES</div>
+      <div>
+        <div class="brand-title-row">
+          <h1>AutoSubs ES</h1>
+          <div class="mode-switch" role="group" aria-label="Modo de trabajo">
+            <button id="btn-mode-standalone" class="mode-btn" data-appmode="standalone" type="button">App Independiente</button>
+            <button id="btn-mode-resolve" class="mode-btn active" data-appmode="resolve" type="button">DaVinci Resolve 20</button>
+          </div>
+        </div>
+        <p class="subtitle">App independiente + puente DaVinci Resolve 20 · Español + Juegos de Mesa · iMac 4K 2017 (32 GB RAM)</p>
+      </div>
+    </div>
+    <div class="hw-badges">
+      <span id="badge-cpu" class="pill pill-neutral">CPU i5 AVX2 (4/4 hilos)</span>
+      <span id="badge-gpu" class="pill pill-ok">Polaris 2 GB VRAM: 0 MB (-ng)</span>
+      <span id="badge-resolve" class="pill pill-warn">Comprobando Resolve 20...</span>
+      <button id="btn-demo" class="btn btn-secondary btn-sm" type="button">Probar Demo ES</button>
+      <button id="btn-refresh" class="btn btn-ghost btn-sm" type="button">Refrescar</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <!-- COLUMNA IZQUIERDA: FUENTE, MOTOR WHISPER Y REGLAS ESPAÑOL -->
+    <aside class="panel panel-left">
+      <section class="card">
+        <h2>1. Audio de origen</h2>
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="resolve" type="button">DaVinci Resolve 20</button>
+          <button class="tab-btn" data-tab="file" type="button">Archivo local</button>
+        </div>
+
+        <div id="tab-resolve" class="tab-content active">
+          <div id="resolve-meta-box" class="meta-box">
+            Sin timeline exportado todavía.
+          </div>
+          <div class="btn-row">
+            <button id="btn-resolve-export" class="btn btn-secondary" type="button">Exportar audio (Studio)</button>
+            <button id="btn-check-inbox" class="btn btn-ghost" type="button">Leer buzón</button>
+          </div>
+          <p class="hint">
+            En <strong>DaVinci Resolve 20 Free</strong>: abre
+            <strong>Workspace &gt; Scripts &gt; 1 - AutoSubs ES - Exportar Audio</strong>.
+          </p>
+        </div>
+
+        <div id="tab-file" class="tab-content">
+          <label id="dropzone" class="dropzone" for="file-input">
+            <input id="file-input" type="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mov,.mkv">
+            <span id="upload-label">Arrastra tu vídeo o audio aquí, o haz clic para elegir</span>
+          </label>
+          <div id="upload-status" class="hint"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>2. Motor Whisper (CPU i5)</h2>
+        <div class="field">
+          <label for="model-select">Modelo local en español</label>
+          <div class="inline-field">
+            <select id="model-select"></select>
+            <button id="btn-download-model" class="btn btn-secondary btn-sm" type="button">Descargar</button>
+          </div>
+          <p id="model-note" class="hint"></p>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="threads-select">Núcleos i5</label>
+            <select id="threads-select">
+              <option value="3">3 hilos (Seguro con Resolve)</option>
+              <option value="4">4 hilos (Máximo CPU)</option>
+              <option value="2">2 hilos (Silencioso)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="beam-mode">Velocidad</label>
+            <select id="beam-mode">
+              <option value="quality">Precisión (beam=5)</option>
+              <option value="fast">Rápido (beam=2)</option>
+            </select>
+          </div>
+        </div>
+
+        <label class="check-row">
+          <input id="opt-no-gpu" type="checkbox" checked>
+          <span>Proteger Radeon Polaris 2 GB (<code>-ng</code> CPU AVX2)</span>
+        </label>
+        <label class="check-row">
+          <input id="opt-enhance-voice" type="checkbox" checked>
+          <span>Normalizar voz (filtro 80–7800 Hz FFmpeg)</span>
+        </label>
+
+        <div class="btn-row">
+          <button id="btn-transcribe" class="btn btn-primary" type="button">Transcribir en Español</button>
+          <button id="btn-cancel-job" class="btn btn-danger btn-sm hidden" type="button">Cancelar</button>
+        </div>
+
+        <div id="job-box" class="job-box hidden">
+          <div class="job-top">
+            <span id="job-stage">Procesando...</span>
+            <span id="job-pct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div id="job-bar" class="progress-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>3. Español, dominio y reglas RAE</h2>
+        <div class="field">
+          <label for="domain-select">Temática y anglicismos</label>
+          <select id="domain-select">
+            <option value="juegos_mesa" selected>Juegos de Mesa + Anglicismos (BGG)</option>
+            <option value="general">General / Estándar</option>
+            <option value="tech_video">Edición de Vídeo y Tech</option>
+          </select>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="dialect-select">Acento regional</label>
+            <select id="dialect-select">
+              <option value="neutro">Español Neutro</option>
+              <option value="es_es">España (Peninsular)</option>
+              <option value="es_mx">México / LatAm</option>
+              <option value="es_ar">Río de la Plata</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="preset-select">Formato</label>
+            <select id="preset-select">
+              <option value="youtube_16_9">YouTube 16:9 (42 car.)</option>
+              <option value="reels_9_16">Reels / Shorts 9:16</option>
+              <option value="karaoke_impacto">Impacto (1–2 pal.)</option>
+              <option value="cine_es">Cine / Documental</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid-3">
+          <div class="field">
+            <label for="cfg-cpl">Máx car.</label>
+            <input id="cfg-cpl" type="number" min="10" max="70" value="42">
+          </div>
+          <div class="field">
+            <label for="cfg-lines">Líneas</label>
+            <input id="cfg-lines" type="number" min="1" max="3" value="2">
+          </div>
+          <div class="field">
+            <label for="cfg-pause">Pausa ms</label>
+            <input id="cfg-pause" type="number" min="200" max="2000" step="50" value="650">
+          </div>
+        </div>
+
+        <label class="check-row">
+          <input id="cfg-inverted" type="checkbox" checked>
+          <span>Reparar signos españoles (<code>¿</code> y <code>¡</code>)</span>
+        </label>
+        <label class="check-row">
+          <input id="cfg-muletillas" type="checkbox">
+          <span>Limpiar muletillas aisladas (eh, em, este...)</span>
+        </label>
+        <label class="check-row">
+          <input id="cfg-uppercase" type="checkbox">
+          <span>Convertir a MAYÚSCULAS</span>
+        </label>
+
+        <div class="field">
+          <div class="glossary-head">
+            <label for="cfg-glossary">Glosario personalizado</label>
+            <button id="btn-fill-bgg-glossary" class="btn btn-ghost btn-xs" type="button">+ Términos BGG</button>
+          </div>
+          <textarea id="cfg-glossary" rows="2" placeholder="Catan, Wingspan, Gloomhaven, Devir, Kickstarter, Meeple..."></textarea>
+        </div>
+
+        <button id="btn-resegment" class="btn btn-secondary full-width" type="button">
+          Aplicar reglas RAE y glosario
+        </button>
+      </section>
+    </aside>
+
+    <!-- COLUMNA CENTRAL: MONITOR + ONDA + EDITOR -->
+    <section class="panel panel-center">
+      <section class="card preview-card">
+        <div class="preview-header">
+          <div class="preview-title">
+            <h2>Monitor previo</h2>
+            <span id="media-name-badge" class="pill pill-neutral">Sin audio</span>
+          </div>
+          <div class="aspect-toggle">
+            <button id="btn-aspect-16-9" class="btn btn-sm btn-secondary active" type="button">16:9</button>
+            <button id="btn-aspect-9-16" class="btn btn-sm btn-ghost" type="button">9:16</button>
+          </div>
+        </div>
+
+        <div class="stage-wrap">
+          <div id="preview-stage" class="preview-stage aspect-16-9">
+            <video id="video-player" class="preview-video hidden" preload="metadata" playsinline></video>
+            <div class="stage-grid"></div>
+            <div id="preview-caption" class="preview-caption">
+              Carga un vídeo/audio o pulsa «Probar Demo ES» para comenzar.
+            </div>
+          </div>
+        </div>
+
+        <div class="transport">
+          <button id="btn-play" class="btn btn-primary btn-sm" type="button">▶ Reproducir</button>
+          <button id="btn-back" class="btn btn-ghost btn-sm" type="button">−1s</button>
+          <button id="btn-fwd" class="btn btn-ghost btn-sm" type="button">+1s</button>
+          <span id="time-readout" class="mono">00:00.00 / 00:00.00</span>
+          <select id="playback-rate" class="rate-select" aria-label="Velocidad de reproducción">
+            <option value="1">1.0x</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x</option>
+          </select>
+        </div>
+
+        <canvas id="waveform-canvas" width="960" height="84"></canvas>
+        <audio id="audio-player" preload="metadata"></audio>
+      </section>
+
+      <section class="card editor-card">
+        <div class="editor-toolbar">
+          <div class="stats-row">
+            <span id="stat-cues" class="pill pill-neutral">0 subtítulos</span>
+            <span id="stat-cps" class="pill pill-neutral">0.0 CPS medio</span>
+            <span id="stat-warns" class="pill pill-neutral">0 avisos</span>
+          </div>
+          <div class="search-replace">
+            <input id="search-input" type="text" placeholder="Buscar..." aria-label="Buscar en subtítulos">
+            <input id="replace-input" type="text" placeholder="Reemplazar..." aria-label="Texto de reemplazo">
+            <button id="btn-replace-all" class="btn btn-ghost btn-sm" type="button">Reemplazar todo</button>
+          </div>
+        </div>
+
+        <div id="cue-list" class="cue-list">
+          <div class="empty-state">
+            Todavía no hay subtítulos. Exporta audio desde DaVinci Resolve 20, sube un archivo o prueba el Modo Demo ES.
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <!-- COLUMNA DERECHA: ESTILO GPU-LIGHT Y EXPORTACIÓN -->
+    <aside class="panel panel-right">
+      <section class="card">
+        <h2>4. Estilo y tipografía</h2>
+        <div class="style-chips">
+          <button class="chip active" data-style="netflix" type="button">Cine Netflix</button>
+          <button class="chip" data-style="amarillo" type="button">Amarillo Clásico</button>
+          <button class="chip" data-style="reels" type="button">Reels Impacto</button>
+          <button class="chip" data-style="caja" type="button">Caja Editorial</button>
+          <button class="chip chip-wide" data-style="anitype" type="button">★ Anitype Animado (Flipbook)</button>
+        </div>
+
+        <div class="font-upload-box">
+          <div class="font-upload-row">
+            <label class="btn btn-secondary btn-sm font-upload-btn" for="font-input">
+              + Subir fuente (.otf / .ttf / .zip)
+              <input id="font-input" type="file" multiple accept=".otf,.ttf,.ttc,.zip">
+            </label>
+          </div>
+          <label class="check-row check-compact">
+            <input id="opt-install-macos-font" type="checkbox" checked>
+            <span>Instalar en macOS (<code>~/Library/Fonts</code>)</span>
+          </label>
+          <div id="font-upload-status" class="hint"></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="st-font">Tipografía</label>
+            <select id="st-font">
+              <option value="Open Sans">Open Sans</option>
+              <option value="Helvetica Neue">Helvetica Neue</option>
+              <option value="SF Pro Display">SF Pro Display</option>
+              <option value="Montserrat">Montserrat</option>
+              <option value="Arial">Arial</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="st-weight">Peso</label>
+            <select id="st-weight">
+              <option value="Bold">Bold</option>
+              <option value="Semibold">Semibold</option>
+              <option value="ExtraBold">ExtraBold</option>
+              <option value="Regular">Regular</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="font-glyph-warning" class="warn-banner hidden"></div>
+
+        <label class="check-row">
+          <input id="st-ascii-fold" type="checkbox">
+          <span>Adaptar glifos ASCII (<code>á→a</code>, <code>ñ→n</code>, sin <code>¿¡</code>)</span>
+        </label>
+
+        <div class="anim-section">
+          <div class="field">
+            <label for="st-anim-mode">Animación de fuente</label>
+            <select id="st-anim-mode">
+              <option value="none">Estática (sin animación)</option>
+              <option value="font_cycle_boil">Flipbook multi-fuente + Vibración</option>
+              <option value="font_cycle">Solo Flipbook multi-fuente (1..5)</option>
+              <option value="boil">Solo Vibración orgánica (Boil)</option>
+            </select>
+          </div>
+          <div id="anim-params-row" class="grid-2 hidden">
+            <div class="field">
+              <label for="st-anim-hold">Cambio c/<span id="st-anim-hold-val">3</span> frames</label>
+              <input id="st-anim-hold" type="range" min="1" max="12" step="1" value="3">
+            </div>
+            <div class="field">
+              <label for="st-anim-jitter">Vibración <span id="st-anim-jitter-val">0.15</span></label>
+              <input id="st-anim-jitter" type="range" min="0" max="1" step="0.05" value="0.15">
+            </div>
+          </div>
+          <p id="anim-hint" class="hint hidden"></p>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="st-size">Tamaño</label>
+            <input id="st-size" type="range" min="0.03" max="0.11" step="0.002" value="0.058">
+          </div>
+          <div class="field">
+            <label for="st-posy">Altura Y</label>
+            <input id="st-posy" type="range" min="0.06" max="0.85" step="0.01" value="0.14">
+          </div>
+        </div>
+
+        <div class="grid-3">
+          <div class="field">
+            <label for="st-fill">Texto</label>
+            <input id="st-fill" type="color" value="#ffffff">
+          </div>
+          <div class="field">
+            <label for="st-highlight">Karaoke</label>
+            <input id="st-highlight" type="color" value="#ffd43b">
+          </div>
+          <div class="field">
+            <label for="st-outline">Borde</label>
+            <input id="st-outline" type="color" value="#0b0d12">
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="st-outline-w">Grosor contorno</label>
+          <input id="st-outline-w" type="range" min="0" max="0.22" step="0.01" value="0.09">
+        </div>
+
+        <label class="check-row">
+          <input id="st-shadow" type="checkbox" checked>
+          <span>Sombra ligera (Shading Element 3)</span>
+        </label>
+        <div class="box-row">
+          <label class="check-row">
+            <input id="st-box" type="checkbox">
+            <span>Caja de fondo</span>
+          </label>
+          <input id="st-box-color" type="color" value="#0b0d12" aria-label="Color de caja de fondo">
+        </div>
+      </section>
+
+      <section id="card-resolve-push" class="card">
+        <h2 id="resolve-push-title">5. DaVinci Resolve 20</h2>
+        <div class="field">
+          <label for="push-mode">Método en timeline</label>
+          <select id="push-mode">
+            <option value="subtitle_srt">Pista Subtítulos Nativa (0 MB VRAM)</option>
+            <option value="textplus">Clips Text+ GPU-Light (1 nodo)</option>
+            <option value="fcpxml">FCPXML 1.9 Universal</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="push-track">Nombre de pista</label>
+          <input id="push-track" type="text" value="Subtítulos ES">
+        </div>
+
+        <div id="template-field" class="field">
+          <label for="push-template">Plantilla Fusion (Media Pool)</label>
+          <select id="push-template">
+            <option value="AutoSubs_ES_Cine_Netflix">AutoSubs_ES_Cine_Netflix</option>
+            <option value="AutoSubs_ES_Amarillo_Clasico">AutoSubs_ES_Amarillo_Clasico</option>
+            <option value="AutoSubs_ES_Reels_Impacto">AutoSubs_ES_Reels_Impacto</option>
+            <option value="AutoSubs_ES_Caja_Editorial">AutoSubs_ES_Caja_Editorial</option>
+            <option value="AutoSubs_ES_Anitype_Animado">AutoSubs_ES_Anitype_Animado (5 fuentes / Boil)</option>
+          </select>
+        </div>
+
+        <button id="btn-push-resolve" class="btn btn-primary full-width" type="button">
+          Enviar a DaVinci Resolve 20
+        </button>
+
+        <div id="push-result" class="meta-box hidden"></div>
+      </section>
+
+      <section id="card-standalone-export" class="card">
+        <h2 id="export-card-title">6. Exportar (Modo Independiente)</h2>
+        <div class="export-grid">
+          <button class="btn btn-secondary btn-sm export-btn" data-fmt="srt" type="button">.SRT Estándar</button>
+          <button class="btn btn-secondary btn-sm export-btn" data-fmt="srt_tc" type="button">.SRT (01:00 TC)</button>
+          <button class="btn btn-secondary btn-sm export-btn" data-fmt="vtt" type="button">.VTT Web</button>
+          <button class="btn btn-secondary btn-sm export-btn" data-fmt="ass" type="button">.ASS Karaoke</button>
+          <button class="btn btn-secondary btn-sm export-btn" data-fmt="txt" type="button">.TXT Guion</button>
+          <button class="btn btn-secondary btn-sm export-btn" data-fmt="txt_tc" type="button">.TXT + Tiempos</button>
+          <button class="btn btn-secondary btn-sm export-btn" data-fmt="fcpxml" type="button">.FCPXML 1.9</button>
+          <button class="btn btn-secondary btn-sm export-btn" data-fmt="json" type="button">.JSON Palabras</button>
+        </div>
+        <div class="btn-row">
+          <button id="btn-copy-txt" class="btn btn-ghost btn-sm" type="button">Copiar guion</button>
+          <button id="btn-burn-video" class="btn btn-secondary btn-sm" type="button">Render MP4 Subtitulado</button>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
