@@ -55,7 +55,7 @@ The installer places runtime assets, the standalone app bundle, and Resolve exte
 | Resolve Lua scripts | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility/` | Registers the three **AutoSubs ES** actions under **Workspace** &gt; **Scripts**. |
 | Fusion `Text+` presets | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Templates/Edit/Titles/AutoSubs ES/` | Adds five `UseFrameFormatSettings = 1` title templates for Retina 4K, vertical, and animated flipbook timelines. |
 
-![AutoSubs ES three-column workspace in DaVinci Resolve 20 mode showing Whisper model controls, karaoke monitor, and cue editor](images/autosubs-es-overview.png)
+![MTTN AutoSubs three-column workspace in DaVinci Resolve 20 mode showing Whisper model controls, karaoke monitor, and cue editor](images/autosubs-es-overview.png)
 
 ## Start the local studio or run the headless CLI
 
@@ -105,7 +105,7 @@ Use the switcher next to the **AutoSubs ES** title in the top bar:
 -   **App Independiente**: Highlights local media drag-and-drop with in-page HTML5 `<video>` and `<audio>` playback, uses all four Core i5 threads automatically when Resolve is closed, and emphasizes **6. Exportar (Modo Independiente)** (including plain-text transcripts and CPU `libx264` burned-in `.mp4` renders).
 -   **DaVinci Resolve 20**: Shows the Resolve audio bounce controls first, keeps `3` threads reserved when Resolve is open, and brings **5. DaVinci Resolve 20** into focus for direct timeline insertion.
 
-![AutoSubs ES standalone application mode showing board-game anglicism repairs and standalone TXT, SRT, ASS, FCPXML, JSON, and MP4 exports](images/autosubs-es-standalone-models.png)
+![MTTN AutoSubs standalone application mode showing board-game anglicism repairs and standalone TXT, SRT, ASS, FCPXML, JSON, and MP4 exports](images/autosubs-es-standalone-models.png)
 
 ## Export timeline audio or load local media
 
@@ -166,7 +166,7 @@ Multi-font stop-motion typefaces such as `Anitype Journal` ship five separate va
 4.  Confirm that **Tipografía** selects the grouped entry under **Packs animados (Flipbook)**, or click the **★ Anitype Animado (Flipbook)** preset chip.
 5.  Adjust **Animación de fuente** (`Flipbook multi-fuente + Vibración`, `Solo Flipbook multi-fuente (1..5)`, or `Solo Vibración orgánica (Boil)`), **Cambio c/N frames**, and **Vibración** while watching the live loop in **Monitor previo**.
 
-![AutoSubs ES custom font panel displaying the Anitype Journal flipbook animation pack and Spanish glyph notice](images/autosubs-es-anitype-fonts.png)
+![MTTN AutoSubs custom font panel displaying the Anitype Journal flipbook animation pack and Spanish glyph notice](images/autosubs-es-anitype-fonts.png)
 
 ### Handle Spanish accents in Basic Latin display fonts
 
