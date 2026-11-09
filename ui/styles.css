@@ -1109,6 +1109,47 @@ input[type="color"]:disabled {
   font-size: 11px;
 }
 
+/* Los milisegundos editables solo aparecen en el subtítulo activo o con foco;
+   en el resto basta la lectura «00:04.22 → 00:09.16». */
+.cue-item:not(.active, :focus-within) .cue-times input {
+  display: none;
+}
+
+.cue-cps {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  padding-inline: 4px;
+}
+
+.cue-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: opacity 0.15s ease;
+}
+
+@media (hover: hover) {
+  .cue-item:not(.active, :hover, :focus-within) .cue-tools {
+    opacity: 0.25;
+  }
+}
+
+.stats-row .stat {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.stats-row .stat + .stat::before {
+  content: "·";
+  margin-inline-end: 6px;
+}
+
+.stats-row .stat-warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+
 .cue-actions {
   display: flex;
   align-items: center;

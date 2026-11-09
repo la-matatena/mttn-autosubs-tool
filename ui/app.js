@@ -1058,6 +1058,12 @@
     if (radio) radio.checked = true;
     $("perf-mode-pill").textContent = PERF_MODE_LABELS[mode] || mode;
     $("perf-mode-pill").className = "pill " + (mode === "auto" ? "pill-info" : "pill-neutral");
+    // Resumen de lo que se aplicará; los controles viven en el diálogo «Esta Mac».
+    $("hw-profile-note").textContent = [
+      `${eff.threads} hilos`,
+      eff.force_no_gpu ? "solo CPU" : "GPU",
+      eff.fast_beam ? "rápido" : "precisión",
+    ].join(" · ");
     renderMachineHardware(m.profile);
     renderBenchHistory(m.settings.benchmarks);
     $("machine-settings-path").textContent = m.settings_path || "";
@@ -1414,24 +1420,34 @@
     }
   }
 
+  // Velocidad de lectura: solo se colorea cuando pide atención (> 17 CPS).
+  function cpsClassName(cps) {
+    if (cps > 20) return "pill pill-danger";
+    if (cps > 17) return "pill pill-warn";
+    return "cue-cps";
+  }
+
+  // Estadísticas como texto plano; «avisos» solo se colorea si hay alguno.
+  function updateEditorStats() {
+    const cues = state.cues;
+    const avgCps = cues.length ? cues.reduce((acc, c) => acc + (c.cps || 0), 0) / cues.length : 0;
+    const warnsCount = cues.filter((c) => (c.warnings || []).length > 0).length;
+    $("stat-cues").textContent = `${cues.length} subtítulos`;
+    $("stat-cps").textContent = `${avgCps.toFixed(1)} CPS medio`;
+    $("stat-warns").textContent = warnsCount === 1 ? "1 aviso" : `${warnsCount} avisos`;
+    $("stat-warns").className = "stat" + (warnsCount > 0 ? " stat-warn" : "");
+  }
+
   function renderCueList() {
     const list = $("cue-list");
     const cues = state.cues;
 
-    $("stat-cues").textContent = `${cues.length} subtítulos`;
+    updateEditorStats();
     if (cues.length === 0) {
-      $("stat-cps").textContent = "0.0 CPS medio";
-      $("stat-warns").textContent = "0 avisos";
       list.innerHTML =
         '<div class="empty-state">Todavía no hay subtítulos. Exporta audio desde DaVinci Resolve 20, sube un archivo o prueba el Modo Demo ES.</div>';
       return;
     }
-
-    const avgCps = cues.reduce((acc, c) => acc + (c.cps || 0), 0) / cues.length;
-    const warnsCount = cues.filter((c) => (c.warnings || []).length > 0).length;
-    $("stat-cps").textContent = `${avgCps.toFixed(1)} CPS medio`;
-    $("stat-warns").textContent = `${warnsCount} avisos`;
-    $("stat-warns").className = "pill " + (warnsCount > 0 ? "pill-warn" : "pill-ok");
 
     list.innerHTML = "";
     cues.forEach((cue, idx) => {
@@ -1439,8 +1455,6 @@
       card.className = "cue-item" + (idx === state.activeCueIndex ? " active" : "");
       card.dataset.index = String(idx);
 
-      const cpsClass =
-        cue.cps > 20 ? "pill-danger" : cue.cps > 17 ? "pill-warn" : "pill-ok";
 
       const head = document.createElement("div");
       head.className = "cue-head";
@@ -1491,7 +1505,7 @@
       actions.className = "cue-actions";
 
       const cpsBadge = document.createElement("span");
-      cpsBadge.className = `pill ${cpsClass}`;
+      cpsBadge.className = cpsClassName(cue.cps);
       cpsBadge.textContent = `${Number(cue.cps || 0).toFixed(1)} CPS`;
       actions.appendChild(cpsBadge);
 
@@ -1500,12 +1514,16 @@
       const btnMerge = makeMiniBtn("+Unir", "Unir con el siguiente", () => mergeCue(idx));
       const btnDel = makeMiniBtn("×", "Eliminar subtítulo", () => deleteCue(idx));
 
+      // Herramientas atenuadas hasta pasar el ratón o enfocar la fila (siguen en el orden de tabulación).
+      const tools = document.createElement("span");
+      tools.className = "cue-tools";
       if (state.appMode === "resolve") {
         const btnJump = makeMiniBtn("Resolve", "Mover cabezal en DaVinci Resolve", () => jumpResolve(cue.start_ms));
-        actions.append(btnPlayCue, btnJump, btnSplit, btnMerge, btnDel);
+        tools.append(btnPlayCue, btnJump, btnSplit, btnMerge, btnDel);
       } else {
-        actions.append(btnPlayCue, btnSplit, btnMerge, btnDel);
+        tools.append(btnPlayCue, btnSplit, btnMerge, btnDel);
       }
+      actions.appendChild(tools);
       head.append(times, actions);
 
       const textarea = document.createElement("textarea");
@@ -1570,6 +1588,7 @@
     b.className = "btn btn-ghost btn-sm";
     b.textContent = label;
     b.title = title;
+    b.setAttribute("aria-label", title);
     b.addEventListener("click", onClick);
     return b;
   }
@@ -1598,14 +1617,7 @@
           state.cues = serverCues;
           renderCueList();
         }
-        const avgCps = state.cues.length
-          ? state.cues.reduce((acc, c) => acc + (c.cps || 0), 0) / state.cues.length
-          : 0;
-        const warnsCount = state.cues.filter((c) => (c.warnings || []).length > 0).length;
-        $("stat-cues").textContent = `${state.cues.length} subtítulos`;
-        $("stat-cps").textContent = `${avgCps.toFixed(1)} CPS medio`;
-        $("stat-warns").textContent = `${warnsCount} avisos`;
-        $("stat-warns").className = "pill " + (warnsCount > 0 ? "pill-warn" : "pill-ok");
+        updateEditorStats();
         drawWaveform((activeMedia().currentTime || 0) * 1000);
       }
     } catch (err) {

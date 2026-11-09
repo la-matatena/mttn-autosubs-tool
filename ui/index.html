@@ -113,6 +113,9 @@
           <p id="model-note" class="hint"></p>
         </div>
 
+        <!-- Hilos, precisión, GPU y voz se ajustan en «Rendimiento de esta Mac» (una sola fuente de verdad).
+             Estos controles se conservan ocultos porque app.js los lee al transcribir y los mantiene sincronizados. -->
+        <div class="perf-mirror" hidden>
         <div class="grid-2">
           <div class="field">
             <label for="threads-select">Hilos de CPU</label>
@@ -139,6 +142,7 @@
           <input id="opt-enhance-voice" type="checkbox" checked>
           <span>Normalizar voz (filtro 80–7800 Hz FFmpeg)</span>
         </label>
+        </div>
 
         <div class="btn-row">
           <button id="btn-transcribe" class="btn btn-primary" type="button">Transcribir en Español</button>
@@ -188,34 +192,6 @@
           </div>
         </div>
 
-        <div class="grid-3">
-          <div class="field">
-            <label for="cfg-cpl">Máx car.</label>
-            <input id="cfg-cpl" type="number" min="10" max="70" value="42">
-          </div>
-          <div class="field">
-            <label for="cfg-lines">Líneas</label>
-            <input id="cfg-lines" type="number" min="1" max="3" value="2">
-          </div>
-          <div class="field">
-            <label for="cfg-pause">Pausa ms</label>
-            <input id="cfg-pause" type="number" min="200" max="2000" step="50" value="650">
-          </div>
-        </div>
-
-        <label class="check-row">
-          <input id="cfg-inverted" type="checkbox" checked>
-          <span>Reparar signos españoles (<code>¿</code> y <code>¡</code>)</span>
-        </label>
-        <label class="check-row">
-          <input id="cfg-muletillas" type="checkbox">
-          <span>Limpiar muletillas aisladas (eh, em, este...)</span>
-        </label>
-        <label class="check-row">
-          <input id="cfg-uppercase" type="checkbox">
-          <span>Convertir a MAYÚSCULAS</span>
-        </label>
-
         <div class="field">
           <div class="glossary-head">
             <label for="cfg-glossary">Glosario personalizado</label>
@@ -223,6 +199,38 @@
           </div>
           <textarea id="cfg-glossary" rows="2" placeholder="Catan, Wingspan, Gloomhaven, Devir, Kickstarter, Meeple..."></textarea>
         </div>
+
+        <!-- El selector «Formato» ya fija estos valores; aquí solo se afinan. -->
+        <details id="sec-text-rules" class="style-section">
+          <summary>Reglas de texto</summary>
+          <div class="grid-3">
+            <div class="field">
+              <label for="cfg-cpl">Máx car.</label>
+              <input id="cfg-cpl" type="number" min="10" max="70" value="42">
+            </div>
+            <div class="field">
+              <label for="cfg-lines">Líneas</label>
+              <input id="cfg-lines" type="number" min="1" max="3" value="2">
+            </div>
+            <div class="field">
+              <label for="cfg-pause">Pausa ms</label>
+              <input id="cfg-pause" type="number" min="200" max="2000" step="50" value="650">
+            </div>
+          </div>
+
+          <label class="check-row">
+            <input id="cfg-inverted" type="checkbox" checked>
+            <span>Reparar signos españoles (<code>¿</code> y <code>¡</code>)</span>
+          </label>
+          <label class="check-row">
+            <input id="cfg-muletillas" type="checkbox">
+            <span>Limpiar muletillas aisladas (eh, em, este...)</span>
+          </label>
+          <label class="check-row">
+            <input id="cfg-uppercase" type="checkbox">
+            <span>Convertir a MAYÚSCULAS</span>
+          </label>
+        </details>
 
         <button id="btn-resegment" class="btn btn-secondary full-width" type="button">
           Aplicar reglas RAE y glosario
@@ -281,16 +289,16 @@
         </div>
 
         <canvas id="waveform-canvas" width="960" height="96" aria-label="Forma de onda: arrastra los bloques para mover subtítulos o sus bordes para ajustar inicio y fin"></canvas>
-        <p class="hint waveform-hint">Arrastra un bloque morado para moverlo, o sus bordes para ajustar inicio/fin. <kbd>Esc</kbd> cancela. ⌘ + rueda o pellizco para zoom; desplaza con la rueda cuando hay zoom.</p>
+        <p class="hint waveform-hint" title="Arrastra un bloque morado para moverlo, o sus bordes para ajustar inicio/fin. Esc cancela. ⌘ + rueda o pellizco para zoom; desplaza con la rueda cuando hay zoom.">Arrastra un bloque para moverlo o sus bordes para recortar · <kbd>⌘</kbd> + rueda: zoom · <kbd>Esc</kbd> cancela</p>
         <audio id="audio-player" preload="metadata"></audio>
       </section>
 
       <section class="card editor-card">
         <div class="editor-toolbar">
           <div class="stats-row">
-            <span id="stat-cues" class="pill pill-neutral">0 subtítulos</span>
-            <span id="stat-cps" class="pill pill-neutral">0.0 CPS medio</span>
-            <span id="stat-warns" class="pill pill-neutral">0 avisos</span>
+            <span id="stat-cues" class="stat">0 subtítulos</span>
+            <span id="stat-cps" class="stat">0.0 CPS medio</span>
+            <span id="stat-warns" class="stat">0 avisos</span>
           </div>
           <div class="search-replace">
             <input id="search-input" type="text" placeholder="Buscar..." aria-label="Buscar en subtítulos">
