@@ -261,15 +261,16 @@
     if (resolveCard) resolveCard.classList.toggle("card-muted", state.appMode === "standalone");
     const exportCard = $("card-standalone-export");
     if (exportCard) exportCard.classList.toggle("card-highlight", state.appMode === "standalone");
+    // Una sola acción primaria por zona: en modo independiente, el render MP4.
+    const burnBtn = $("btn-burn-video");
+    if (burnBtn) {
+      burnBtn.classList.toggle("btn-primary", state.appMode === "standalone");
+      burnBtn.classList.toggle("btn-secondary", state.appMode !== "standalone");
+    }
     const rTitle = $("resolve-push-title");
     if (rTitle) {
       rTitle.textContent =
         state.appMode === "standalone" ? "5. DaVinci Resolve 20 (Opcional)" : "5. DaVinci Resolve 20";
-    }
-    const eTitle = $("export-card-title");
-    if (eTitle) {
-      eTitle.textContent =
-        state.appMode === "standalone" ? "6. Exportar (Modo Independiente)" : "6. Exportar archivos";
     }
     updateStyleTargetHint();
     renderCueList();
@@ -2320,6 +2321,7 @@
   function wireEvents() {
     $("btn-mode-standalone").addEventListener("click", () => setAppMode("standalone", true));
     $("btn-mode-resolve").addEventListener("click", () => setAppMode("resolve", true));
+    $("btn-switch-to-resolve").addEventListener("click", () => setAppMode("resolve", true));
 
     if ($("btn-fill-bgg-glossary")) {
       $("btn-fill-bgg-glossary").addEventListener("click", () => {
