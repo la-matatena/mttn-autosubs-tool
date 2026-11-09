@@ -9,6 +9,7 @@ py_library(
         "exporters.py",
         "font_manager.py",
         "hardware_imac2017.py",
+        "machine_settings.py",
         "package_bundle.py",
         "resolve_bridge.py",
         "spanish_nlp.py",
@@ -23,6 +24,7 @@ py_library(
         "install_imac.sh",
         "pyproject.toml",
     ] + glob([
+        "assets/*",
         "docs/*.md",
         "docs/images/*.png",
         "lua/*.lua",

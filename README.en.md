@@ -63,10 +63,21 @@ On startup the app detects the machine and picks a profile (shown in step **2. M
 
 | Profile | GPU for Whisper | Threads (standalone / with Resolve) | MP4 encoder |
 | :--- | :--- | :--- | :--- |
-| **Intel iMac 2017** (any Intel Mac) | Disabled (`-ng`) to protect the 2 GB Radeon | 4 / 3 | `libx264` (CPU) |
+| **Intel Mac** (such as the 2017 iMac) | Disabled (`-ng`) to protect low-VRAM GPUs | Based on the real core count (2017 iMac: 4 / 3) | `libx264` (CPU) |
 | **Apple Silicon** (M1–M4 and later) | **Metal enabled** | Performance cores, max 8 / keeps cores free for Resolve | `h264_videotoolbox` (hardware media engine) |
 
-Force a profile with `AUTOSUBS_HW_PROFILE=intel_imac2017` or `AUTOSUBS_HW_PROFILE=apple_silicon`.
+Force a profile with `AUTOSUBS_HW_PROFILE=intel_imac2017` or `AUTOSUBS_HW_PROFILE=apple_silicon` (handy to simulate the 2017 iMac on another Mac).
+
+### Per-machine performance (⚙ Esta Mac)
+
+The **⚙ Esta Mac** top-bar button opens a panel with the detected hardware and the performance settings. They are saved **only on that Mac** (`~/Library/Application Support/AutoSubsES/settings.json`), so the iMac can stay in a safe profile while a MacBook runs at full speed:
+
+- **Profile**: **Automático** (recommended: uses the whole Mac and frees cores while Resolve is open), **Seguro** (few threads and fast beam search so editing stays smooth), **Máximo**, or **Personalizado** (threads, GPU, and precision by hand). Changing those values in step 2 also switches to Personalizado.
+- Per-machine **default model** and **Restablecer a lo recomendado** (reset).
+- **Probar velocidad** (speed test): transcribes ~30 s of Spanish system-voice speech with the chosen model and reports how many times faster than real time it runs, plus a model recommendation. Reference: on a MacBook Pro M4 Pro, `turbo-q8` runs 6–20× faster than real time with Metal (depending on whether the model is already in memory) and about 4× CPU-only.
+- **Export / Import preferences**: dialect, domain, glossary, format, karaoke, and saved styles in a `.json` file to move them to another Mac **without** copying hardware settings.
+
+Dialect, domain, glossary, and format are also remembered between sessions.
 
 ## Spanish Whisper models for 32 GB RAM
 
@@ -112,6 +123,8 @@ The installer sets up the `whisper-cpp`, `ffmpeg`, and `ffmpeg-full` packages th
    ```bash
    python3 -B autosubs_server.py --app-window
    ```
+
+   The app opens in **its own macOS window** (Dock icon and a native "Save as…" dialog for exports); closing the window stops the local server. The installer sets this up with `pywebview` in an isolated environment (`~/Library/Application Support/AutoSubsES/venv`); without it, the app opens in Chrome, Brave, or Safari. Use `python3 -B autosubs_server.py --desktop` to start the native window from Terminal.
 
 ## Run as a standalone macOS application or CLI
 

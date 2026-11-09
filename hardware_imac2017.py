@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import functools
+import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -109,23 +111,112 @@ def build_apple_silicon_profile(
 
 
 @functools.lru_cache(maxsize=1)
-def detect_hardware_profile() -> HardwareProfile:
-  """Picks the scheduling profile for the current Mac.
+def _detect_gpu() -> tuple[str, int]:
+  """Returns (GPU model, dedicated VRAM in MB) via system_profiler, best effort."""
+  try:
+    res = subprocess.run(
+        ["/usr/sbin/system_profiler", "SPDisplaysDataType", "-json"],
+        capture_output=True,
+        text=True,
+        timeout=8.0,
+        check=False,
+    )
+    gpus = json.loads(res.stdout or "{}").get("SPDisplaysDataType") or []
+  except (OSError, subprocess.SubprocessError, ValueError):
+    return "", 0
 
-  Apple Silicon gets Metal GPU acceleration and more threads; every other host
-  keeps the conservative Intel iMac 2017 profile (CPU-only, 2 GB VRAM safe).
-  Set AUTOSUBS_HW_PROFILE=intel_imac2017|apple_silicon to force one.
+  def _vram_mb(gpu: dict) -> int:
+    raw = str(gpu.get("spdisplays_vram") or gpu.get("_spdisplays_vram") or "")
+    match = re.search(r"(\d+)\s*(GB|MB)", raw, re.IGNORECASE)
+    if not match:
+      return 0
+    val = int(match.group(1))
+    return val * 1024 if match.group(2).upper() == "GB" else val
+
+  # Prefer the discrete GPU (largest dedicated VRAM) when there are several.
+  best = max(gpus, key=_vram_mb, default=None)
+  if not best:
+    return "", 0
+  return str(best.get("sppci_model") or best.get("_name") or ""), _vram_mb(best)
+
+
+def build_intel_profile(
+    cpu_brand: str,
+    physical_cores: int,
+    logical_threads: int,
+    ram_gb: int,
+    gpu_name: str = "",
+    gpu_vram_mb: int = 0,
+) -> HardwareProfile:
+  """Builds a CPU-only profile for any Intel Mac from its real specs.
+
+  whisper.cpp's Metal backend is unreliable on Intel/AMD GPUs and competes with
+  Resolve for scarce VRAM, so Intel Macs always transcribe on CPU (-ng).
+  """
+  cores = max(1, physical_cores or 4)
+  standalone = max(2, min(cores, _MAX_WHISPER_THREADS))
+  # Keep one core free for Resolve playback when it is open.
+  with_resolve = max(2, min(standalone, cores - 1))
+  short = re.sub(r"\((R|TM)\)|CPU|@.*$", "", cpu_brand).strip()
+  short = re.sub(r"\s+", " ", short) or "CPU Intel"
+  match = re.search(r"(Core\(TM\)\s*|Core\s+)(i\d|Xeon|m\d)", cpu_brand)
+  cpu_short = f"Intel Core {match.group(2)}" if match else short
+  return HardwareProfile(
+      name=f"Mac Intel ({cpu_short})",
+      cpu_arch="x86_64",
+      cpu_description=(
+          f"{short} ({cores} núcleos, {logical_threads or cores} hilos)"
+      ),
+      physical_cores=cores,
+      logical_threads=logical_threads or cores,
+      gpu_name=gpu_name or "GPU integrada",
+      gpu_vram_mb=gpu_vram_mb,
+      ram_gb=ram_gb,
+      os_target=f"macOS {platform.mac_ver()[0] or ''} (x86_64)".strip(),
+      force_no_gpu=True,
+      threads_with_resolve=with_resolve,
+      threads_standalone=standalone,
+      nice_level=10,
+      profile_id="intel",
+      cpu_short=cpu_short,
+      video_encoder="libx264",
+  )
+
+
+@functools.lru_cache(maxsize=1)
+def detect_hardware_profile() -> HardwareProfile:
+  """Picks the scheduling profile for the current Mac from its real hardware.
+
+  Apple Silicon gets Metal GPU acceleration; Intel Macs get a CPU-only profile
+  sized to their cores. Set AUTOSUBS_HW_PROFILE=intel_imac2017|apple_silicon
+  to force one (useful to simulate the 2017 iMac on another machine).
   """
   forced = os.environ.get("AUTOSUBS_HW_PROFILE", "").strip().lower()
-  is_apple_silicon = sys.platform == "darwin" and platform.machine() == "arm64"
-  if forced == "intel_imac2017" or (not forced and not is_apple_silicon):
+  if forced == "intel_imac2017":
     return IMAC_2017_PROFILE
-
-  chip = _sysctl("machdep.cpu.brand_string") or "Apple Silicon"
-  total = _sysctl_int("hw.physicalcpu", os.cpu_count() or 8)
-  perf = _sysctl_int("hw.perflevel0.physicalcpu", total)
+  is_apple_silicon = sys.platform == "darwin" and platform.machine() == "arm64"
+  total = _sysctl_int("hw.physicalcpu", os.cpu_count() or 4)
   ram_gb = int(round(_sysctl_int("hw.memsize", 16 * 1024**3) / 1024**3))
-  return build_apple_silicon_profile(chip, perf, total, ram_gb)
+
+  if forced == "apple_silicon" or is_apple_silicon:
+    chip = _sysctl("machdep.cpu.brand_string") or "Apple Silicon"
+    perf = _sysctl_int("hw.perflevel0.physicalcpu", total)
+    return build_apple_silicon_profile(chip, perf, total, ram_gb)
+
+  if sys.platform != "darwin":
+    return IMAC_2017_PROFILE
+  brand = _sysctl("machdep.cpu.brand_string")
+  if not brand:
+    return IMAC_2017_PROFILE
+  gpu_name, vram = _detect_gpu()
+  return build_intel_profile(
+      brand,
+      total,
+      _sysctl_int("hw.logicalcpu", total),
+      ram_gb,
+      gpu_name,
+      vram,
+  )
 
 
 @dataclass(frozen=True)

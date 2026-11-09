@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 from functools import partial
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,6 +12,7 @@ import mimetypes
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -26,12 +28,14 @@ try:
   from google3.experimental.users.joseluiszapata.autosubs_es import exporters
   from google3.experimental.users.joseluiszapata.autosubs_es import font_manager
   from google3.experimental.users.joseluiszapata.autosubs_es import hardware_imac2017
+  from google3.experimental.users.joseluiszapata.autosubs_es import machine_settings
   from google3.experimental.users.joseluiszapata.autosubs_es import resolve_bridge
   from google3.experimental.users.joseluiszapata.autosubs_es import spanish_nlp
 except ImportError:
   import exporters  # type: ignore[no-redef]
   import font_manager  # type: ignore[no-redef]
   import hardware_imac2017  # type: ignore[no-redef]
+  import machine_settings  # type: ignore[no-redef]
   import resolve_bridge  # type: ignore[no-redef]
   import spanish_nlp  # type: ignore[no-redef]
 
@@ -114,6 +118,7 @@ class AppState:
 
     self.bridge = resolve_bridge.ResolveBridge(app_data_dir=self.app_dir)
     self.fonts = font_manager.FontManager(app_dir=self.app_dir)
+    self.settings = machine_settings.MachineSettings(self.app_dir)
     self.lock = threading.Lock()
     # shortcut: single local user session in RAM (<=100 jobs retained), persist to SQLite if multi-project history is needed
     self.jobs: dict[str, dict[str, Any]] = {}
@@ -305,6 +310,154 @@ class AppState:
       _terminate_process(proc)
     return True
 
+  def settings_payload(self) -> dict[str, Any]:
+    """This Mac's profile, saved settings and the resulting parameters."""
+    profile = hardware_imac2017.detect_hardware_profile()
+    data = self.settings.snapshot()
+    effective = machine_settings.resolve_performance(
+        profile, data["performance"], hardware_imac2017.is_resolve_running()
+    )
+    return {
+        "settings": data,
+        "effective": effective,
+        "profile": dataclasses.asdict(profile),
+        "recommended_model_id": machine_settings.recommended_model_id(profile),
+        "settings_path": str(self.settings.path),
+    }
+
+  def effective_performance(self) -> dict[str, Any]:
+    return self.settings_payload()["effective"]
+
+  def _make_benchmark_wav(self, out_wav: Path, ffmpeg_bin: str | None) -> float:
+    """Builds ~30 s of Spanish speech (macOS `say`), or falls back to tones."""
+    text = (
+        "Hola, hoy reseñamos un juego de mesa con mucha estrategia. Cada"
+        " jugador coloca sus trabajadores, junta recursos y construye su"
+        " ciudad. ¿Vale la pena comprarlo? En nuestra opinión, sí: las"
+        " partidas duran una hora, las reglas se aprenden rápido y la"
+        " caja trae componentes de muy buena calidad. "
+    ) * 2
+    say_bin = shutil.which("say")
+    aiff = out_wav.with_suffix(".aiff")
+    if say_bin and ffmpeg_bin:
+      for voice in ("Paulina", "Mónica", ""):
+        cmd = [say_bin, "-o", str(aiff), text]
+        if voice:
+          cmd[1:1] = ["-v", voice]
+        try:
+          res = subprocess.run(cmd, capture_output=True, timeout=60, check=False)
+        except (OSError, subprocess.SubprocessError):
+          continue
+        if res.returncode == 0 and aiff.is_file():
+          try:
+            resolve_bridge.prepare_wav_16k(
+                str(aiff), str(out_wav), ffmpeg_bin=ffmpeg_bin,
+                enhance_voice=False,
+            )
+          finally:
+            aiff.unlink(missing_ok=True)
+          info = resolve_bridge.extract_waveform_peaks(str(out_wav), 16)
+          if info["duration_ms"] > 0:
+            return info["duration_ms"] / 1000.0
+    resolve_bridge.generate_demo_wav(
+        str(out_wav), cue_windows_ms=[(0, 30000)], duration_ms=30000
+    )
+    return 30.0
+
+  def start_benchmark(self, payload: dict[str, Any]) -> str:
+    """Times whisper-cli on ~30 s of speech with this Mac's settings."""
+    effective = self.effective_performance()
+    model_id = str(payload.get("model_id") or effective["model_id"])
+    spec = hardware_imac2017.MODEL_CATALOG.get(model_id)
+    if not spec:
+      raise ValueError(f"Modelo inválido: {model_id}")
+    model_path = self.models_dir / spec.filename
+    if not model_path.is_file():
+      raise FileNotFoundError(
+          f"Descarga primero el modelo {spec.label} para probar su velocidad."
+      )
+    env = hardware_imac2017.detect_environment()
+    whisper_bin = env.get("whisper_cli_path")
+    if not whisper_bin:
+      raise RuntimeError(
+          "No se encontró whisper-cli. Instala con: brew install whisper-cpp"
+      )
+    threads = int(payload.get("threads") or effective["threads"])
+    force_no_gpu = bool(payload.get("force_no_gpu", effective["force_no_gpu"]))
+    job_id = self.create_job("benchmark", "Preparando audio de prueba...")
+
+    def _worker() -> None:
+      bench_wav = self.cache_dir / f"bench_{job_id}.wav"
+      out_prefix = self.cache_dir / f"bench_{job_id}"
+      try:
+        audio_s = self._make_benchmark_wav(bench_wav, env.get("ffmpeg_path"))
+        self.update_job(
+            job_id,
+            progress=20,
+            stage=f"Transcribiendo {audio_s:.0f} s con {spec.label}...",
+        )
+        cmd = hardware_imac2017.build_whisper_command(
+            whisper_bin=whisper_bin,
+            model_path=str(model_path),
+            wav_path=str(bench_wav),
+            output_prefix=str(out_prefix),
+            prompt="",
+            threads=threads,
+            force_no_gpu=force_no_gpu,
+            fast_beam=bool(effective["fast_beam"]),
+            nice_level=0,
+        )
+        started = time.monotonic()
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=(os.name == "posix"),
+        )
+        with self.lock:
+          self.active_procs[job_id] = proc
+        rc = proc.wait()
+        elapsed = max(0.01, time.monotonic() - started)
+        with self.lock:
+          self.active_procs.pop(job_id, None)
+          if self.cancel_flags.get(job_id):
+            return
+        if rc != 0:
+          raise RuntimeError(f"whisper-cli terminó con código {rc}.")
+        rtf = audio_s / elapsed
+        rec = machine_settings.recommend_from_benchmark(model_id, rtf)
+        result = {
+            "model_id": model_id,
+            "realtime_factor": round(rtf, 2),
+            "elapsed_s": round(elapsed, 1),
+            "audio_s": round(audio_s, 1),
+            "threads": threads,
+            "force_no_gpu": force_no_gpu,
+            "recommended_model_id": rec["model_id"],
+            "note": rec["note"],
+        }
+        self.settings.record_benchmark(model_id, result)
+        self.update_job(
+            job_id,
+            status="done",
+            progress=100,
+            stage=f"{rtf:.1f}× tiempo real con {spec.label}",
+            finished_at=time.time(),
+            result=result,
+        )
+      except Exception as exc:  # pylint: disable=broad-except
+        self.update_job(
+            job_id,
+            status="error",
+            stage="Error en la prueba de velocidad",
+            error=str(exc),
+            finished_at=time.time(),
+        )
+      finally:
+        bench_wav.unlink(missing_ok=True)
+        Path(f"{out_prefix}.json").unlink(missing_ok=True)
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return job_id
+
   def start_model_download(self, model_id: str) -> str:
     spec = hardware_imac2017.MODEL_CATALOG.get(model_id)
     if not spec:
@@ -395,10 +548,16 @@ class AppState:
 
   def start_transcription(self, payload: dict[str, Any]) -> str:
     source = str(payload.get("source", "uploaded"))
-    model_id = str(
-        payload.get("model_id")
-        or hardware_imac2017.choose_default_model_id(self.models_dir)
-    )
+    effective = self.effective_performance()
+    model_id = str(payload.get("model_id") or "")
+    if not model_id:
+      # This Mac's saved model if it is downloaded, else the best installed.
+      saved = hardware_imac2017.MODEL_CATALOG[effective["model_id"]]
+      model_id = (
+          effective["model_id"]
+          if (self.models_dir / saved.filename).is_file()
+          else hardware_imac2017.choose_default_model_id(self.models_dir)
+      )
     spec = hardware_imac2017.MODEL_CATALOG.get(model_id)
     if not spec:
       raise ValueError(f"Modelo inválido: {model_id}")
@@ -443,11 +602,10 @@ class AppState:
     cfg = spanish_nlp.SpanishFormatConfig.from_dict(
         payload.get("format_config") or self.format_config.to_dict()
     )
-    threads = payload.get("threads")
-    fast_beam = bool(payload.get("fast_beam", False))
-    enhance_voice = bool(payload.get("enhance_voice", True))
-    profile = hardware_imac2017.detect_hardware_profile()
-    force_no_gpu = bool(payload.get("force_no_gpu", profile.force_no_gpu))
+    threads = payload.get("threads") or effective["threads"]
+    fast_beam = bool(payload.get("fast_beam", effective["fast_beam"]))
+    enhance_voice = bool(payload.get("enhance_voice", effective["enhance_voice"]))
+    force_no_gpu = bool(payload.get("force_no_gpu", effective["force_no_gpu"]))
     accel_label = "CPU, GPU libre" if force_no_gpu else "GPU Metal"
 
     job_id = self.create_job("transcribe", "Preparando audio 16 kHz mono...")
@@ -627,7 +785,9 @@ class AppState:
     style = exporters.StyleConfig.from_dict(payload.get("style"))
     width = int(payload.get("width") or 1920)
     height = int(payload.get("height") or 1080)
-    threads = int(payload.get("threads") or env.get("recommended_threads") or 3)
+    threads = int(
+        payload.get("threads") or self.effective_performance()["threads"]
+    )
     job_id = self.create_job(
         "burnin", f"Preparando render MP4 ({encoder_label})..."
     )
@@ -935,8 +1095,17 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
               },
               "fonts": self.state.fonts.list_fonts(),
               "session": self.state.session_snapshot(),
+              "machine": self.state.settings_payload(),
           },
       )
+      return
+
+    if path == "/api/settings":
+      self._send_json(HTTPStatus.OK, self.state.settings_payload())
+      return
+
+    if path == "/api/settings/export":
+      self._send_json(HTTPStatus.OK, self.state.settings.export_preferences())
       return
 
     if path == "/api/fonts":
@@ -1073,6 +1242,28 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
         job_id = self.state.start_model_download(
             str(body.get("model_id", default_id))
         )
+        self._send_json(HTTPStatus.ACCEPTED, {"ok": True, "job_id": job_id})
+      except Exception as exc:  # pylint: disable=broad-except
+        self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+      return
+
+    if path == "/api/settings/reset":
+      self.state.settings.reset_performance()
+      self._send_json(HTTPStatus.OK, self.state.settings_payload())
+      return
+
+    if path == "/api/settings/import":
+      try:
+        self.state.settings.import_preferences(body)
+      except ValueError as exc:
+        self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+        return
+      self._send_json(HTTPStatus.OK, self.state.settings_payload())
+      return
+
+    if path == "/api/benchmark":
+      try:
+        job_id = self.state.start_benchmark(body)
         self._send_json(HTTPStatus.ACCEPTED, {"ok": True, "job_id": job_id})
       except Exception as exc:  # pylint: disable=broad-except
         self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -1225,7 +1416,7 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     if not self._check_request_origin(mutating=True):
       return
     parsed = urllib.parse.urlparse(self.path)
-    if parsed.path != "/api/cues":
+    if parsed.path not in ("/api/cues", "/api/settings"):
       self._send_json(HTTPStatus.NOT_FOUND, {"error": "Ruta no encontrada"})
       return
     try:
@@ -1234,6 +1425,16 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       self._send_json(
           HTTPStatus.BAD_REQUEST, {"error": f"JSON inválido: {exc}"}
       )
+      return
+
+    if parsed.path == "/api/settings":
+      if not isinstance(body, dict):
+        self._send_json(
+            HTTPStatus.BAD_REQUEST, {"error": "Se esperaba un objeto JSON"}
+        )
+        return
+      self.state.settings.update(body)
+      self._send_json(HTTPStatus.OK, self.state.settings_payload())
       return
 
     raw_cues = body.get("cues", [])
@@ -1298,6 +1499,86 @@ def open_standalone_window(url: str) -> None:
   webbrowser.open(url)
 
 
+def _server_already_running(url: str) -> bool:
+  try:
+    with urllib.request.urlopen(f"{url}/api/status", timeout=1.5) as resp:
+      return resp.status == 200
+  except (OSError, ValueError):
+    return False
+
+
+def _brand_macos_app(icon_path: Path) -> None:
+  """Shows the app name and icon in the Dock/menu bar instead of "Python"."""
+  try:
+    import AppKit  # pylint: disable=import-outside-toplevel
+    import Foundation  # pylint: disable=import-outside-toplevel
+  except ImportError:
+    return
+  bundle = Foundation.NSBundle.mainBundle()
+  info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
+  if info is not None:
+    info["CFBundleName"] = "MTTN AutoSubs Tool"
+  if icon_path.is_file():
+    image = AppKit.NSImage.alloc().initByReferencingFile_(str(icon_path))
+    AppKit.NSApplication.sharedApplication().setApplicationIconImage_(image)
+
+
+def run_desktop_app(host: str = "127.0.0.1", port: int = 55120) -> int:
+  """Runs the studio inside a native macOS window (WKWebView via pywebview).
+
+  The local server lives only as long as the window: closing it stops the
+  server. Exports open a native "Save as…" panel. Falls back to the Chrome
+  app-window mode when pywebview is not installed.
+  """
+  url = f"http://{host}:{port}"
+  try:
+    import webview  # pylint: disable=import-outside-toplevel
+  except ImportError:
+    print(
+        "[MTTN AutoSubs Tool] pywebview no está instalado; abriendo en el"
+        " navegador. Ejecuta ./install_imac.sh para la ventana nativa.",
+        file=sys.stderr,
+    )
+    return main(["--host", host, "--port", str(port), "--app-window"])
+
+  server = None
+  if _server_already_running(url):
+    # Another instance owns the port (e.g. a window already open): reuse it.
+    print(f"[MTTN AutoSubs Tool] Usando el servidor ya activo en {url}")
+  else:
+    server, _ = create_server(host=host, port=port)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    print(f"[MTTN AutoSubs Tool] Servidor activo en {url} (ventana nativa)")
+
+  app_dir = hardware_imac2017.get_app_data_dir(create=True)
+  icon = Path(__file__).resolve().parent / "assets" / "icon.png"
+  _brand_macos_app(icon)
+  webview.settings["ALLOW_DOWNLOADS"] = True
+  webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
+  webview.create_window(
+      "MTTN AutoSubs Tool",
+      url,
+      width=1540,
+      height=980,
+      min_size=(1100, 720),
+      background_color="#18181B",
+      text_select=True,
+      zoomable=True,
+  )
+  try:
+    # private_mode=False keeps localStorage (theme, karaoke, saved styles).
+    webview.start(
+        private_mode=False,
+        storage_path=str(app_dir / "webview"),
+        icon=str(icon) if icon.is_file() else None,
+    )
+  finally:
+    if server is not None:
+      server.shutdown()
+      server.server_close()
+  return 0
+
+
 def run_cli_transcription(
     media_file: str,
     output_path: str | None = None,
@@ -1326,6 +1607,16 @@ def run_cli_transcription(
   cache_dir = app_base / "cache"
   cache_dir.mkdir(parents=True, exist_ok=True)
 
+  # Same per-machine performance settings as the desktop app.
+  effective = machine_settings.resolve_performance(
+      hardware_imac2017.detect_hardware_profile(),
+      machine_settings.MachineSettings(app_base).snapshot()["performance"],
+      hardware_imac2017.is_resolve_running(),
+  )
+  if threads is None:
+    threads = effective["threads"]
+  if force_no_gpu is None:
+    force_no_gpu = effective["force_no_gpu"]
   chosen_model = model_id or hardware_imac2017.choose_default_model_id(
       models_dir
   )
@@ -1442,6 +1733,11 @@ def main(argv: list[str] | None = None) -> int:
   parser.add_argument("--no-browser", action="store_true")
   parser.add_argument("--app-window", action="store_true")
   parser.add_argument(
+      "--desktop",
+      action="store_true",
+      help="Abre la app en una ventana nativa de macOS (requiere pywebview).",
+  )
+  parser.add_argument(
       "--cli",
       metavar="MEDIA_FILE",
       help="Modo CLI independiente: transcribe un audio/vídeo y sale.",
@@ -1506,6 +1802,9 @@ def main(argv: list[str] | None = None) -> int:
         remove_muletillas=args.remove_muletillas,
         karaoke=args.karaoke,
     )
+
+  if args.desktop:
+    return run_desktop_app(args.host, args.port)
 
   server, _ = create_server(host=args.host, port=args.port)
   actual_port = server.server_address[1]

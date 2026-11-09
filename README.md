@@ -65,10 +65,21 @@ Al arrancar, la app detecta el equipo y elige un perfil (visible en el paso **2.
 
 | Perfil | GPU para Whisper | Hilos (solo / con Resolve) | Codificador MP4 |
 | :--- | :--- | :--- | :--- |
-| **Intel iMac 2017** (cualquier Mac Intel) | Desactivada (`-ng`) para proteger la Radeon de 2 GB | 4 / 3 | `libx264` (CPU) |
+| **Mac Intel** (como la iMac 2017) | Desactivada (`-ng`) para proteger GPUs con poca VRAM | Según los núcleos reales (iMac 2017: 4 / 3) | `libx264` (CPU) |
 | **Apple Silicon** (M1–M4 y posteriores) | **Metal activado** | Núcleos de rendimiento, máx. 8 / reserva núcleos para Resolve | `h264_videotoolbox` (motor de vídeo por hardware) |
 
-Puedes forzar un perfil con la variable de entorno `AUTOSUBS_HW_PROFILE=intel_imac2017` o `AUTOSUBS_HW_PROFILE=apple_silicon`.
+Puedes forzar un perfil con la variable de entorno `AUTOSUBS_HW_PROFILE=intel_imac2017` o `AUTOSUBS_HW_PROFILE=apple_silicon` (útil para simular la iMac 2017 en otra Mac).
+
+### Rendimiento de esta Mac (⚙ Esta Mac)
+
+El botón **⚙ Esta Mac** de la barra superior abre un panel con el equipo detectado y los ajustes de rendimiento. Se guardan **solo en esa Mac** (`~/Library/Application Support/AutoSubsES/settings.json`), así que la iMac puede quedarse en modo seguro mientras una MacBook usa todo su potencial:
+
+- **Perfil**: **Automático** (recomendado: usa toda la Mac y cede núcleos cuando Resolve está abierto), **Seguro** (pocos hilos y búsqueda rápida para editar sin tirones), **Máximo** o **Personalizado** (hilos, GPU y precisión a mano). Cambiar esos valores en el paso 2 también pasa el perfil a Personalizado.
+- **Modelo por defecto** de esa Mac y **Restablecer a lo recomendado**.
+- **Probar velocidad**: transcribe unos 30 s de voz en español (voz del sistema) con el modelo elegido y muestra cuántas veces más rápido que el tiempo real va, con una recomendación de modelo. Referencia: en una MacBook Pro M4 Pro, `turbo-q8` va entre 6× y 20× más rápido que el tiempo real con Metal (según si el modelo ya está en memoria) y unas 4× solo con CPU.
+- **Exportar / Importar preferencias**: acento, temática, glosario, formato, karaoke y estilos guardados en un `.json` para llevarlos a otra Mac **sin** copiar los ajustes de hardware.
+
+El acento, la temática, el glosario y el formato también se recuerdan entre sesiones.
 
 ## Catálogo de modelos Whisper en español
 
@@ -109,10 +120,13 @@ El instalador configura automáticamente las herramientas `whisper-cpp`, `ffmpeg
 
    *Opcional:* Puedes pasar `--model=large-v3-q5` para descargar directamente el modelo de máxima precisión de 32 capas, o `--skip-model` si prefieres descargarlo después desde la interfaz.
 
-3. Abre **MTTN AutoSubs Tool** desde tu carpeta de **Aplicaciones** (`MTTN AutoSubs Tool.app`), haz doble clic en `Iniciar AutoSubs ES.command`, o inicia el servidor desde Terminal:
+3. Abre **MTTN AutoSubs Tool** desde tu carpeta de **Aplicaciones** (`~/Applications/MTTN AutoSubs Tool.app`) o haz doble clic en `Iniciar AutoSubs ES.command`. Se abre en **su propia ventana de macOS** (con icono en el Dock y diálogo nativo de «Guardar como…» al exportar); al cerrar la ventana se detiene el servidor local. El instalador prepara esa ventana con `pywebview` en un entorno aislado (`~/Library/Application Support/AutoSubsES/venv`); si no está disponible, la app se abre en Chrome, Brave o Safari.
+
+   Desde Terminal también puedes usar:
 
    ```bash
-   python3 -B autosubs_server.py --app-window
+   python3 -B autosubs_server.py --app-window   # ventana de Chrome/Brave
+   python3 -B autosubs_server.py                # pestaña del navegador
    ```
 
 ## Uso en Modo Independiente (Standalone) o CLI

@@ -57,6 +57,7 @@
           <span>Oscuro</span>
         </span>
       </button>
+      <button id="btn-machine" class="btn btn-ghost btn-sm" type="button" command="show-modal" commandfor="machine-dialog" title="Perfil de rendimiento, prueba de velocidad y preferencias de esta Mac">⚙ Esta Mac</button>
       <button id="btn-demo" class="btn btn-secondary btn-sm" type="button">Probar Demo ES</button>
       <button id="btn-refresh" class="btn btn-ghost btn-sm" type="button" title="Vuelve a comprobar DaVinci Resolve, los modelos instalados y el buzón de audio">Actualizar estado</button>
     </div>
@@ -97,7 +98,11 @@
 
       <section class="card">
         <h2>2. Motor Whisper</h2>
-        <p id="hw-profile-note" class="hint"></p>
+        <div class="perf-summary">
+          <span id="perf-mode-pill" class="pill pill-info">Automático</span>
+          <span id="hw-profile-note" class="hint"></span>
+          <button class="btn btn-ghost btn-xs" type="button" command="show-modal" commandfor="machine-dialog">Ajustar…</button>
+        </div>
         <div class="field">
           <label for="model-select">Modelo local en español</label>
           <div class="inline-field">
@@ -473,11 +478,11 @@
         <div id="template-field" class="field">
           <label for="push-template">Plantilla Fusion (Media Pool)</label>
           <select id="push-template">
-            <option value="AutoSubs_ES_Cine_Netflix">AutoSubs_ES_Cine_Netflix</option>
-            <option value="AutoSubs_ES_Amarillo_Clasico">AutoSubs_ES_Amarillo_Clasico</option>
-            <option value="AutoSubs_ES_Reels_Impacto">AutoSubs_ES_Reels_Impacto</option>
-            <option value="AutoSubs_ES_Caja_Editorial">AutoSubs_ES_Caja_Editorial</option>
-            <option value="AutoSubs_ES_Anitype_Animado">AutoSubs_ES_Anitype_Animado (5 fuentes / Boil)</option>
+            <option value="AutoSubs_ES_Cine_Netflix" title="AutoSubs_ES_Cine_Netflix">Cine Netflix</option>
+            <option value="AutoSubs_ES_Amarillo_Clasico" title="AutoSubs_ES_Amarillo_Clasico">Amarillo Clásico</option>
+            <option value="AutoSubs_ES_Reels_Impacto" title="AutoSubs_ES_Reels_Impacto">Reels Impacto</option>
+            <option value="AutoSubs_ES_Caja_Editorial" title="AutoSubs_ES_Caja_Editorial">Caja Editorial</option>
+            <option value="AutoSubs_ES_Anitype_Animado" title="AutoSubs_ES_Anitype_Animado">Anitype Animado (5 fuentes)</option>
           </select>
         </div>
 
@@ -507,6 +512,97 @@
       </section>
     </aside>
   </main>
+
+  <dialog id="machine-dialog" class="machine-dialog" closedby="any" aria-labelledby="machine-dialog-title">
+    <header class="machine-head">
+      <h2 id="machine-dialog-title">Rendimiento de esta Mac</h2>
+      <button class="btn btn-ghost btn-sm" type="button" command="close" commandfor="machine-dialog" aria-label="Cerrar">✕</button>
+    </header>
+
+    <section class="machine-section" aria-labelledby="machine-hw-title">
+      <h3 id="machine-hw-title">Equipo detectado</h3>
+      <dl id="machine-hw" class="machine-hw"></dl>
+    </section>
+
+    <section class="machine-section" aria-labelledby="machine-mode-title">
+      <h3 id="machine-mode-title">Perfil de rendimiento</h3>
+      <div class="mode-cards" role="radiogroup" aria-labelledby="machine-mode-title">
+        <label class="mode-card">
+          <input type="radio" name="perf-mode" value="auto" autofocus>
+          <span class="mode-card-title">Automático <em>(recomendado)</em></span>
+          <span class="mode-card-desc">Usa toda la Mac y cede núcleos cuando DaVinci Resolve está abierto.</span>
+        </label>
+        <label class="mode-card">
+          <input type="radio" name="perf-mode" value="safe">
+          <span class="mode-card-title">Seguro</span>
+          <span class="mode-card-desc">Pocos hilos y búsqueda rápida: la Mac sigue fluida mientras editas.</span>
+        </label>
+        <label class="mode-card">
+          <input type="radio" name="perf-mode" value="max">
+          <span class="mode-card-title">Máximo</span>
+          <span class="mode-card-desc">Todos los hilos y máxima precisión, aunque Resolve esté abierto.</span>
+        </label>
+        <label class="mode-card">
+          <input type="radio" name="perf-mode" value="custom">
+          <span class="mode-card-title">Personalizado</span>
+          <span class="mode-card-desc">Eliges hilos, GPU y precisión a mano.</span>
+        </label>
+      </div>
+
+      <div class="machine-grid">
+        <div class="field">
+          <label for="mp-threads">Hilos</label>
+          <select id="mp-threads"></select>
+        </div>
+        <div class="field">
+          <label for="mp-beam">Precisión</label>
+          <select id="mp-beam">
+            <option value="quality">Precisión (beam=5)</option>
+            <option value="fast">Rápido (beam=2)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="mp-model">Modelo por defecto</label>
+          <select id="mp-model"></select>
+        </div>
+      </div>
+      <label class="check-row">
+        <input id="mp-no-gpu" type="checkbox">
+        <span id="mp-no-gpu-label">Solo CPU, sin GPU (<code>-ng</code>)</span>
+      </label>
+      <label class="check-row">
+        <input id="mp-enhance" type="checkbox">
+        <span>Normalizar voz (filtro 80–7800 Hz)</span>
+      </label>
+      <p class="hint">Cambiar hilos, GPU o precisión pasa el perfil a <strong>Personalizado</strong>.</p>
+    </section>
+
+    <section class="machine-section" aria-labelledby="machine-bench-title">
+      <h3 id="machine-bench-title">Prueba de velocidad</h3>
+      <p class="hint">Transcribe unos 30 s de voz en español con el modelo elegido y estos ajustes para saber qué tan rápido va esta Mac.</p>
+      <div class="btn-row">
+        <button id="btn-benchmark" class="btn btn-secondary btn-sm" type="button">Probar velocidad</button>
+        <button id="btn-bench-apply" class="btn btn-primary btn-sm hidden" type="button">Usar modelo recomendado</button>
+      </div>
+      <div id="bench-result" class="meta-box hidden" role="status"></div>
+      <ul id="bench-history" class="bench-history"></ul>
+    </section>
+
+    <section class="machine-section" aria-labelledby="machine-prefs-title">
+      <h3 id="machine-prefs-title">Preferencias portátiles</h3>
+      <p class="hint">Acento, temática, glosario, formato, karaoke y estilos guardados. No incluyen los ajustes de hardware, así que puedes llevarlas de la MacBook a la iMac sin cambiar el rendimiento de cada una.</p>
+      <div class="btn-row">
+        <button id="btn-prefs-export" class="btn btn-secondary btn-sm" type="button">Exportar preferencias…</button>
+        <button id="btn-prefs-import" class="btn btn-secondary btn-sm" type="button">Importar preferencias…</button>
+        <input id="prefs-import-input" class="visually-hidden" type="file" accept="application/json,.json" tabindex="-1" aria-hidden="true">
+      </div>
+    </section>
+
+    <footer class="machine-foot">
+      <button id="btn-perf-reset" class="btn btn-ghost btn-sm" type="button">Restablecer a lo recomendado</button>
+      <span id="machine-settings-path" class="hint mono-path"></span>
+    </footer>
+  </dialog>
 
   <div id="toast" class="toast hidden"></div>
   <script src="/app.js"></script>

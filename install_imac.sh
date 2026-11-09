@@ -95,6 +95,26 @@ else
   echo "Descarga del modelo omitida (--skip-model). Puedes descargarlo desde la app."
 fi
 
+# Python aislado para la ventana nativa (pywebview); no toca el Python del sistema.
+VENV_DIR="${APP_DATA_DIR}/venv"
+HOST_PYTHON=""
+for cand in /opt/homebrew/bin/python3 /usr/local/bin/python3 "$(command -v python3 || true)"; do
+  if [[ -n "${cand}" && -x "${cand}" ]]; then HOST_PYTHON="${cand}"; break; fi
+done
+if [[ -n "${HOST_PYTHON}" ]]; then
+  echo "Preparando ventana nativa (pywebview) en: ${VENV_DIR}"
+  if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+    "${HOST_PYTHON}" -m venv "${VENV_DIR}"
+  fi
+  if "${VENV_DIR}/bin/pip" install --quiet --disable-pip-version-check --upgrade pywebview; then
+    echo "✓ pywebview instalado: la app abrirá en su propia ventana."
+  else
+    echo "Aviso: no se pudo instalar pywebview; la app se abrirá en Chrome/Brave/Safari."
+  fi
+else
+  echo "Aviso: no se encontró python3; instala Python con: brew install python"
+fi
+
 create_macos_app_bundle() {
   local bundle_path="$1"
   local contents_dir="${bundle_path}/Contents"
@@ -116,6 +136,10 @@ create_macos_app_bundle() {
   <string>AutoSubsES</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
 </dict>
@@ -128,6 +152,12 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:\${PATH}"
 APP_HOME="${SCRIPT_DIR}"
 LOG_FILE="${APP_DATA_DIR}/cache/server.log"
 mkdir -p "${APP_DATA_DIR}/cache"
+VENV_PY="${APP_DATA_DIR}/venv/bin/python"
+# Ventana nativa: el servidor vive mientras la ventana esté abierta.
+if [[ -x "\${VENV_PY}" ]] && "\${VENV_PY}" -c "import webview" >/dev/null 2>&1; then
+  cd "\${APP_HOME}"
+  exec "\${VENV_PY}" -B autosubs_server.py --desktop >> "\${LOG_FILE}" 2>&1
+fi
 PYTHON_BIN="/usr/local/bin/python3"
 if [[ ! -x "\${PYTHON_BIN}" ]]; then
   PYTHON_BIN="\$(command -v python3)"
@@ -151,6 +181,11 @@ else
 fi
 LAUNCHER
   chmod +x "${contents_dir}/MacOS/AutoSubsES"
+  if [[ -f "${SCRIPT_DIR}/assets/AppIcon.icns" ]]; then
+    cp "${SCRIPT_DIR}/assets/AppIcon.icns" "${contents_dir}/Resources/AppIcon.icns"
+  fi
+  # Refresca el icono en Finder/Dock si la app ya existía.
+  touch "${bundle_path}"
 }
 
 if [[ "$(uname -s)" == "Darwin" ]]; then

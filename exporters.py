@@ -714,7 +714,9 @@ def render_export(
   if fmt_l == "ass":
     return (
         export_ass_karaoke(cues, style, width, height),
-        f"{base_stem}_karaoke.ass",
+        f"{base_stem}_karaoke.ass"
+        if style and style.karaoke_enabled
+        else f"{base_stem}.ass",
         "text/plain; charset=utf-8",
     )
   if fmt_l == "txt":

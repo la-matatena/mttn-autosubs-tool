@@ -21,6 +21,7 @@ try:
   from google3.experimental.users.joseluiszapata.autosubs_es import exporters
   from google3.experimental.users.joseluiszapata.autosubs_es import font_manager
   from google3.experimental.users.joseluiszapata.autosubs_es import hardware_imac2017
+  from google3.experimental.users.joseluiszapata.autosubs_es import machine_settings
   from google3.experimental.users.joseluiszapata.autosubs_es import package_bundle
   from google3.experimental.users.joseluiszapata.autosubs_es import resolve_bridge
   from google3.experimental.users.joseluiszapata.autosubs_es import spanish_nlp
@@ -29,6 +30,7 @@ except ImportError:
   import exporters  # type: ignore[no-redef]
   import font_manager  # type: ignore[no-redef]
   import hardware_imac2017  # type: ignore[no-redef]
+  import machine_settings  # type: ignore[no-redef]
   import package_bundle  # type: ignore[no-redef]
   import resolve_bridge  # type: ignore[no-redef]
   import spanish_nlp  # type: ignore[no-redef]
@@ -231,6 +233,73 @@ class HardwareIMac2017Test(unittest.TestCase):
     self.assertIn("h264_videotoolbox", vt_cmd)
     self.assertNotIn("libx264", vt_cmd)
     self.assertNotIn("-crf", vt_cmd)
+
+
+class MachineSettingsTest(unittest.TestCase):
+
+  def test_intel_profile_from_real_specs(self) -> None:
+    imac = hardware_imac2017.build_intel_profile(
+        "Intel(R) Core(TM) i5-7500 CPU @ 3.40GHz", 4, 4, 32, "Radeon Pro 555", 2048
+    )
+    self.assertTrue(imac.force_no_gpu)
+    self.assertEqual((imac.threads_standalone, imac.threads_with_resolve), (4, 3))
+    self.assertEqual(imac.cpu_short, "Intel Core i5")
+    self.assertEqual(imac.video_encoder, "libx264")
+    big = hardware_imac2017.build_intel_profile(
+        "Intel(R) Core(TM) i9-9980HK CPU @ 2.40GHz", 8, 16, 32
+    )
+    self.assertEqual((big.threads_standalone, big.threads_with_resolve), (8, 7))
+    self.assertEqual(big.gpu_name, "GPU integrada")
+
+  def test_modes_persistence_and_portable_preferences(self) -> None:
+    prof = hardware_imac2017.IMAC_2017_PROFILE
+    with tempfile.TemporaryDirectory() as tmp:
+      store = machine_settings.MachineSettings(Path(tmp))
+      perf = store.snapshot()["performance"]
+      auto = machine_settings.resolve_performance(prof, perf, resolve_running=False)
+      self.assertEqual((auto["mode"], auto["threads"], auto["force_no_gpu"]), ("auto", 4, True))
+      self.assertEqual(
+          machine_settings.resolve_performance(prof, perf, resolve_running=True)["threads"], 3
+      )
+      safe = machine_settings.resolve_performance(prof, {"mode": "safe"})
+      self.assertEqual((safe["threads"], safe["fast_beam"]), (2, True))
+
+      store.update({
+          "performance": {"mode": "custom", "threads": 2, "force_no_gpu": False,
+                          "model_id": "small-q8", "bogus": 1},
+          "preferences": {"dialect": "es_mx", "custom_glossary": "Catan", "evil": "x"},
+      })
+      # Persisted to disk and reloaded by a fresh instance.
+      data = machine_settings.MachineSettings(Path(tmp)).snapshot()
+      self.assertNotIn("bogus", data["performance"])
+      self.assertEqual(data["preferences"], {"dialect": "es_mx", "custom_glossary": "Catan"})
+      custom = machine_settings.resolve_performance(prof, data["performance"])
+      self.assertEqual((custom["threads"], custom["force_no_gpu"], custom["model_id"]),
+                       (2, False, "small-q8"))
+
+      exported = store.export_preferences()
+      self.assertNotIn("performance", exported)
+      other = machine_settings.MachineSettings(Path(tmp) / "otra_mac")
+      other.import_preferences(exported)
+      self.assertEqual(other.snapshot()["preferences"]["dialect"], "es_mx")
+      self.assertEqual(other.snapshot()["performance"]["mode"], "auto")
+      with self.assertRaises(ValueError):
+        other.import_preferences({"nope": 1})
+
+      store.reset_performance()
+      self.assertEqual(store.snapshot()["performance"]["mode"], "auto")
+      self.assertEqual(store.snapshot()["preferences"]["dialect"], "es_mx")
+
+  def test_benchmark_recommendations(self) -> None:
+    self.assertEqual(
+        machine_settings.recommend_from_benchmark("turbo-q8", 0.8)["model_id"], "turbo-q5"
+    )
+    self.assertEqual(
+        machine_settings.recommend_from_benchmark("turbo-q8", 20)["model_id"], "large-v3-q5"
+    )
+    self.assertEqual(
+        machine_settings.recommend_from_benchmark("turbo-q8", 4)["model_id"], "turbo-q8"
+    )
 
 
 class SpanishNlpTest(unittest.TestCase):
@@ -1341,7 +1410,7 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
 
     zip_bytes = package_bundle.build_zip_bytes(root)
     meta = package_bundle.verify_zip_bytes(zip_bytes)
-    self.assertEqual(meta["file_count"], 35, meta["entries"])
+    self.assertEqual(meta["file_count"], 39, meta["entries"])
     self.assertNotIn("AutoSubs_ES/__init__.py", meta["entries"])
     self.assertIn("AutoSubs_ES/.gitignore", meta["entries"])
     self.assertIn("AutoSubs_ES/BUILD", meta["entries"])

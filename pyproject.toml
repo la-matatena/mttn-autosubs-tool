@@ -23,6 +23,7 @@ py-modules = [
   "exporters",
   "font_manager",
   "hardware_imac2017",
+  "machine_settings",
   "package_bundle",
   "resolve_bridge",
   "spanish_nlp",

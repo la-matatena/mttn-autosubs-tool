@@ -31,6 +31,8 @@
     view: { startMs: 0, spanMs: 0 },
     drag: null,
     playUntilMs: null,
+    machine: null,
+    prefsTimer: null,
     playUntilRaf: 0,
   };
 
@@ -514,6 +516,7 @@
     document.querySelectorAll(".chip").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.style === key);
       btn.classList.toggle("modified", btn.dataset.style === key && modified);
+      btn.setAttribute("aria-pressed", String(btn.dataset.style === key));
     });
   }
 
@@ -928,39 +931,370 @@
   }
 
   // Perfil de hardware detectado por el servidor (Intel iMac 2017 / Apple Silicon).
-  function initHardwareControls(hw) {
-    const isApple = hw.profile_id === "apple_silicon";
+  function fillThreadOptions(sel, hw) {
     const maxT = Number(hw.threads_standalone || 4);
     const resolveT = Number(hw.threads_with_resolve || 3);
-    const sel = $("threads-select");
+    const prev = sel.value;
     sel.innerHTML = "";
-    [
-      [maxT, "Máximo"],
-      [resolveT, "Seguro con Resolve"],
-      [2, "Silencioso"],
-    ]
-      .filter(([n], i, arr) => arr.findIndex(([m]) => m === n) === i)
-      .forEach(([n, label]) => {
-        const opt = document.createElement("option");
-        opt.value = String(n);
-        opt.textContent = `${n} hilos (${label})`;
-        sel.appendChild(opt);
-      });
+    for (let n = maxT; n >= 1; n--) {
+      const opt = document.createElement("option");
+      opt.value = String(n);
+      const tag = n === maxT ? " (máximo)" : n === resolveT ? " (con Resolve)" : n === 2 ? " (silencioso)" : "";
+      opt.textContent = `${n} hilo${n === 1 ? "" : "s"}${tag}`;
+      sel.appendChild(opt);
+    }
+    if (prev) sel.value = prev;
+  }
 
-    $("opt-no-gpu").checked = Boolean(hw.force_no_gpu);
-    const lbl = $("opt-no-gpu-label");
+  function setGpuLabel(lbl, hw) {
     lbl.textContent = "";
     const code = document.createElement("code");
     code.textContent = "-ng";
-    if (isApple) {
+    if (hw.profile_id === "apple_silicon") {
       lbl.append("Solo CPU, desactivar GPU Metal (", code, ")");
     } else {
       const vram = hw.gpu_vram_mb ? ` ${Math.round(hw.gpu_vram_mb / 1024)} GB` : "";
       lbl.append(`Proteger ${hw.gpu_name || "GPU"}${vram} (`, code, ", solo CPU)");
     }
-    $("hw-profile-note").textContent = hw.name
-      ? `Perfil detectado: ${hw.name} · ${hw.cpu_description || ""}`
-      : "";
+  }
+
+  // Perfil de hardware detectado por el servidor (Intel / Apple Silicon).
+  function initHardwareControls(hw) {
+    fillThreadOptions($("threads-select"), hw);
+    fillThreadOptions($("mp-threads"), hw);
+    setGpuLabel($("opt-no-gpu-label"), hw);
+    setGpuLabel($("mp-no-gpu-label"), hw);
+    $("hw-profile-note").textContent = hw.name || "";
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rendimiento de esta Mac: ajustes guardados en settings.json de cada equipo
+  // ---------------------------------------------------------------------------
+  const PERF_MODE_LABELS = { auto: "Automático", safe: "Seguro", max: "Máximo", custom: "Personalizado" };
+  const PREF_FIELDS = [
+    ["dialect", "dialect-select", "value"],
+    ["domain", "domain-select", "value"],
+    ["preset_id", "preset-select", "value"],
+    ["max_cpl", "cfg-cpl", "number"],
+    ["max_lines", "cfg-lines", "number"],
+    ["pause_split_ms", "cfg-pause", "number"],
+    ["fix_inverted_punctuation", "cfg-inverted", "checked"],
+    ["remove_muletillas", "cfg-muletillas", "checked"],
+    ["uppercase", "cfg-uppercase", "checked"],
+    ["custom_glossary", "cfg-glossary", "value"],
+  ];
+
+  function fillModelOptions(sel, env, recommendedId) {
+    const prev = sel.value;
+    sel.innerHTML = "";
+    ["turbo-q8", "large-v3-q5", "turbo-q5", "small-q8", "base-q8"].forEach((id) => {
+      const m = env.models[id];
+      if (!m) return;
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = `${m.installed ? "✓ " : "↓ "}${m.label}${id === recommendedId ? " · recomendado" : ""}`;
+      sel.appendChild(opt);
+    });
+    if (prev) sel.value = prev;
+  }
+
+  function renderMachineHardware(hw) {
+    const dl = $("machine-hw");
+    dl.textContent = "";
+    const vram = hw.gpu_vram_mb ? ` · ${Math.round(hw.gpu_vram_mb / 1024)} GB VRAM` : "";
+    [
+      ["Equipo", hw.name],
+      ["Procesador", hw.cpu_description],
+      ["Memoria", hw.ram_gb ? `${hw.ram_gb} GB RAM` : "—"],
+      ["GPU", `${hw.gpu_name || "—"}${vram}${hw.force_no_gpu ? " (Whisper usa solo CPU)" : " (Whisper usa Metal)"}`],
+    ].forEach(([k, v]) => {
+      const dt = document.createElement("dt");
+      dt.textContent = k;
+      const dd = document.createElement("dd");
+      dd.textContent = v || "—";
+      dl.append(dt, dd);
+    });
+  }
+
+  function renderBenchHistory(benchmarks) {
+    const ul = $("bench-history");
+    ul.textContent = "";
+    Object.values(benchmarks || {})
+      .sort((a, b) => (b.at || 0) - (a.at || 0))
+      .forEach((b) => {
+        const m = state.env && state.env.models[b.model_id];
+        const li = document.createElement("li");
+        const when = b.at ? new Date(b.at * 1000).toLocaleDateString("es-MX") : "";
+        li.textContent =
+          `${m ? m.label : b.model_id}: ${b.realtime_factor}× tiempo real ` +
+          `(${b.threads} hilos, ${b.force_no_gpu ? "CPU" : "GPU"}) ${when}`;
+        ul.appendChild(li);
+      });
+  }
+
+  // Refleja los ajustes efectivos del servidor en la tarjeta 2 y en el diálogo.
+  function applyMachinePayload(m, { firstLoad = false } = {}) {
+    if (!m) return;
+    state.machine = m;
+    const eff = m.effective;
+    const mode = m.settings.performance.mode || "auto";
+    if (state.env) {
+      fillModelOptions($("mp-model"), state.env, m.recommended_model_id);
+    }
+    $("threads-select").value = String(eff.threads);
+    $("mp-threads").value = String(eff.threads);
+    $("beam-mode").value = eff.fast_beam ? "fast" : "quality";
+    $("mp-beam").value = eff.fast_beam ? "fast" : "quality";
+    $("opt-no-gpu").checked = eff.force_no_gpu;
+    $("mp-no-gpu").checked = eff.force_no_gpu;
+    $("opt-enhance-voice").checked = eff.enhance_voice;
+    $("mp-enhance").checked = eff.enhance_voice;
+    $("mp-model").value = eff.model_id;
+    if (firstLoad && $("model-select").querySelector(`option[value="${eff.model_id}"]`)) {
+      $("model-select").value = eff.model_id;
+      updateModelHint();
+    }
+    const radio = document.querySelector(`input[name="perf-mode"][value="${mode}"]`);
+    if (radio) radio.checked = true;
+    $("perf-mode-pill").textContent = PERF_MODE_LABELS[mode] || mode;
+    $("perf-mode-pill").className = "pill " + (mode === "auto" ? "pill-info" : "pill-neutral");
+    renderMachineHardware(m.profile);
+    renderBenchHistory(m.settings.benchmarks);
+    $("machine-settings-path").textContent = m.settings_path || "";
+    updateHardwareBadges();
+  }
+
+  async function saveMachineSettings(patch, toastMsg = "") {
+    try {
+      const m = await apiJson("/api/settings", { method: "PUT", body: JSON.stringify(patch) });
+      applyMachinePayload(m);
+      if (toastMsg) showToast(toastMsg);
+    } catch (err) {
+      showToast(`No se pudo guardar el ajuste: ${err.message}`);
+    }
+  }
+
+  // Cambiar hilos, GPU o precisión a mano convierte el perfil en "Personalizado".
+  function saveCustomPerformance(threadsSel, beamSel, gpuChk) {
+    saveMachineSettings(
+      {
+        performance: {
+          mode: "custom",
+          threads: Number(threadsSel.value),
+          fast_beam: beamSel.value === "fast",
+          force_no_gpu: gpuChk.checked,
+        },
+      },
+      "Perfil personalizado guardado para esta Mac."
+    );
+  }
+
+  function readPreferencesFromUI() {
+    const prefs = {};
+    PREF_FIELDS.forEach(([key, id, kind]) => {
+      const el = $(id);
+      if (!el) return;
+      prefs[key] = kind === "checked" ? el.checked : kind === "number" ? Number(el.value) : el.value;
+    });
+    return prefs;
+  }
+
+  function applyPreferencesToUI(prefs) {
+    if (!prefs) return;
+    PREF_FIELDS.forEach(([key, id, kind]) => {
+      const el = $(id);
+      if (!el || prefs[key] === undefined || prefs[key] === null) return;
+      if (kind === "checked") el.checked = Boolean(prefs[key]);
+      else el.value = String(prefs[key]);
+    });
+  }
+
+  function schedulePreferencesSave() {
+    clearTimeout(state.prefsTimer);
+    state.prefsTimer = setTimeout(() => {
+      apiJson("/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ preferences: readPreferencesFromUI() }),
+      }).catch(() => {});
+    }, 600);
+  }
+
+  async function exportPreferences() {
+    try {
+      const data = await apiJson("/api/settings/export");
+      data.preferences = {
+        ...data.preferences,
+        ...readPreferencesFromUI(),
+        karaoke_enabled: $("st-karaoke").checked,
+        custom_style_presets: loadCustomPresets(),
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "autosubs-preferencias.json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    } catch (err) {
+      showToast(`No se pudo exportar: ${err.message}`);
+    }
+  }
+
+  async function importPreferences(file) {
+    if (!file) return;
+    try {
+      const payload = JSON.parse(await file.text());
+      const prefs = payload && payload.preferences;
+      if (!prefs || typeof prefs !== "object") {
+        throw new Error("el archivo no contiene preferencias de AutoSubs");
+      }
+      await apiJson("/api/settings/import", { method: "POST", body: JSON.stringify(payload) });
+      applyPreferencesToUI(prefs);
+      if (typeof prefs.karaoke_enabled === "boolean") {
+        $("st-karaoke").checked = prefs.karaoke_enabled;
+        $("st-karaoke").dispatchEvent(new Event("change"));
+      }
+      if (prefs.custom_style_presets && typeof prefs.custom_style_presets === "object") {
+        saveCustomPresets({ ...loadCustomPresets(), ...prefs.custom_style_presets });
+        renderCustomChips();
+      }
+      showToast("Preferencias importadas. Los ajustes de rendimiento de esta Mac no cambiaron.");
+    } catch (err) {
+      showToast(`No se pudo importar: ${err.message}`, 5000);
+    } finally {
+      $("prefs-import-input").value = "";
+    }
+  }
+
+  async function runBenchmark() {
+    const box = $("bench-result");
+    const btn = $("btn-benchmark");
+    box.classList.remove("hidden");
+    $("btn-bench-apply").classList.add("hidden");
+    box.textContent = "Iniciando prueba...";
+    btn.disabled = true;
+    try {
+      const res = await apiJson("/api/benchmark", {
+        method: "POST",
+        body: JSON.stringify({ model_id: $("mp-model").value }),
+      });
+      const timer = setInterval(async () => {
+        try {
+          const job = await apiJson(`/api/jobs/${res.job_id}`);
+          box.textContent = `${job.stage || "Procesando..."} (${job.progress || 0}%)`;
+          if (job.status === "done" || job.status === "error" || job.status === "cancelled") {
+            clearInterval(timer);
+            btn.disabled = false;
+            if (job.status !== "done") {
+              box.textContent = job.error || job.stage;
+              return;
+            }
+            const r = job.result;
+            const rec = state.env && state.env.models[r.recommended_model_id];
+            box.textContent =
+              `${r.realtime_factor}× tiempo real: ${r.audio_s} s de audio en ${r.elapsed_s} s ` +
+              `(${r.threads} hilos, ${r.force_no_gpu ? "solo CPU" : "GPU"}). ${r.note}` +
+              (r.recommended_model_id !== r.model_id && rec ? ` Recomendado: ${rec.label}.` : "");
+            if (r.recommended_model_id !== $("mp-model").value) {
+              const apply = $("btn-bench-apply");
+              apply.dataset.model = r.recommended_model_id;
+              apply.classList.remove("hidden");
+            }
+            const m = await apiJson("/api/settings");
+            applyMachinePayload(m);
+          }
+        } catch (err) {
+          clearInterval(timer);
+          btn.disabled = false;
+          box.textContent = `Error consultando la prueba: ${err.message}`;
+        }
+      }, 700);
+    } catch (err) {
+      btn.disabled = false;
+      box.textContent = err.message;
+    }
+  }
+
+  function wireMachinePanel() {
+    // Respaldo para WebKit sin Invoker Commands (command / commandfor).
+    if (!("commandForElement" in HTMLButtonElement.prototype)) {
+      document.addEventListener("click", (ev) => {
+        const btn = ev.target.closest("button[commandfor]");
+        const target = btn && $(btn.getAttribute("commandfor"));
+        if (!target) return;
+        const cmd = btn.getAttribute("command");
+        if (cmd === "show-modal") target.showModal();
+        else if (cmd === "close") target.close();
+      });
+    }
+    const dialog = $("machine-dialog");
+    // Respaldo de closedby="any" (cerrar al hacer clic fuera) para Safari/WebKit.
+    if (!("closedBy" in HTMLDialogElement.prototype)) {
+      const outside = (e) => {
+        const r = dialog.getBoundingClientRect();
+        return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+      };
+      let pressedOutside = false;
+      dialog.addEventListener("pointerdown", (e) => { pressedOutside = outside(e); });
+      dialog.addEventListener("pointerup", (e) => { if (pressedOutside && outside(e)) dialog.close(); });
+    }
+
+    document.querySelectorAll('input[name="perf-mode"]').forEach((radio) => {
+      radio.addEventListener("change", () => {
+        if (!radio.checked) return;
+        saveMachineSettings(
+          { performance: { mode: radio.value } },
+          `Perfil «${PERF_MODE_LABELS[radio.value]}» guardado para esta Mac.`
+        );
+      });
+    });
+    ["mp-threads", "mp-beam", "mp-no-gpu"].forEach((id) =>
+      $(id).addEventListener("change", () => saveCustomPerformance($("mp-threads"), $("mp-beam"), $("mp-no-gpu")))
+    );
+    ["threads-select", "beam-mode", "opt-no-gpu"].forEach((id) =>
+      $(id).addEventListener("change", () => saveCustomPerformance($("threads-select"), $("beam-mode"), $("opt-no-gpu")))
+    );
+    $("mp-model").addEventListener("change", () => {
+      $("model-select").value = $("mp-model").value;
+      updateModelHint();
+      saveMachineSettings({ performance: { model_id: $("mp-model").value } });
+    });
+    $("model-select").addEventListener("change", () => {
+      saveMachineSettings({ performance: { model_id: $("model-select").value } });
+    });
+    $("mp-enhance").addEventListener("change", () =>
+      saveMachineSettings({ performance: { enhance_voice: $("mp-enhance").checked } })
+    );
+    $("opt-enhance-voice").addEventListener("change", () =>
+      saveMachineSettings({ performance: { enhance_voice: $("opt-enhance-voice").checked } })
+    );
+    $("btn-perf-reset").addEventListener("click", async () => {
+      try {
+        const m = await apiJson("/api/settings/reset", { method: "POST", body: "{}" });
+        applyMachinePayload(m);
+        showToast("Rendimiento restablecido a lo recomendado para esta Mac.");
+      } catch (err) {
+        showToast(err.message);
+      }
+    });
+    $("btn-benchmark").addEventListener("click", runBenchmark);
+    $("btn-bench-apply").addEventListener("click", () => {
+      const id = $("btn-bench-apply").dataset.model;
+      if (!id) return;
+      $("mp-model").value = id;
+      $("mp-model").dispatchEvent(new Event("change"));
+      $("btn-bench-apply").classList.add("hidden");
+    });
+    $("btn-prefs-export").addEventListener("click", exportPreferences);
+    $("btn-prefs-import").addEventListener("click", () => $("prefs-import-input").click());
+    $("prefs-import-input").addEventListener("change", (ev) => importPreferences(ev.target.files[0]));
+
+    PREF_FIELDS.forEach(([, id]) => {
+      const el = $(id);
+      if (el) el.addEventListener("change", schedulePreferencesSave);
+    });
+    $("cfg-glossary").addEventListener("input", schedulePreferencesSave);
   }
 
   function updateHardwareBadges() {
@@ -994,7 +1328,13 @@
 
       updateModelSelect(data.environment);
       if (data.fonts) {
+        const firstFonts = !state.fontCatalog;
         updateFontCatalog(data.fonts);
+        // El preset inicial se aplica antes de conocer las fuentes, cuando aún
+        // no existe el peso "Semibold"; se reaplica si el usuario no lo tocó.
+        if (firstFonts && state.activePreset && styleSignature() === state.presetSignature) {
+          applyStylePreset(state.activePreset);
+        }
       }
 
       if (!state.userChoseMode) {
@@ -1015,16 +1355,16 @@
       );
 
       const hw = data.environment.hardware_profile || {};
-      if (!state.hwProfile) {
+      const firstLoad = !state.hwProfile;
+      if (firstLoad) {
         state.hwProfile = hw;
         initHardwareControls(hw);
       }
-      const recThreads = String(data.environment.recommended_threads || 3);
-      if (!state.threadsInitialized) {
-        $("threads-select").value = recThreads;
-        state.threadsInitialized = true;
+      applyMachinePayload(data.machine, { firstLoad });
+      if (firstLoad && data.machine) {
+        // Preferencias guardadas en esta Mac (la sesión activa, si existe, manda después).
+        applyPreferencesToUI(data.machine.settings.preferences);
       }
-      updateHardwareBadges();
 
       const meta = data.bridge.timeline_meta || {};
       const metaBox = $("resolve-meta-box");
@@ -1059,6 +1399,10 @@
           (state.cues.length === 0 && data.session.cue_count > 0))
       ) {
         applySession(data.session);
+        // Al restaurar una sesión al abrir la app, los selectores muestran las
+        // preferencias guardadas (lo que el usuario eligió por última vez), no
+        // la configuración con la que se generó esa sesión.
+        if (firstLoad && data.machine) applyPreferencesToUI(data.machine.settings.preferences);
       }
     } catch (err) {
       showToast(`Error leyendo estado: ${err.message}`);
@@ -1876,6 +2220,9 @@
       }
       if (m.currentTime * 1000 >= state.playUntilMs) {
         m.pause();
+        // Retrocede unos ms para que el monitor siga mostrando este subtítulo
+        // y no el siguiente cuando ambos se tocan.
+        m.currentTime = Math.max(0, (state.playUntilMs - 30) / 1000);
         state.playUntilMs = null;
         return;
       }
@@ -2153,6 +2500,8 @@
       mEl.addEventListener("play", onPlay);
       mEl.addEventListener("pause", onPause);
       mEl.addEventListener("timeupdate", onTimeUpdate);
+      // Muestra la duración en cuanto se conoce, sin esperar a reproducir.
+      mEl.addEventListener("loadedmetadata", onTimeUpdate);
     });
     $("btn-back").addEventListener("click", () => {
       const m = activeMedia();
@@ -2333,8 +2682,7 @@
     try { savedBg = localStorage.getItem("autosubs-stage-bg") || "black"; } catch (_) {}
     setStageBg(savedBg, false);
 
-    $("threads-select").addEventListener("change", updateHardwareBadges);
-    $("opt-no-gpu").addEventListener("change", updateHardwareBadges);
+    wireMachinePanel();
     ["st-weight", "st-ascii-fold", "st-size", "st-posy", "st-fill", "st-highlight", "st-outline", "st-outline-w", "st-shadow", "st-box", "st-box-color", "cfg-uppercase",
      "st-fill-a", "st-highlight-a", "st-outline-a", "st-shadow-a", "st-box-a", "st-anim-mode"]
       .forEach((id) => {

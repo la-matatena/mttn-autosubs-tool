@@ -30,6 +30,7 @@ REQUIRED_BUNDLE_ENTRIES = (
     f"{ARCHIVE_PREFIX}/exporters.py",
     f"{ARCHIVE_PREFIX}/font_manager.py",
     f"{ARCHIVE_PREFIX}/hardware_imac2017.py",
+    f"{ARCHIVE_PREFIX}/machine_settings.py",
     f"{ARCHIVE_PREFIX}/package_bundle.py",
     f"{ARCHIVE_PREFIX}/pyproject.toml",
     f"{ARCHIVE_PREFIX}/resolve_bridge.py",
@@ -55,6 +56,9 @@ REQUIRED_BUNDLE_ENTRIES = (
     f"{ARCHIVE_PREFIX}/ui/index.html",
     f"{ARCHIVE_PREFIX}/ui/styles.css",
     f"{ARCHIVE_PREFIX}/ui/app.js",
+    f"{ARCHIVE_PREFIX}/assets/AppIcon.icns",
+    f"{ARCHIVE_PREFIX}/assets/icon.png",
+    f"{ARCHIVE_PREFIX}/assets/icon.svg",
 )
 
 
@@ -111,6 +115,8 @@ _ALLOWED_EXTENSIONS = (
     ".sh",
     ".command",
     ".png",
+    ".icns",
+    ".svg",
 )
 
 
