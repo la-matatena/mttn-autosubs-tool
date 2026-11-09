@@ -24,6 +24,7 @@ REQUIRED_BUNDLE_ENTRIES = (
     f"{ARCHIVE_PREFIX}/BUILD",
     f"{ARCHIVE_PREFIX}/LICENSE",
     f"{ARCHIVE_PREFIX}/README.md",
+    f"{ARCHIVE_PREFIX}/README.en.md",
     f"{ARCHIVE_PREFIX}/autosubs_server.py",
     f"{ARCHIVE_PREFIX}/autosubs_es_test.py",
     f"{ARCHIVE_PREFIX}/exporters.py",

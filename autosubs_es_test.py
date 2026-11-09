@@ -1178,11 +1178,13 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
 
     zip_bytes = package_bundle.build_zip_bytes(root)
     meta = package_bundle.verify_zip_bytes(zip_bytes)
-    self.assertEqual(meta["file_count"], 34, meta["entries"])
+    self.assertEqual(meta["file_count"], 35, meta["entries"])
     self.assertNotIn("AutoSubs_ES/__init__.py", meta["entries"])
     self.assertIn("AutoSubs_ES/.gitignore", meta["entries"])
     self.assertIn("AutoSubs_ES/BUILD", meta["entries"])
     self.assertIn("AutoSubs_ES/LICENSE", meta["entries"])
+    self.assertIn("AutoSubs_ES/README.md", meta["entries"])
+    self.assertIn("AutoSubs_ES/README.en.md", meta["entries"])
     self.assertIn("AutoSubs_ES/pyproject.toml", meta["entries"])
     self.assertIn("AutoSubs_ES/font_manager.py", meta["entries"])
     self.assertIn(

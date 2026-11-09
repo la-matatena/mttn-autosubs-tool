@@ -1,5 +1,7 @@
 # MTTN AutoSubs Tool
 
+> 🌐 **Español** | [English](README.en.md)
+
 [![CI & Release](https://github.com/la-matatena/mttn-autosubs-tool/actions/workflows/ci-release.yml/badge.svg)](https://github.com/la-matatena/mttn-autosubs-tool/actions/workflows/ci-release.yml)
 [![Latest Release](https://img.shields.io/github/v/release/la-matatena/mttn-autosubs-tool?color=8367c7&label=release)](https://github.com/la-matatena/mttn-autosubs-tool/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-8367c7.svg)](LICENSE)
@@ -8,175 +10,179 @@
 [![Platform: macOS](https://img.shields.io/badge/platform-macOS%20Intel%20%7C%20Apple%20Silicon-6a4fb3.svg)](install_imac.sh)
 [![Brand: La Matatena](https://img.shields.io/badge/La%20Matatena-MTTN-8367c7.svg)](https://github.com/la-matatena)
 
-**MTTN AutoSubs Tool** (by **[La Matatena](https://la-matatena.com)** · [@la-matatena](https://github.com/la-matatena)) helps Spanish-language creators generate accurate subtitles locally on macOS—either as a standalone desktop and CLI studio or paired directly with DaVinci Resolve 20 Free and Studio—without sending audio to cloud servers or exhausting GPU VRAM. It ships tuned for a 2017 Retina 4K iMac (`3 GHz Quad-Core Intel Core i5`, `32 GB DDR4 RAM`, `2 GB AMD Radeon Polaris VRAM`), runs persistent-prompt 8-bit and full Large-v3 Whisper models, and recognizes Spanish board-game terms and anglicisms out of the box.
+**MTTN AutoSubs Tool** (desarrollado por **[La Matatena](https://la-matatena.com)** · [@la-matatena](https://github.com/la-matatena)) permite a creadores y editores hispanohablantes generar subtítulos precisos de forma 100% local en macOS—ya sea como una aplicación de escritorio y CLI independiente, o sincronizada directamente con la línea de tiempo de DaVinci Resolve 20 (versiones Free y Studio)—sin enviar audio a servidores en la nube ni saturar la memoria VRAM de la tarjeta gráfica.
 
-> **La Matatena Open Projects Convention:** All open tools under [`github.com/la-matatena`](https://github.com/la-matatena) follow the [**MTTN Standards**](https://github.com/la-matatena/.github/blob/main/CONVENTIONS.md) naming convention (**`MTTN` + `TwoWordNameInPascalCase` + `[Suffix]`**, e.g., **MTTN AutoSubs Tool**, **MTTN PaperCraft Studio**) and La Matatena's `#8367c7` / `#6a4fb3` brand palette.
+Está optimizado especialmente para equipos como la iMac 2017 Retina 4K (`Intel Core i5 Quad-Core a 3 GHz`, `32 GB RAM DDR4`, `2 GB VRAM AMD Radeon Polaris`) y Apple Silicon (`M1/M2/M3/M4`). Ejecuta modelos Whisper GGML de 8 bits y Large-v3 completo con persistencia de contexto, integrando corrección fonética automática para términos de juegos de mesa y anglicismos del mundo lúdico.
 
-## Interface preview
+La interfaz de usuario sigue los estándares oscuros neutros de macOS (superficies zinc/carbón y tipografía limpia), reservando el morado distintivo de La Matatena (`#8367c7`) únicamente para botones de acción clave, selecciones activas y resaltados interactivos.
 
-MTTN AutoSubs Tool adapts the workflow for standalone local video subtitling, DaVinci Resolve 20 timeline insertion, and animated custom font packs:
+> **Convención de Proyectos de La Matatena:** Todas las herramientas bajo [`github.com/la-matatena`](https://github.com/la-matatena) siguen la nomenclatura [**MTTN Standards**](https://github.com/la-matatena/.github/blob/main/CONVENTIONS.md) (**`MTTN` + `NombreDeDosPalabras` + `[Sufijo]`**, ej. **MTTN AutoSubs Tool**, **MTTN PaperCraft Studio**) y la paleta de identidad visual `#8367c7` / `#6a4fb3`.
 
-![MTTN AutoSubs studio overview in DaVinci Resolve 20 mode showing Large-v3-Turbo Q8_0 model selection, the 16:9 karaoke preview monitor, waveform timeline, Spanish cue editor, and Resolve push controls](docs/images/autosubs-es-overview.png)
+## Vista previa de la interfaz
 
-*Three-column studio in **DaVinci Resolve 20** mode with `Large-v3-Turbo Q8_0` selected, **Juegos de Mesa + Anglicismos (BGG)** active, and live Spanish karaoke rendering in **Monitor previo**.*
+MTTN AutoSubs Tool organiza el flujo de trabajo en **6 pasos numerados** y permite alternar con un solo clic entre el **Modo DaVinci Resolve 20** y el **Modo App Independiente**:
 
-![MTTN AutoSubs standalone application mode showing board-game and anglicism cue cleanup plus standalone TXT, SRT, VTT, ASS, FCPXML, JSON, and burned-in MP4 export controls](docs/images/autosubs-es-standalone-models.png)
+![Vista general del estudio MTTN AutoSubs en modo DaVinci Resolve 20 mostrando la selección del modelo Large-v3-Turbo Q8_0, el monitor previo 16:9 con subtítulos estilo karaoke, la línea de tiempo con forma de onda, el editor de subtítulos en español y los controles de envío a Resolve](docs/images/autosubs-es-overview.png)
 
-***App Independiente** mode applying the **Juegos de Mesa + Anglicismos (BGG)** glossary and phonetic repair (`Eurogame`, `meeples`, `Deckbuilding`, `playmat`, `Worker Placement`, `Kickstarter`, `BGG`) alongside standalone `.TXT`, `.SRT`, `.VTT`, `.ASS`, `.FCPXML`, `.JSON`, and burned-in `.MP4` exports.*
+*Estudio en 3 columnas en modo **DaVinci Resolve 20** con el modelo `Large-v3-Turbo Q8_0` seleccionado, temática **Juegos de Mesa + Anglicismos (BGG)** activa y reproducción sincronizada en el **Monitor previo**.*
 
-![MTTN AutoSubs custom typography panel displaying the five-font Anitype Journal animated flipbook pack, missing Spanish glyph notice, and ASCII glyph folding preview](docs/images/autosubs-es-anitype-fonts.png)
+![Modo de aplicación independiente de MTTN AutoSubs mostrando la corrección fonética de términos lúdicos y anglicismos junto a los botones de exportación independiente a TXT, SRT, VTT, ASS, FCPXML, JSON y renderizado de video MP4 subtitulado](docs/images/autosubs-es-standalone-models.png)
 
-***Anitype Journal** five-font flipbook animation controls paired with OpenType `cmap` Spanish glyph detection and non-destructive ASCII adaptation for `Text+` templates.*
+*Modo **App Independiente (Standalone)** aplicando el glosario de **Juegos de Mesa + Anglicismos (BGG)** y reparación fonética (`Eurogame`, `meeples`, `Deckbuilding`, `playmat`, `Worker Placement`, `Kickstarter`, `BGG`), con exportaciones directas a `.TXT`, `.SRT`, `.VTT`, `.ASS`, `.FCPXML`, `.JSON` y renderizado de video `.MP4` por CPU.*
 
-## Documentation
+![Panel de tipografía personalizada de MTTN AutoSubs mostrando el paquete de animación flipbook de cinco fuentes Anitype Journal, el aviso de glifos en español faltantes y la previsualización de adaptación de glifos ASCII](docs/images/autosubs-es-anitype-fonts.png)
 
-Read the detailed guides for workflows, hardware tuning, Spanish RAE rules, and troubleshooting:
+*Controles de animación flipbook con 5 variantes tipográficas (**Anitype Journal**), detección automática de glifos en español en tablas OpenType `cmap` y adaptación no destructiva a caracteres ASCII para plantillas `Text+`.*
 
-| Guide | Audience | Coverage |
+## Documentación detallada
+
+Consulta las guías completas para conocer los flujos de trabajo, ajustes de hardware, reglas RAE y resolución de problemas:
+
+| Guía | Destinatarios | Contenido |
 | :--- | :--- | :--- |
-| [User guide](docs/user-guide.md) | Video editors and creators | macOS app installation, standalone CLI and MP4 export, Resolve Free and Studio audio export, styling, and timeline insertion. |
-| [Engineering design document](docs/design-doc.md) | Engineers and maintainers | System design, hardware constraints, rejected alternatives, subsystem specifications, localhost CSRF guards, and verification strategy. |
-| [Architecture and 2017 iMac tuning](docs/imac-2017-architecture.md) | Developers and technical editors | System diagram, CPU and VRAM governor, 32 GB GGML model catalog, `--carry-initial-prompt`, Resolve Lua IPC, and HTTP API endpoints. |
-| [Spanish subtitling reference](docs/spanish-subtitling-reference.md) | Editors and localization teams | Board-game domain and anglicism repairs, dialect prompts, BPE and UTF-8 repair, inverted punctuation repair, and RAE weak-ending wrapping. |
-| [Troubleshooting guide](docs/troubleshooting.md) | Video editors | Gatekeeper permissions, Homebrew binary detection, manual SRT import, Media Pool `Text+` setup, and 2 GB VRAM tips. |
+| [Guía de usuario](docs/user-guide.md) | Creadores y editores de video | Instalación en macOS, uso independiente y CLI, exportación MP4, flujo con DaVinci Resolve Free y Studio, estilos e inserción en timeline. |
+| [Documento de diseño de ingeniería](docs/design-doc.md) | Desarrolladores y mantenedores | Arquitectura del sistema, límites de hardware, alternativas descartadas, especificación de subsistemas, seguridad CSRF en localhost y pruebas. |
+| [Arquitectura y optimización para iMac 2017](docs/imac-2017-architecture.md) | Desarrolladores y técnicos | Diagrama de bloques, gobernador de CPU y VRAM, catálogo de modelos GGML para 32 GB, `--carry-initial-prompt`, IPC Lua para Resolve y API HTTP. |
+| [Referencia de subtitulado en español](docs/spanish-subtitling-reference.md) | Editores y transcriptores | Correcciones de jerga lúdica y anglicismos, prompts dialectales, reparación de UTF-8 y BPE, signos de puntuación invertidos (`¿`, `¡`) y división de líneas según la RAE. |
+| [Guía de resolución de problemas](docs/troubleshooting.md) | Editores de video | Permisos de Gatekeeper en macOS, detección de binarios de Homebrew, importación manual de SRT, configuración de `Text+` en Media Pool y gestión de 2 GB de VRAM. |
 
-## Hardware optimization for the 2017 Retina 4K iMac
+## Optimización de hardware para iMac Retina 4K 2017 y Apple Silicon
 
-Every processing step is tuned for a 2017 iMac (Retina 4K, 21.5-inch) with a 3 GHz Quad-Core Intel Core i5 (`x86_64` AVX2), AMD Radeon Polaris 2 GB VRAM, 32 GB 2400 MHz DDR4 RAM, and macOS 15.8.1:
+Cada fase del proceso está calibrada para aprovechar al máximo una iMac 2017 (Retina 4K, 21.5") con Intel Core i5 Quad-Core a 3 GHz (`x86_64` AVX2), GPU AMD Radeon Polaris de 2 GB VRAM, 32 GB RAM DDR4 y macOS 15+, funcionando igualmente de forma ultra veloz en procesadores Apple Silicon (`M1/M2/M3/M4`):
 
-| Component | Configuration | Benefit |
+| Componente | Configuración | Beneficio |
 | :--- | :--- | :--- |
-| Inference engine | Native `whisper-cpp` (`whisper-cli`) | Runs compiled `x86_64` AVX2 binaries natively without missing `ctranslate2` Intel wheels. |
-| GPU protection | Enforces the `--no-gpu` (`-ng`) flag | Keeps 0 MB load on the 2 GB Radeon Polaris GPU so macOS WindowServer and DaVinci Resolve 20 avoid VRAM errors during 4K playback. |
-| Memory allocation | `ggml-large-v3-turbo-q8_0.bin` default (`1.55 GB` RAM) | Takes advantage of your 32 GB DDR4 RAM for near-lossless 8-bit quantization without sacrificing Turbo speed. |
-| Prompt persistence | Auto-detects `--carry-initial-prompt` with `-mc 64` | Preserves Spanish punctuation and board-game vocabulary conditioning across every 30-second window of long videos. |
-| CPU thread governor | `3` threads with `nice -n 10` when Resolve runs (`4` standalone) | Uses full Core i5 throughput in standalone mode while reserving 1 core whenever DaVinci Resolve 20 is open. |
-| Timeline rendering | Native SRT, CPU `libx264` MP4 burn-in, or GPU-light `Text+` | Burns standalone MP4 files on CPU with 0 MB VRAM, or renders native 3840x2160 vector Resolve titles safely. |
+| Motor de transcripción | `whisper-cpp` nativo (`whisper-cli`) | Binarios compilados en C++ con AVX2 o ARM Neon, sin dependencias complejas de Python ni caídas de `ctranslate2`. |
+| Protección de GPU | Forzado del parámetro `--no-gpu` (`-ng`) en Polaris | Mantiene 0 MB de carga en la GPU Radeon de 2 GB, evitando fallos de memoria en DaVinci Resolve 20 y WindowServer durante reproducción en 4K. |
+| Asignación de memoria | Modelo por defecto `ggml-large-v3-turbo-q8_0.bin` (1.55 GB RAM) | Aprovecha los 32 GB de RAM para ofrecer cuantización de 8 bits casi sin pérdida a la velocidad de la arquitectura Turbo. |
+| Persistencia de contexto | Detección automática de `--carry-initial-prompt` con `-mc 64` | Mantiene el vocabulario de juegos de mesa y la puntuación correcta en español a lo largo de cada ventana de 30 segundos en videos largos. |
+| Gobernador de CPU | 3 hilos con `nice -n 10` cuando Resolve está abierto (4 hilos en independiente) | Aprovecha toda la potencia del procesador en modo independiente mientras reserva 1 núcleo cuando DaVinci Resolve está en uso para no congelar la edición. |
+| Renderizado de video | SRT nativo, quemado MP4 con `libx264` en CPU o títulos vectoriales `Text+` | Quema subtítulos en MP4 puramente por CPU con 0 MB de VRAM, o genera títulos vectoriales en DaVinci Resolve con total fluidez. |
 
-## Spanish Whisper models for 32 GB RAM
+## Catálogo de modelos Whisper en español
 
-Your 32 GB DDR4 memory pool removes RAM bottlenecks for larger quantized GGML models. Download models inside **2. Motor Whisper (CPU i5)** with automatic HTTP resume support:
+Tener suficiente memoria RAM (como los 32 GB de la iMac 2017 o los chips Apple Silicon) elimina los cuellos de botella de memoria. Puedes descargar cualquiera de los modelos directamente desde el paso **2. Motor Whisper (CPU i5)** con soporte de reanudación automática:
 
-| Model ID | Filename | Download size | Peak RAM | Approximate Spanish WER | Recommended role |
+| ID del modelo | Archivo | Tamaño de descarga | RAM máxima | WER aprox. en español | Caso de uso recomendado |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `turbo-q8` | `ggml-large-v3-turbo-q8_0.bin` | 834 MB | 1,550 MB | 2.1% | Default recommended choice: 8-bit near-lossless Spanish and anglicism accuracy with 4-layer Turbo speed. |
-| `large-v3-q5` | `ggml-large-v3-q5_0.bin` | 1,080 MB | 2,100 MB | 1.9% | Maximum Spanish and bilingual board-game accuracy with a full 32-layer decoder when speed is secondary. |
-| `turbo-q5` | `ggml-large-v3-turbo-q5_0.bin` | 547 MB | 1,100 MB | 2.3% | Balanced 5-bit Turbo alternative for long episodes that prioritize faster turnaround. |
-| `small-q8` | `ggml-small-q8_0.bin` | 252 MB | 650 MB | 5.2% | Fast rough cuts and quick dialogue drafts on 3 or 4 CPU threads. |
-| `base-q8` | `ggml-base-q8_0.bin` | 82 MB | 320 MB | 8.2% | Lightweight pipeline validation when bandwidth is constrained. |
+| `turbo-q8` | `ggml-large-v3-turbo-q8_0.bin` | 834 MB | 1,550 MB | 2.1% | **Recomendado por defecto:** precisión casi idéntica a FP16 con cuantización de 8 bits y velocidad Turbo de 4 capas. |
+| `large-v3-q5` | `ggml-large-v3-q5_0.bin` | 1,080 MB | 2,100 MB | 1.9% | Máxima precisión posible en español y términos bilingües con el decodificador completo de 32 capas cuando el tiempo no apremia. |
+| `turbo-q5` | `ggml-large-v3-turbo-q5_0.bin` | 547 MB | 1,100 MB | 2.3% | Alternativa balanceada de 5 bits para transcripción rápida en episodios extensos. |
+| `small-q8` | `ggml-small-q8_0.bin` | 252 MB | 650 MB | 5.2% | Borradores rápidos y primeros cortes de edición en 3 o 4 hilos de CPU. |
+| `base-q8` | `ggml-base-q8_0.bin` | 82 MB | 320 MB | 8.2% | Validación rápida de tuberías o entornos con conexión a internet muy limitada. |
 
-## Board-game vocabulary and anglicisms (`juegos_mesa`)
+## Vocabulario especializado de juegos de mesa y anglicismos (`juegos_mesa`)
 
-Spanish board-game channels mix regional Spanish grammar with English mechanics, publisher names, and Hispanicized pronunciations. MTTN AutoSubs Tool pairs **Temática y anglicismos** (`Juegos de Mesa + Anglicismos (BGG)` by default) with any regional **Acento regional** (`Español Neutro`, `España (Peninsular)`, `México / LatAm`, or `Río de la Plata`):
+En los canales y contenidos de juegos de mesa en español es habitual mezclar términos en inglés, nombres de editoriales, mecánicas y pronunciaciones castellanizadas. MTTN AutoSubs Tool combina el selector **Temática y anglicismos** (`Juegos de Mesa + Anglicismos (BGG)` por defecto) con cualquier **Acento regional** (`Español Neutro`, `España (Peninsular)`, `México / LatAm` o `Río de la Plata`):
 
--   **Persistent Whisper conditioning**: `build_spanish_initial_prompt` seeds `whisper-cli --prompt` with domain terms (`BoardGameGeek`, `BGG`, `eurogame`, `ameritrash`, `meeples`, `deckbuilding`, `worker placement`, `set collection`, `draft`, `setup`, `playmat`, `downtime`, `kingmaking`, `alpha player`, `filler`, `gateway`, `Kickstarter`, `Gamefound`) plus your **Glosario personalizado** and keeps them active across the whole timeline when `whisper-cli` supports `--carry-initial-prompt`.
--   **Deterministic phonetic repair**: `BOARDGAME_PHONETIC_FIXES` corrects ~70 common Spanish Whisper phonetic mistakes after transcription—for example turning `eurogueim` into `eurogame`, `mipels` into `meeples`, `dec bilding` into `deckbuilding`, `setap` into `setup`, `pleimat` into `playmat`, `dauntaim` into `downtime`, `worker pleisment` into `worker placement`, `kikstarter` into `Kickstarter`, and `be ge ge` into `BGG`—while preserving case-insensitive custom glossary overrides from **+ Términos BGG**.
--   **Hesitation-aware punctuation**: `_repair_inverted_spanish_punctuation` skips leading hesitations (`eh`, `em`, `mm`) before inserting `¿` or `¡`, turning `eh Sabías... ?` into `eh ¿Sabías...?` before optional filler cleanup runs.
+- **Condicionamiento continuo de Whisper**: `build_spanish_initial_prompt` alimenta el prompt de `whisper-cli` con términos lúdicos esenciales (`BoardGameGeek`, `BGG`, `eurogame`, `ameritrash`, `meeples`, `deckbuilding`, `worker placement`, `set collection`, `draft`, `setup`, `playmat`, `downtime`, `kingmaking`, `alpha player`, `filler`, `gateway`, `Kickstarter`, `Gamefound`) más los términos de tu **Glosario personalizado**, manteniéndolos activos en todo el video mediante `--carry-initial-prompt`.
+- **Reparación fonética determinista**: `BOARDGAME_PHONETIC_FIXES` corrige de inmediato más de 70 errores fonéticos frecuentes de Whisper en español tras la transcripción—por ejemplo convirtiendo `eurogueim` en `eurogame`, `mipels` en `meeples`, `dec bilding` en `deckbuilding`, `setap` en `setup`, `pleimat` en `playmat`, `dauntaim` en `downtime`, `worker pleisment` en `worker placement`, `kikstarter` en `Kickstarter` y `be ge ge` en `BGG`—respetando siempre las mayúsculas y minúsculas correctas.
+- **Puntuación respetuosa con muletillas**: `_repair_inverted_spanish_punctuation` detecta titubeos y muletillas iniciales (`eh`, `em`, `mm`) antes de colocar los signos de apertura `¿` o `¡`, convirtiendo frases como `eh Sabías... ?` en `eh ¿Sabías...?` antes de ejecutar la limpieza opcional de muletillas.
 
-## Install MTTN AutoSubs Tool on macOS
+## Instalación en macOS
 
-The installer sets up the `whisper-cpp` and `ffmpeg` packages through Homebrew, creates the standalone `~/Applications/MTTN AutoSubs Tool.app` macOS application bundle, copies the DaVinci Resolve 20 Lua bridge scripts and Fusion templates, and downloads the default `ggml-large-v3-turbo-q8_0.bin` Spanish model.
+El instalador configura automáticamente las herramientas `whisper-cpp` y `ffmpeg` mediante Homebrew, crea el paquete de aplicación nativo `~/Applications/MTTN AutoSubs Tool.app`, instala los scripts Lua y plantillas Fusion para DaVinci Resolve 20, y descarga el modelo predeterminado `ggml-large-v3-turbo-q8_0.bin`:
 
-1.  Open **Terminal** and clone or change to the `mttn-autosubs-tool` directory:
+1. Abre **Terminal** y clona o ingresa a la carpeta del repositorio:
 
-    ```bash
-    git clone https://github.com/la-matatena/mttn-autosubs-tool.git
-    cd mttn-autosubs-tool
-    ```
+   ```bash
+   git clone https://github.com/la-matatena/mttn-autosubs-tool.git
+   cd mttn-autosubs-tool
+   ```
 
-2.  Run the installer script:
+2. Ejecuta el script de instalación:
 
-    ```bash
-    ./install_imac.sh
-    ```
+   ```bash
+   ./install_imac.sh
+   ```
 
-    Optional: Pass `--model=large-v3-q5` to download the full 32-layer maximum-accuracy Spanish model instead, or pass `--skip-model` to download models later inside the UI.
+   *Opcional:* Puedes pasar `--model=large-v3-q5` para descargar directamente el modelo de máxima precisión de 32 capas, o `--skip-model` si prefieres descargarlo después desde la interfaz.
 
-3.  Launch **MTTN AutoSubs Tool** from **Applications** (`MTTN AutoSubs Tool.app`), double-click `Iniciar AutoSubs ES.command`, or run the server from Terminal:
+3. Abre **MTTN AutoSubs Tool** desde tu carpeta de **Aplicaciones** (`MTTN AutoSubs Tool.app`), haz doble clic en `Iniciar AutoSubs ES.command`, o inicia el servidor desde Terminal:
 
-    ```bash
-    python3 -B autosubs_server.py --app-window
-    ```
+   ```bash
+   python3 -B autosubs_server.py --app-window
+   ```
 
-## Run as a standalone macOS application or CLI
+## Uso en Modo Independiente (Standalone) o CLI
 
-You do not need DaVinci Resolve open or installed to subtitle videos, interviews, or board-game reviews:
+No es obligatorio tener DaVinci Resolve abierto ni instalado para subtitular videos, entrevistas, podcasts o reseñas:
 
-1.  Switch the top bar to **App Independiente** (the studio also selects this mode automatically on standalone app launches or when DaVinci Resolve is not running).
-2.  Drag any local audio or video file (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov`, or `.mkv`) onto the upload zone in **1. Audio de origen**. Video uploads stream directly inside **Monitor previo** with frame-accurate Spanish subtitles and audio scrubbing.
-3.  Configure **2. Motor Whisper (CPU i5)** (`Large-v3-Turbo Q8_0` or `Large-v3 Completo Q5_0`) and **3. Español, dominio y reglas RAE**, then click **Transcribir en Español**.
-4.  Export from **6. Exportar (Modo Independiente)**:
-    -   **Subtitle files**: Download `.SRT Estándar`, `.SRT (01:00 TC)`, `.VTT Web`, `.ASS Karaoke`, `.FCPXML 1.9`, or `.JSON Palabras`.
-    -   **Clean scripts and copy**: Export `.TXT Guion` (plain prose paragraphs), `.TXT + Tiempos` (timestamped review transcript), or copy the script to your clipboard with **Copiar guion**.
-    -   **Burned-in MP4 video**: Click **Render MP4 Subtitulado** to encode an H.264 `.mp4` video with `libx264` CPU encoding and zero GPU Polaris VRAM pressure.
+1. Selecciona **App Independiente** en el selector de modo de la barra superior (el sistema también activa este modo automáticamente si abres la app y DaVinci Resolve no está en ejecución).
+2. Arrastra cualquier archivo de audio o video local (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov` o `.mkv`) sobre la zona de carga en **1. Audio de origen**. Los videos se reproducen de inmediato en el **Monitor previo** con subtítulos sincronizados cuadro por cuadro y barra de desplazamiento de audio.
+3. Ajusta las opciones en **2. Motor Whisper (CPU i5)** y **3. Español, dominio y reglas RAE**, y haz clic en **Transcribir en Español**.
+4. Exporta tus resultados desde la tarjeta **6. Exportar (Modo Independiente)**:
+   - **Archivos de subtítulos**: Descarga `.SRT Estándar`, `.SRT (01:00 TC)`, `.VTT Web`, `.ASS Karaoke`, `.FCPXML 1.9` o `.JSON Palabras`.
+   - **Guiones limpios y transcripciones**: Exporta `.TXT Guion` (texto continuo en párrafos limpios), `.TXT + Tiempos` (guion con marcas de tiempo para revisión) o copia todo el texto al portapapeles con **Copiar guion**.
+   - **Video MP4 con subtítulos integrados**: Haz clic en **Render MP4 Subtitulado** para codificar un video H.264 `.mp4` usando `libx264` en el procesador (CPU), con 0 MB de impacto en la VRAM de tu tarjeta gráfica.
 
-### Headless CLI transcription
+### Transcripción por línea de comandos (CLI sin interfaz)
 
-Transcribe local media files directly from Terminal into `.srt`, `.vtt`, `.ass`, `.txt`, and `.json` files without launching the browser UI:
+También puedes transcribir archivos de audio y video directamente desde la terminal hacia archivos `.srt`, `.vtt`, `.ass`, `.txt` y `.json`:
 
 ```bash
 python3 -B autosubs_server.py \
-  --cli INPUT_MEDIA \
+  --cli ARCHIVO_DE_ENTRADA \
   --model turbo-q8 \
   --dialect neutro \
   --domain juegos_mesa \
-  --output-srt OUTPUT_SRT
+  --output-srt RUTA_SALIDA_SRT
 ```
 
-Replace the following:
+Parámetros a sustituir:
 
--   `INPUT_MEDIA`: the local audio or video file path to transcribe.
--   `OUTPUT_SRT`: the destination path for the formatted Spanish `.srt` subtitle file.
+- `ARCHIVO_DE_ENTRADA`: ruta al archivo de audio o video que deseas transcribir.
+- `RUTA_SALIDA_SRT`: ruta donde se guardará el archivo de subtítulos `.srt` resultante.
 
-## Use MTTN AutoSubs Tool with DaVinci Resolve 20
+## Uso sincronizado con DaVinci Resolve 20
 
-Switch the top bar to **DaVinci Resolve 20** whenever you want round-trip timeline integration with DaVinci Resolve 20 Free or DaVinci Resolve 20 Studio. See the [user guide](docs/user-guide.md) for detailed instructions.
+Selecciona **DaVinci Resolve 20** en la barra superior cuando desees una integración bidireccional directa con DaVinci Resolve 20 Free o DaVinci Resolve 20 Studio. Para más detalles, consulta la [guía de usuario](docs/user-guide.md).
 
-### Export timeline audio
+### 1. Exportar audio desde la línea de tiempo
 
-1.  Open your project and target timeline in DaVinci Resolve 20.
-2.  In the top menu bar, click **Workspace** > **Scripts** > **1 - MTTN AutoSubs - Exportar Audio** (or click **Exportar audio (Studio)** directly in Resolve Studio).
-3.  Wait until the DaVinci Resolve Console reports that the audio bounce is complete, then return to MTTN AutoSubs Tool and click **Leer buzón**.
+1. Abre tu proyecto y línea de tiempo activa en DaVinci Resolve 20.
+2. En la barra de menús superior de DaVinci Resolve, haz clic en **Workspace** > **Scripts** > **1 - MTTN AutoSubs - Exportar Audio** (o pulsa **Exportar audio (Studio)** directamente en la interfaz de AutoSubs si tienes Resolve Studio).
+3. Cuando la consola de Resolve confirme la exportación del audio, regresa a MTTN AutoSubs Tool y presiona **Leer buzón**.
 
-### Transcribe and edit Spanish subtitles
+### 2. Transcribir y editar subtítulos en español
 
-1.  In **3. Español, dominio y reglas RAE**, select **Juegos de Mesa + Anglicismos (BGG)** (or **General / Documental** / **Tech y Edición Vídeo**) alongside your regional Spanish **Acento regional** (`Español Neutro`, `España`, `México / LatAm`, or `Río de la Plata`).
-2.  Add specific game titles, publisher names, or custom terms in **Glosario personalizado**, or click **+ Términos BGG** to prefill starter board-game vocabulary.
-3.  Click **Transcribir en Español**, then inspect cues in **Monitor previo** and the center editor (`÷`, `+Unir`, `×`, CPS badges, and **Aplicar reglas RAE y glosario**).
+1. En **3. Español, dominio y reglas RAE**, selecciona **Juegos de Mesa + Anglicismos (BGG)** (o **General / Documental** / **Tech y Edición Vídeo**) junto con el **Acento regional** que corresponda (`Español Neutro`, `España`, `México / LatAm` o `Río de la Plata`).
+2. Agrega nombres de juegos, editoriales o términos propios en **Glosario personalizado**, o pulsa **+ Términos BGG** para cargar un vocabulario lúdico inicial.
+3. Haz clic en **Transcribir en Español**, y revisa los subtítulos en el **Monitor previo** y en el editor central (`÷` para dividir, `+Unir`, `×` para eliminar, etiquetas de CPS e indicador de **Aplicar reglas RAE y glosario**).
 
-### Use custom fonts and animated packs
+### 3. Tipografías personalizadas y paquetes animados
 
-Upload `.otf`, `.ttf`, `.ttc`, or `.zip` font archives in **4. Estilo y tipografía** to preview them in **Monitor previo** and install them into `~/Library/Fonts` for DaVinci Resolve 20:
+Arrastra fuentes `.otf`, `.ttf`, `.ttc` o archivos comprimidos `.zip` en **4. Estilo y tipografía** para verlas en el **Monitor previo** e instalarlas en `~/Library/Fonts` para DaVinci Resolve:
 
--   Numbered variant packs (such as the five-font `Anitype Journal` flipbook archive) group automatically into a single **Packs animados (Flipbook)** entry.
--   Fonts lacking Spanish glyphs (`á`, `é`, `í`, `ó`, `ú`, `ü`, `ñ`, `¿`, `¡`) trigger a glyph banner with an **Adaptar glifos ASCII** toggle so `Text+` renders complete words instead of blank spaces.
--   Native DaVinci Resolve subtitle tracks (`ST`) disallow Fusion plugins and expressions, so MTTN AutoSubs Tool pairs custom flipbook typography with `AutoSubs_ES_Anitype_Animado` on a Video (`V`) track or sliced `FCPXML 1.9` Basic Titles.
+- Los paquetes con variantes numeradas (como el set de cinco fuentes de `Anitype Journal`) se agrupan automáticamente bajo una sola opción en **Packs animados (Flipbook)**.
+- Si una fuente carece de caracteres en español (`á`, `é`, `í`, `ó`, `ú`, `ü`, `ñ`, `¿`, `¡`), el sistema muestra una advertencia y ofrece el interruptor **Adaptar glifos ASCII** para que `Text+` muestre palabras completas en lugar de caracteres vacíos.
+- Las pistas de subtítulos nativas de DaVinci Resolve (`ST`) no admiten plugins ni expresiones de Fusion; por ello, MTTN AutoSubs Tool conecta los estilos animados con `AutoSubs_ES_Anitype_Animado` en una pista de video estándar (`V`) o genera títulos básicos cortados mediante `FCPXML 1.9`.
 
-### Insert subtitles into DaVinci Resolve 20
+### 4. Insertar los subtítulos en DaVinci Resolve 20
 
-1.  In **5. DaVinci Resolve 20**, select an insertion mode:
-    -   **Pista Subtítulos Nativa (0 MB VRAM)**: Adds a native `.srt` subtitle track for smooth 4K playback.
-    -   **Clips Text+ GPU-Light (1 nodo)**: Inserts Fusion `Text+` clips styled with Shading Elements, or cycles up to five font variants plus posterized jitter with `AutoSubs_ES_Anitype_Animado` (single active branch per frame). Before your first `Text+` push, drag one preset from **Effects** > **Titles** > **MTTN AutoSubs** into your **Media Pool**.
-    -   **FCPXML 1.9 Universal**: Exports and imports an `.fcpxml` timeline with Basic Titles (sliced automatically at frame holds when a multi-font pack is active).
-2.  Click **Enviar a DaVinci Resolve 20**.
-3.  If you use DaVinci Resolve 20 Free, click **Workspace** > **Scripts** > **2 - MTTN AutoSubs - Insertar Subtitulos** inside Resolve to place the subtitles onto your timeline.
+1. En **5. DaVinci Resolve 20**, elige el modo de inserción que prefieras:
+   - **Pista Subtítulos Nativa (0 MB VRAM)**: Agrega una pista `.srt` nativa de DaVinci Resolve, ideal para reproducción fluida en 4K.
+   - **Clips Text+ GPU-Light (1 nodo)**: Inserta clips Fusion `Text+` con estilos avanzados, o anima hasta 5 variantes tipográficas con vibración controlada usando `AutoSubs_ES_Anitype_Animado` (con una sola rama activa por cuadro). Antes de tu primer envío con `Text+`, arrastra una plantilla desde **Effects** > **Titles** > **MTTN AutoSubs** hacia tu **Media Pool**.
+   - **FCPXML 1.9 Universal**: Genera e importa un archivo `.fcpxml` con títulos básicos (divididos automáticamente según los fotogramas de retención de cada fuente animada).
+2. Haz clic en **Enviar a DaVinci Resolve 20**.
+3. Si utilizas la versión gratuita (DaVinci Resolve Free), haz clic en **Workspace** > **Scripts** > **2 - MTTN AutoSubs - Insertar Subtitulos** en el menú de DaVinci Resolve para colocar los subtítulos en la línea de tiempo.
 
-## Package a standalone distribution archive
+## Generar paquete de distribución ZIP
 
-Build a clean, permission-preserving `MTTN_AutoSubs_Tool.zip` bundle for sharing across Macs:
+Crea un archivo comprimido limpio `MTTN_AutoSubs_Tool.zip` preservando los permisos de ejecución para compartirlo entre diferentes equipos Mac:
 
 ```bash
 python3 -B package_bundle.py --output ~/Downloads/MTTN_AutoSubs_Tool.zip
 ```
 
-## Verify the installation locally
+## Verificación de pruebas locales
 
-Run the included unit and HTTP integration test suite to verify the Spanish NLP formatter, board-game anglicism repairs, exporters, local server, templates, Lua bridge, and ZIP packager:
+Ejecuta la suite completa de pruebas unitarias y de integración HTTP para comprobar el procesador de lenguaje español, la corrección de jerga lúdica, los exportadores, el servidor web local, las plantillas Fusion, los scripts Lua y el generador de paquetes ZIP:
 
 ```bash
 python3 -B autosubs_es_test.py -v
 ```
 
-## License
+## Licencia
 
-Released under the [MIT License](LICENSE) — Copyright (c) 2026 [La Matatena](https://la-matatena.com).
+Publicado bajo la [Licencia MIT](LICENSE) — Copyright (c) 2026 [La Matatena](https://la-matatena.com).

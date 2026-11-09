@@ -17,6 +17,7 @@ py_library(
         ".gitignore",
         "BUILD",
         "Iniciar AutoSubs ES.command",
+        "README.en.md",
         "README.md",
         "autosubs_es_test.py",
         "install_imac.sh",

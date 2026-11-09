@@ -226,6 +226,8 @@
 
     const resolveCard = $("card-resolve-push");
     if (resolveCard) resolveCard.classList.toggle("card-muted", state.appMode === "standalone");
+    const exportCard = $("card-standalone-export");
+    if (exportCard) exportCard.classList.toggle("card-highlight", state.appMode === "standalone");
     const rTitle = $("resolve-push-title");
     if (rTitle) {
       rTitle.textContent =
@@ -990,7 +992,7 @@
     const w = canvas.width;
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "#13101b";
+    ctx.fillStyle = "#141417";
     ctx.fillRect(0, 0, w, h);
 
     const dur = Math.max(1, state.durationMs || (state.cues.length ? state.cues[state.cues.length - 1].end_ms : 1000));
@@ -999,25 +1001,25 @@
     state.cues.forEach((cue, idx) => {
       const x1 = (cue.start_ms / dur) * w;
       const x2 = Math.max(x1 + 2, (cue.end_ms / dur) * w);
-      ctx.fillStyle = idx === state.activeCueIndex ? "rgba(131,103,199,0.68)" : "rgba(159,133,227,0.25)";
-      ctx.fillRect(x1, h - 18, x2 - x1, 16);
+      ctx.fillStyle = idx === state.activeCueIndex ? "rgba(131,103,199,0.75)" : "rgba(131,103,199,0.22)";
+      ctx.fillRect(x1, h - 16, x2 - x1, 14);
     });
 
     // Dibujar picos de audio
     const peaks = state.peaks;
     if (peaks && peaks.length > 0) {
       const step = w / peaks.length;
-      ctx.fillStyle = "#7e72a4";
+      ctx.fillStyle = "#555562";
       peaks.forEach((p, i) => {
-        const amp = Math.max(2, p * (h - 24));
-        const y = (h - 20 - amp) / 2;
+        const amp = Math.max(2, p * (h - 22));
+        const y = (h - 18 - amp) / 2;
         ctx.fillRect(i * step, y, Math.max(1, step - 0.5), amp);
       });
     }
 
     // Cabezal de reproducción
     const px = Math.max(0, Math.min(w - 1, (playheadMs / dur) * w));
-    ctx.fillStyle = "#b197fc";
+    ctx.fillStyle = "#8367c7";
     ctx.fillRect(px, 0, 2, h);
   }
 
