@@ -1,22 +1,22 @@
 <!-- go/g3mark-in-g3doc -->
 
-# AutoSubs ES for macOS and DaVinci Resolve 20
+## MTTN AutoSubs Tool 
 
-AutoSubs ES helps Spanish-language creators generate accurate subtitles locally on macOS—either as a standalone desktop and CLI studio or paired directly with DaVinci Resolve 20 Free and Studio—without sending audio to cloud servers or exhausting GPU VRAM. It ships tuned for a 2017 Retina 4K iMac (`3 GHz Quad-Core Intel Core i5`, `32 GB DDR4 RAM`, `2 GB AMD Radeon Polaris VRAM`), runs persistent-prompt 8-bit and full Large-v3 Whisper models, and recognizes Spanish board-game terms and anglicisms out of the box.
+MTTN AutoSubs helps Spanish-language creators generate accurate subtitles locally on macOS—either as a standalone desktop and CLI studio or paired directly with DaVinci Resolve 20 Free and Studio—without sending audio to cloud servers or exhausting GPU VRAM. It ships tuned for a 2017 Retina 4K iMac (`3 GHz Quad-Core Intel Core i5`, `32 GB DDR4 RAM`, `2 GB AMD Radeon Polaris VRAM`), runs persistent-prompt 8-bit and full Large-v3 Whisper models, and recognizes Spanish board-game terms and anglicisms out of the box.
 
 ## Interface preview
 
-AutoSubs ES adapts the workflow for standalone local video subtitling, DaVinci Resolve 20 timeline insertion, and animated custom font packs:
+MTTN AutoSubs adapts the workflow for standalone local video subtitling, DaVinci Resolve 20 timeline insertion, and animated custom font packs:
 
-![AutoSubs ES studio overview in DaVinci Resolve 20 mode showing Large-v3-Turbo Q8_0 model selection, the 16:9 karaoke preview monitor, waveform timeline, Spanish cue editor, and Resolve push controls](docs/images/autosubs-es-overview.png)
+![MTTN AutoSubs studio overview in DaVinci Resolve 20 mode showing Large-v3-Turbo Q8_0 model selection, the 16:9 karaoke preview monitor, waveform timeline, Spanish cue editor, and Resolve push controls](docs/images/autosubs-es-overview.png)
 
 *Three-column studio in **DaVinci Resolve 20** mode with `Large-v3-Turbo Q8_0` selected, **Juegos de Mesa + Anglicismos (BGG)** active, and live Spanish karaoke rendering in **Monitor previo**.*
 
-![AutoSubs ES standalone application mode showing board-game and anglicism cue cleanup plus standalone TXT, SRT, VTT, ASS, FCPXML, JSON, and burned-in MP4 export controls](docs/images/autosubs-es-standalone-models.png)
+![MTTN AutoSubs standalone application mode showing board-game and anglicism cue cleanup plus standalone TXT, SRT, VTT, ASS, FCPXML, JSON, and burned-in MP4 export controls](docs/images/autosubs-es-standalone-models.png)
 
 ***App Independiente** mode applying the **Juegos de Mesa + Anglicismos (BGG)** glossary and phonetic repair (`Eurogame`, `meeples`, `Deckbuilding`, `playmat`, `Worker Placement`, `Kickstarter`, `BGG`) alongside standalone `.TXT`, `.SRT`, `.VTT`, `.ASS`, `.FCPXML`, `.JSON`, and burned-in `.MP4` exports.*
 
-![AutoSubs ES custom typography panel displaying the five-font Anitype Journal animated flipbook pack, missing Spanish glyph notice, and ASCII glyph folding preview](docs/images/autosubs-es-anitype-fonts.png)
+![MTTN AutoSubs custom typography panel displaying the five-font Anitype Journal animated flipbook pack, missing Spanish glyph notice, and ASCII glyph folding preview](docs/images/autosubs-es-anitype-fonts.png)
 
 ***Anitype Journal** five-font flipbook animation controls paired with OpenType `cmap` Spanish glyph detection and non-destructive ASCII adaptation for `Text+` templates.*
 
@@ -59,15 +59,15 @@ Your 32 GB DDR4 memory pool removes RAM bottlenecks for larger quantized GGML mo
 
 ## Board-game vocabulary and anglicisms (`juegos_mesa`)
 
-Spanish board-game channels mix regional Spanish grammar with English mechanics, publisher names, and Hispanicized pronunciations. AutoSubs ES pairs **Temática y anglicismos** (`Juegos de Mesa + Anglicismos (BGG)` by default) with any regional **Acento regional** (`Español Neutro`, `España (Peninsular)`, `México / LatAm`, or `Río de la Plata`):
+Spanish board-game channels mix regional Spanish grammar with English mechanics, publisher names, and Hispanicized pronunciations. MTTN AutoSubs pairs **Temática y anglicismos** (`Juegos de Mesa + Anglicismos (BGG)` by default) with any regional **Acento regional** (`Español Neutro`, `España (Peninsular)`, `México / LatAm`, or `Río de la Plata`):
 
 -   **Persistent Whisper conditioning**: `build_spanish_initial_prompt` seeds `whisper-cli --prompt` with domain terms (`BoardGameGeek`, `BGG`, `eurogame`, `ameritrash`, `meeples`, `deckbuilding`, `worker placement`, `set collection`, `draft`, `setup`, `playmat`, `downtime`, `kingmaking`, `alpha player`, `filler`, `gateway`, `Kickstarter`, `Gamefound`) plus your **Glosario personalizado** and keeps them active across the whole timeline when `whisper-cli` supports `--carry-initial-prompt`.
 -   **Deterministic phonetic repair**: `BOARDGAME_PHONETIC_FIXES` corrects ~70 common Spanish Whisper phonetic mistakes after transcription—for example turning `eurogueim` into `eurogame`, `mipels` into `meeples`, `dec bilding` into `deckbuilding`, `setap` into `setup`, `pleimat` into `playmat`, `dauntaim` into `downtime`, `worker pleisment` into `worker placement`, `kikstarter` into `Kickstarter`, and `be ge ge` into `BGG`—while preserving case-insensitive custom glossary overrides from **+ Términos BGG**.
 -   **Hesitation-aware punctuation**: `_repair_inverted_spanish_punctuation` skips leading hesitations (`eh`, `em`, `mm`) before inserting `¿` or `¡`, turning `eh Sabías... ?` into `eh ¿Sabías...?` before optional filler cleanup runs.
 
-## Install AutoSubs ES on macOS
+## Install MTTN AutoSubs on macOS
 
-The installer sets up the `whisper-cpp` and `ffmpeg` packages through Homebrew, creates the standalone `~/Applications/AutoSubs ES.app` macOS application bundle, copies the DaVinci Resolve 20 Lua bridge scripts and Fusion templates, and downloads the default `ggml-large-v3-turbo-q8_0.bin` Spanish model.
+The installer sets up the `whisper-cpp` and `ffmpeg` packages through Homebrew, creates the standalone `~/Applications/MTTN AutoSubs.app` macOS application bundle, copies the DaVinci Resolve 20 Lua bridge scripts and Fusion templates, and downloads the default `ggml-large-v3-turbo-q8_0.bin` Spanish model.
 
 1.  Open **Terminal** and change to the `autosubs_es` directory:
 
@@ -77,7 +77,7 @@ The installer sets up the `whisper-cpp` and `ffmpeg` packages through Homebrew, 
 
     Replace the following:
 
-    -   `AUTOSUBS_DIR`: the directory where you saved AutoSubs ES.
+    -   `AUTOSUBS_DIR`: the directory where you saved MTTN AutoSubs.
 
 2.  Run the installer script:
 
@@ -87,7 +87,7 @@ The installer sets up the `whisper-cpp` and `ffmpeg` packages through Homebrew, 
 
     Optional: Pass `--model=large-v3-q5` to download the full 32-layer maximum-accuracy Spanish model instead, or pass `--skip-model` to download models later inside the UI.
 
-3.  Launch **AutoSubs ES** from **Applications** (`AutoSubs ES.app`), double-click `Iniciar AutoSubs ES.command`, or run the server from Terminal:
+3.  Launch **MTTN AutoSubs** from **Applications** (`MTTN AutoSubs.app`), double-click `Iniciar MTTN AutoSubs.command`, or run the server from Terminal:
 
     ```bash
     python3 -B autosubs_server.py --app-window
@@ -123,15 +123,15 @@ Replace the following:
 -   `INPUT_MEDIA`: the local audio or video file path to transcribe.
 -   `OUTPUT_SRT`: the destination path for the formatted Spanish `.srt` subtitle file.
 
-## Use AutoSubs ES with DaVinci Resolve 20
+## Use MTTN AutoSubs with DaVinci Resolve 20
 
 Switch the top bar to **DaVinci Resolve 20** whenever you want round-trip timeline integration with DaVinci Resolve 20 Free or DaVinci Resolve 20 Studio. See the [user guide](docs/user-guide.md) for detailed instructions.
 
 ### Export timeline audio
 
 1.  Open your project and target timeline in DaVinci Resolve 20.
-2.  In the top menu bar, click **Workspace** > **Scripts** > **1 - AutoSubs ES - Exportar Audio** (or click **Exportar audio (Studio)** directly in Resolve Studio).
-3.  Wait until the DaVinci Resolve Console reports that the audio bounce is complete, then return to AutoSubs ES and click **Leer buzón**.
+2.  In the top menu bar, click **Workspace** > **Scripts** > **1 - MTTN AutoSubs - Exportar Audio** (or click **Exportar audio (Studio)** directly in Resolve Studio).
+3.  Wait until the DaVinci Resolve Console reports that the audio bounce is complete, then return to MTTN AutoSubs and click **Leer buzón**.
 
 ### Transcribe and edit Spanish subtitles
 
@@ -145,16 +145,16 @@ Upload `.otf`, `.ttf`, `.ttc`, or `.zip` font archives in **4. Estilo y tipograf
 
 -   Numbered variant packs (such as the five-font `Anitype Journal` flipbook archive) group automatically into a single **Packs animados (Flipbook)** entry.
 -   Fonts lacking Spanish glyphs (`á`, `é`, `í`, `ó`, `ú`, `ü`, `ñ`, `¿`, `¡`) trigger a glyph banner with an **Adaptar glifos ASCII** toggle so `Text+` renders complete words instead of blank spaces.
--   Native DaVinci Resolve subtitle tracks (`ST`) disallow Fusion plugins and expressions, so AutoSubs ES pairs custom flipbook typography with `AutoSubs_ES_Anitype_Animado` on a Video (`V`) track or sliced `FCPXML 1.9` Basic Titles.
+-   Native DaVinci Resolve subtitle tracks (`ST`) disallow Fusion plugins and expressions, so MTTN AutoSubs pairs custom flipbook typography with `AutoSubs_ES_Anitype_Animado` on a Video (`V`) track or sliced `FCPXML 1.9` Basic Titles.
 
 ### Insert subtitles into DaVinci Resolve 20
 
 1.  In **5. DaVinci Resolve 20**, select an insertion mode:
     -   **Pista Subtítulos Nativa (0 MB VRAM)**: Adds a native `.srt` subtitle track for smooth 4K playback.
-    -   **Clips Text+ GPU-Light (1 nodo)**: Inserts Fusion `Text+` clips styled with Shading Elements, or cycles up to five font variants plus posterized jitter with `AutoSubs_ES_Anitype_Animado` (single active branch per frame). Before your first `Text+` push, drag one preset from **Effects** > **Titles** > **AutoSubs ES** into your **Media Pool**.
+    -   **Clips Text+ GPU-Light (1 nodo)**: Inserts Fusion `Text+` clips styled with Shading Elements, or cycles up to five font variants plus posterized jitter with `AutoSubs_ES_Anitype_Animado` (single active branch per frame). Before your first `Text+` push, drag one preset from **Effects** > **Titles** > **MTTN AutoSubs** into your **Media Pool**.
     -   **FCPXML 1.9 Universal**: Exports and imports an `.fcpxml` timeline with Basic Titles (sliced automatically at frame holds when a multi-font pack is active).
 2.  Click **Enviar a DaVinci Resolve 20**.
-3.  If you use DaVinci Resolve 20 Free, click **Workspace** > **Scripts** > **2 - AutoSubs ES - Insertar Subtitulos** inside Resolve to place the subtitles onto your timeline.
+3.  If you use DaVinci Resolve 20 Free, click **Workspace** > **Scripts** > **2 - MTTN AutoSubs - Insertar Subtitulos** inside Resolve to place the subtitles onto your timeline.
 
 ## Package a standalone distribution archive
 
