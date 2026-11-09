@@ -28,7 +28,7 @@ MTTN AutoSubs Tool adapts the workflow seamlessly between DaVinci Resolve 20 tim
 
 ***App Independiente** (Standalone) mode applying the **Juegos de Mesa + Anglicismos (BGG)** glossary and phonetic repair (`Eurogame`, `meeples`, `Deckbuilding`, `playmat`, `Worker Placement`, `Kickstarter`, `BGG`) alongside standalone `.TXT`, `.SRT`, `.VTT`, `.ASS`, `.FCPXML`, `.JSON`, and burned-in `.MP4` exports.*
 
-![MTTN AutoSubs custom typography panel displaying the five-font Anitype Journal animated flipbook pack, missing Spanish glyph notice, and ASCII glyph folding preview](docs/images/autosubs-es-anitype-fonts.png)
+![MTTN AutoSubs "Fuentes propias y animación" section with the Anitype Animado flipbook preset: .otf/.ttf/.zip font upload, macOS install, ASCII glyph folding, and multi-font animation with jitter controls](docs/images/autosubs-es-anitype-fonts.png)
 
 ***Anitype Journal** five-font flipbook animation controls paired with OpenType `cmap` Spanish glyph detection and non-destructive ASCII adaptation for `Text+` templates.*
 
@@ -70,9 +70,9 @@ Force a profile with `AUTOSUBS_HW_PROFILE=intel_imac2017` or `AUTOSUBS_HW_PROFIL
 
 ### Per-machine performance (⚙ Esta Mac)
 
-The **⚙ Esta Mac** top-bar button opens a panel with the detected hardware and the performance settings. They are saved **only on that Mac** (`~/Library/Application Support/AutoSubsES/settings.json`), so the iMac can stay in a safe profile while a MacBook runs at full speed:
+The status button in the top bar (⚙ with the CPU, GPU, and Resolve status) opens a panel with the detected hardware and the performance settings. They are saved **only on that Mac** (`~/Library/Application Support/AutoSubsES/settings.json`), so the iMac can stay in a safe profile while a MacBook runs at full speed:
 
-- **Profile**: **Automático** (recommended: uses the whole Mac and frees cores while Resolve is open), **Seguro** (few threads and fast beam search so editing stays smooth), **Máximo**, or **Personalizado** (threads, GPU, and precision by hand). Changing those values in step 2 also switches to Personalizado.
+- **Profile**: **Automático** (recommended: uses the whole Mac and frees cores while Resolve is open), **Seguro** (few threads and fast beam search so editing stays smooth), **Máximo**, or **Personalizado** (threads, GPU, and precision by hand). Step 2 shows a one-line summary of the active profile (for example, `8 hilos · GPU · precisión`) and an **Ajustar…** link that opens this panel.
 - Per-machine **default model** and **Restablecer a lo recomendado** (reset).
 - **Probar velocidad** (speed test): transcribes ~30 s of Spanish system-voice speech with the chosen model and reports how many times faster than real time it runs, plus a model recommendation. Reference: on a MacBook Pro M4 Pro, `turbo-q8` runs 6–20× faster than real time with Metal (depending on whether the model is already in memory) and about 4× CPU-only.
 - **Export / Import preferences**: dialect, domain, glossary, format, karaoke, and saved styles in a `.json` file to move them to another Mac **without** copying hardware settings.
@@ -81,7 +81,7 @@ Dialect, domain, glossary, and format are also remembered between sessions.
 
 ## Spanish Whisper models for 32 GB RAM
 
-Your RAM removes bottlenecks for larger quantized GGML models. Download models inside **2. Motor Whisper (CPU i5)** with automatic HTTP resume support:
+Your RAM removes bottlenecks for larger quantized GGML models. Download models inside **2. Motor Whisper** with automatic HTTP resume support:
 
 | Model ID | Filename | Download size | Peak RAM | Approximate Spanish WER | Recommended role |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -132,11 +132,11 @@ You do not need DaVinci Resolve open or installed to subtitle videos, interviews
 
 1. Switch the top bar to **App Independiente** (the studio also selects this mode automatically on standalone app launches or when DaVinci Resolve is not running).
 2. Drag any local audio or video file (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov`, or `.mkv`) onto the upload zone in **1. Audio de origen**. Video uploads stream directly inside **Monitor previo** with frame-accurate Spanish subtitles and audio scrubbing.
-3. Configure **2. Motor Whisper (CPU i5)** (`Large-v3-Turbo Q8_0` or `Large-v3 Completo Q5_0`) and **3. Español, dominio y reglas RAE**, then click **Transcribir en Español**.
-4. Export from **6. Exportar (Modo Independiente)**:
+3. Configure **2. Motor Whisper** (`Large-v3-Turbo Q8_0` or `Large-v3 Completo Q5_0`) and **3. Español, dominio y reglas RAE**, then click **Transcribir en Español**.
+4. Export from **6. Exportar**. **.SRT Estándar** and **Render MP4** are always visible; the other formats and **Copiar guion** are under **Más formatos**:
    - **Subtitle files**: Download `.SRT Estándar`, `.SRT (01:00 TC)`, `.VTT Web`, `.ASS Estilizado`, `.FCPXML 1.9`, or `.JSON Palabras`.
    - **Clean scripts and copy**: Export `.TXT Guion` (plain prose paragraphs), `.TXT + Tiempos` (timestamped review transcript), or copy the script to your clipboard with **Copiar guion**.
-   - **Burned-in MP4 video**: Click **Render MP4 Subtitulado** to encode an H.264 `.mp4` video: `libx264` on CPU (zero VRAM pressure) on Intel Macs, or hardware `h264_videotoolbox` on Apple Silicon. Requires `ffmpeg-full` (`brew install ffmpeg-full`).
+   - **Burned-in MP4 video**: Click **Render MP4** to encode an H.264 `.mp4` video: `libx264` on CPU (zero VRAM pressure) on Intel Macs, or hardware `h264_videotoolbox` on Apple Silicon. Requires `ffmpeg-full` (`brew install ffmpeg-full`).
    - **Word-by-word karaoke**: **off by default**. Enable it in **4. Estilo y tipografía** to highlight each word in the preview, the `.ASS` export, and the MP4. When you edit text, unchanged words keep their Whisper timings and new words share the remaining time.
 
 ### Headless CLI transcription

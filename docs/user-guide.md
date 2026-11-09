@@ -102,7 +102,7 @@ To test the waveform scrubber, karaoke monitor, RAE line-wrapping rules, board-g
 
 Use the switcher next to the **AutoSubs ES** title in the top bar:
 
--   **App Independiente**: Highlights local media drag-and-drop with in-page HTML5 `<video>` and `<audio>` playback, uses all four Core i5 threads automatically when Resolve is closed, and emphasizes **6. Exportar (Modo Independiente)** (including plain-text transcripts and CPU `libx264` burned-in `.mp4` renders).
+-   **App Independiente**: Highlights local media drag-and-drop with in-page HTML5 `<video>` and `<audio>` playback, uses all four Core i5 threads automatically when Resolve is closed, and makes **Render MP4** the primary action in **6. Exportar**, folds **5. DaVinci Resolve 20** to its title, (including plain-text transcripts and CPU `libx264` burned-in `.mp4` renders).
 -   **DaVinci Resolve 20**: Shows the Resolve audio bounce controls first, keeps `3` threads reserved when Resolve is open, and brings **5. DaVinci Resolve 20** into focus for direct timeline insertion.
 
 ![MTTN AutoSubs standalone application mode showing board-game anglicism repairs and standalone TXT, SRT, ASS, FCPXML, JSON, and MP4 exports](images/autosubs-es-standalone-models.png)
@@ -135,16 +135,16 @@ Video files render directly in **Monitor previo** with frame-accurate synchroniz
 
 Configure CPU scheduling, Whisper model precision, board-game terminology, and Spanish linguistic rules before running transcription, then refine cues inside the studio editor.
 
-1.  In **2. Motor Whisper (CPU i5)**, select your model from **Modelo local en español**. On a 32 GB RAM 2017 iMac, choose **Large-v3-Turbo Q8_0 (Recomendado 32 GB)** (`ggml-large-v3-turbo-q8_0.bin`) as your everyday default, or **Large-v3 Completo Q5_0 (Máxima precisión ES)** (`ggml-large-v3-q5_0.bin`) when you want maximum 32-layer accuracy on heavy English board-game terminology.
+1.  In **2. Motor Whisper**, select your model from **Modelo local en español**. On a 32 GB RAM 2017 iMac, choose **Large-v3-Turbo Q8_0 (Recomendado 32 GB)** (`ggml-large-v3-turbo-q8_0.bin`) as your everyday default, or **Large-v3 Completo Q5_0 (Máxima precisión ES)** (`ggml-large-v3-q5_0.bin`) when you want maximum 32-layer accuracy on heavy English board-game terminology.
 2.  Click **Descargar** if your chosen model is not downloaded yet. Downloads support HTTP `Range` resume if interrupted.
-3.  Confirm the hardware controls:
+3.  Check the performance summary next to the profile pill (for example, `4 hilos · solo CPU · precisión`). To change the controls below, click **Ajustar…** in step 2 or the status button in the top bar to open **Rendimiento de esta Mac**:
     -   **Núcleos i5**: Keep `4 hilos (Máximo CPU)` in standalone mode, or `3 hilos (Seguro con Resolve)` when DaVinci Resolve 20 is open so one physical i5 core stays responsive for playback and UI interactions.
     -   **Velocidad**: Keep `Precisión (beam=5)` for final dialogue and anglicisms, or choose `Rápido (beam=2)` for rough cuts.
     -   **Proteger Radeon Polaris 2 GB (`-ng` CPU AVX2)**: Keep selected so `whisper-cli` keeps 0 MB allocation on your AMD Radeon Polaris GPU.
     -   **Normalizar voz (filtro 80–7800 Hz FFmpeg)**: Keep selected when recordings contain room rumble or uneven microphone levels.
 4.  In **3. Español, dominio y reglas RAE**, choose **Temática y anglicismos** (`Juegos de Mesa + Anglicismos (BGG)` by default, `General / Documental`, or `Tech y Edición Vídeo`), pick your regional **Acento regional** (`Español Neutro`, `España (Peninsular)`, `México / LatAm`, or `Río de la Plata`), and select **Formato** (`YouTube 16:9 (42 car.)`, `Reels / Shorts 9:16`, `Impacto (1–2 pal.)`, or `Cine / Documental`).
 5.  Optional: Enter game titles, publisher names, mechanics, or proper nouns separated by commas in **Glosario personalizado**, or click **+ Términos BGG** to append starter board-game terms (`BoardGameGeek`, `Meeple`, `Worker Placement`, `Deckbuilding`, `Eurogame`, `Kickstarter`, `Devir`, `Zacatrus`, `Maldito Games`).
-6.  Optional: Select **Reparar signos españoles (`¿` y `¡`)**, **Limpiar muletillas aisladas (eh, em, este...)**, or **Convertir a MAYÚSCULAS**.
+6.  Optional: Expand **Reglas de texto** to adjust **Máx car.**, **Líneas**, or **Pausa ms**, or to select **Reparar signos españoles (`¿` y `¡`)**, **Limpiar muletillas aisladas (eh, em, este...)**, or **Convertir a MAYÚSCULAS**.
 7.  Click **Transcribir en Español** and monitor progress in the progress bar. AutoSubs ES passes `--carry-initial-prompt` with `-mc 64` when supported by your `whisper-cli` build so vocabulary biasing persists across the full recording.
 8.  Inspect and refine the generated cues in **Monitor previo** and the cue editor:
     -   Toggle **16:9** or **9:16** framing in **Monitor previo** to preview line breaks and karaoke highlighting.
@@ -172,7 +172,7 @@ Multi-font stop-motion typefaces such as `Anitype Journal` ship five separate va
 4.  Confirm that **Tipografía** selects the grouped entry under **Packs animados (Flipbook)**, or click the **★ Anitype Animado (Flipbook)** preset chip.
 5.  Adjust **Animación de fuente** (`Flipbook multi-fuente + Vibración`, `Solo Flipbook multi-fuente (1..5)`, or `Solo Vibración orgánica (Boil)`), **Cambio c/N frames**, and **Vibración** while watching the live loop in **Monitor previo**.
 
-![MTTN AutoSubs custom font panel displaying the Anitype Journal flipbook animation pack and Spanish glyph notice](images/autosubs-es-anitype-fonts.png)
+![MTTN AutoSubs custom font and animation section with the Anitype Animado flipbook preset, font upload, and ASCII glyph folding](images/autosubs-es-anitype-fonts.png)
 
 ### Handle Spanish accents in Basic Latin display fonts
 
@@ -204,7 +204,7 @@ Select an insertion method in **5. DaVinci Resolve 20** that matches your editin
 
 ## Export standalone files and burned-in video
 
-Use **6. Exportar archivos** (labeled **6. Exportar (Modo Independiente)** in standalone mode) to download subtitle files, clean Spanish transcripts, or an H.264 `.mp4` video with burned-in subtitles for YouTube, Vimeo, web players, or external NLE workflows.
+Use **6. Exportar** to download subtitle files, clean Spanish transcripts, or an H.264 `.mp4` video with burned-in subtitles for YouTube, Vimeo, web players, or external NLE workflows. **.SRT Estándar** and **Render MP4** are always visible; expand **Más formatos** for the other formats and **Copiar guion**.
 
 | Button label | Output format | Key characteristics |
 | :--- | :--- | :--- |
@@ -215,7 +215,7 @@ Use **6. Exportar archivos** (labeled **6. Exportar (Modo Independiente)** in st
 | `.TXT Guion` | Plain UTF-8 text | Exports paragraph-formatted Spanish dialogue without timestamps for blog posts or show notes. |
 | `.TXT + Tiempos` | Timestamped UTF-8 text | Exports `[MM:SS] Texto` lines for rapid script review and timecode logging. |
 | `Copiar guion` | System clipboard text | Copies the clean Spanish transcript directly to your macOS clipboard. |
-| `Render MP4 Subtitulado` | H.264 MP4 (`libx264`) | Burns styled `.ass` subtitles directly onto an uploaded `.mp4`, `.mov`, or `.mkv` video using CPU threads and zero Polaris GPU VRAM. |
+| `Render MP4` | H.264 MP4 (`libx264`) | Burns styled `.ass` subtitles directly onto an uploaded `.mp4`, `.mov`, or `.mkv` video using CPU threads and zero Polaris GPU VRAM. |
 | `.FCPXML 1.9` | Final Cut Pro XML 1.9 | Imports Basic Title clips at exact frame-accurate rational frame rates (`23.976`, `24`, `25`, `29.97`, `30`, `50`, `59.94`, `60` fps). |
 | `.JSON Palabras` | Structured cue and word array | Preserves per-word `start_ms`, `end_ms`, confidence, CPS, and warnings for custom pipelines. |
 

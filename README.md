@@ -30,7 +30,7 @@ MTTN AutoSubs Tool organiza el flujo de trabajo en **6 pasos numerados** y permi
 
 *Modo **App Independiente (Standalone)** aplicando el glosario de **Juegos de Mesa + Anglicismos (BGG)** y reparación fonética (`Eurogame`, `meeples`, `Deckbuilding`, `playmat`, `Worker Placement`, `Kickstarter`, `BGG`), con exportaciones directas a `.TXT`, `.SRT`, `.VTT`, `.ASS`, `.FCPXML`, `.JSON` y renderizado de video `.MP4` por CPU.*
 
-![Panel de tipografía personalizada de MTTN AutoSubs mostrando el paquete de animación flipbook de cinco fuentes Anitype Journal, el aviso de glifos en español faltantes y la previsualización de adaptación de glifos ASCII](docs/images/autosubs-es-anitype-fonts.png)
+![Sección «Fuentes propias y animación» de MTTN AutoSubs con el preset Anitype Animado (flipbook): subida de fuentes .otf/.ttf/.zip, instalación en macOS, adaptación de glifos ASCII y controles de animación multi-fuente con vibración](docs/images/autosubs-es-anitype-fonts.png)
 
 *Controles de animación flipbook con 5 variantes tipográficas (**Anitype Journal**), detección automática de glifos en español en tablas OpenType `cmap` y adaptación no destructiva a caracteres ASCII para plantillas `Text+`.*
 
@@ -72,9 +72,9 @@ Puedes forzar un perfil con la variable de entorno `AUTOSUBS_HW_PROFILE=intel_im
 
 ### Rendimiento de esta Mac (⚙ Esta Mac)
 
-El botón **⚙ Esta Mac** de la barra superior abre un panel con el equipo detectado y los ajustes de rendimiento. Se guardan **solo en esa Mac** (`~/Library/Application Support/AutoSubsES/settings.json`), así que la iMac puede quedarse en modo seguro mientras una MacBook usa todo su potencial:
+El botón de estado de la barra superior (⚙ con el procesador, la GPU y el estado de Resolve) abre un panel con el equipo detectado y los ajustes de rendimiento. Se guardan **solo en esa Mac** (`~/Library/Application Support/AutoSubsES/settings.json`), así que la iMac puede quedarse en modo seguro mientras una MacBook usa todo su potencial:
 
-- **Perfil**: **Automático** (recomendado: usa toda la Mac y cede núcleos cuando Resolve está abierto), **Seguro** (pocos hilos y búsqueda rápida para editar sin tirones), **Máximo** o **Personalizado** (hilos, GPU y precisión a mano). Cambiar esos valores en el paso 2 también pasa el perfil a Personalizado.
+- **Perfil**: **Automático** (recomendado: usa toda la Mac y cede núcleos cuando Resolve está abierto), **Seguro** (pocos hilos y búsqueda rápida para editar sin tirones), **Máximo** o **Personalizado** (hilos, GPU y precisión a mano). El paso 2 muestra un resumen del perfil activo (por ejemplo, `8 hilos · GPU · precisión`) y el enlace **Ajustar…** para abrir este panel.
 - **Modelo por defecto** de esa Mac y **Restablecer a lo recomendado**.
 - **Probar velocidad**: transcribe unos 30 s de voz en español (voz del sistema) con el modelo elegido y muestra cuántas veces más rápido que el tiempo real va, con una recomendación de modelo. Referencia: en una MacBook Pro M4 Pro, `turbo-q8` va entre 6× y 20× más rápido que el tiempo real con Metal (según si el modelo ya está en memoria) y unas 4× solo con CPU.
 - **Exportar / Importar preferencias**: acento, temática, glosario, formato, karaoke y estilos guardados en un `.json` para llevarlos a otra Mac **sin** copiar los ajustes de hardware.
@@ -83,7 +83,7 @@ El acento, la temática, el glosario y el formato también se recuerdan entre se
 
 ## Catálogo de modelos Whisper en español
 
-Tener suficiente memoria RAM (como los 32 GB de la iMac 2017 o los chips Apple Silicon) elimina los cuellos de botella de memoria. Puedes descargar cualquiera de los modelos directamente desde el paso **2. Motor Whisper (CPU i5)** con soporte de reanudación automática:
+Tener suficiente memoria RAM (como los 32 GB de la iMac 2017 o los chips Apple Silicon) elimina los cuellos de botella de memoria. Puedes descargar cualquiera de los modelos directamente desde el paso **2. Motor Whisper** con soporte de reanudación automática:
 
 | ID del modelo | Archivo | Tamaño de descarga | RAM máxima | WER aprox. en español | Caso de uso recomendado |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -135,11 +135,11 @@ No es obligatorio tener DaVinci Resolve abierto ni instalado para subtitular vid
 
 1. Selecciona **App Independiente** en el selector de modo de la barra superior (el sistema también activa este modo automáticamente si abres la app y DaVinci Resolve no está en ejecución).
 2. Arrastra cualquier archivo de audio o video local (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov` o `.mkv`) sobre la zona de carga en **1. Audio de origen**. Los videos se reproducen de inmediato en el **Monitor previo** con subtítulos sincronizados cuadro por cuadro y barra de desplazamiento de audio.
-3. Ajusta las opciones en **2. Motor Whisper (CPU i5)** y **3. Español, dominio y reglas RAE**, y haz clic en **Transcribir en Español**.
-4. Exporta tus resultados desde la tarjeta **6. Exportar (Modo Independiente)**:
+3. Ajusta las opciones en **2. Motor Whisper** y **3. Español, dominio y reglas RAE**, y haz clic en **Transcribir en Español**.
+4. Exporta tus resultados desde la tarjeta **6. Exportar**. **.SRT Estándar** y **Render MP4** están a la vista; el resto de formatos y **Copiar guion** están en **Más formatos**:
    - **Archivos de subtítulos**: Descarga `.SRT Estándar`, `.SRT (01:00 TC)`, `.VTT Web`, `.ASS Estilizado`, `.FCPXML 1.9` o `.JSON Palabras`.
    - **Guiones limpios y transcripciones**: Exporta `.TXT Guion` (texto continuo en párrafos limpios), `.TXT + Tiempos` (guion con marcas de tiempo para revisión) o copia todo el texto al portapapeles con **Copiar guion**.
-   - **Video MP4 con subtítulos integrados**: Haz clic en **Render MP4 Subtitulado** para codificar un video H.264 `.mp4`: con `libx264` en el procesador (0 MB de VRAM) en Mac Intel, o con `h264_videotoolbox` por hardware en Apple Silicon. Requiere `ffmpeg-full` (`brew install ffmpeg-full`).
+   - **Video MP4 con subtítulos integrados**: Haz clic en **Render MP4** para codificar un video H.264 `.mp4`: con `libx264` en el procesador (0 MB de VRAM) en Mac Intel, o con `h264_videotoolbox` por hardware en Apple Silicon. Requiere `ffmpeg-full` (`brew install ffmpeg-full`).
    - **Karaoke palabra por palabra**: está **apagado por defecto**. Actívalo en **4. Estilo y tipografía** para resaltar cada palabra en la vista previa, el `.ASS` y el MP4. Al editar el texto, las palabras que se mantienen conservan sus tiempos de Whisper y las nuevas se reparten el tiempo restante.
 
 ### Transcripción por línea de comandos (CLI sin interfaz)
