@@ -12,7 +12,7 @@
 
 **MTTN AutoSubs Tool** (by **[La Matatena](https://la-matatena.com)** · [@la-matatena](https://github.com/la-matatena)) helps Spanish-language creators generate accurate subtitles locally on macOS—either as a standalone desktop and CLI studio or paired directly with DaVinci Resolve 20 Free and Studio—without sending audio to cloud servers or exhausting GPU VRAM. It ships tuned for a 2017 Retina 4K iMac (`3 GHz Quad-Core Intel Core i5`, `32 GB DDR4 RAM`, `2 GB AMD Radeon Polaris VRAM`) and Apple Silicon, runs persistent-prompt 8-bit and full Large-v3 Whisper models, and recognizes Spanish board-game terms and anglicisms out of the box.
 
-The user interface follows clean macOS dark mode conventions with neutral surfaces and high-contrast typography, reserving La Matatena's signature purple (`#8367c7`) strictly for active highlights, focus rings, and primary actions.
+The user interface follows clean macOS standards in both dark and light modes with neutral surfaces and high-contrast typography, reserving La Matatena's signature purple (`#8367c7`) strictly for active highlights, focus rings, and primary actions. It features an integrated **light and dark theme toggle** in the top bar that automatically respects and syncs with your macOS system preference.
 
 > **La Matatena Open Projects Convention:** All open tools under [`github.com/la-matatena`](https://github.com/la-matatena) follow the [**MTTN Standards**](https://github.com/la-matatena/.github/blob/main/CONVENTIONS.md) naming convention (**`MTTN` + `TwoWordNameInPascalCase` + `[Suffix]`**, e.g., **MTTN AutoSubs Tool**, **MTTN PaperCraft Studio**) and La Matatena's `#8367c7` / `#6a4fb3` brand palette.
 

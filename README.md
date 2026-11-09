@@ -14,7 +14,7 @@
 
 Está optimizado especialmente para equipos como la iMac 2017 Retina 4K (`Intel Core i5 Quad-Core a 3 GHz`, `32 GB RAM DDR4`, `2 GB VRAM AMD Radeon Polaris`) y Apple Silicon (`M1/M2/M3/M4`). Ejecuta modelos Whisper GGML de 8 bits y Large-v3 completo con persistencia de contexto, integrando corrección fonética automática para términos de juegos de mesa y anglicismos del mundo lúdico.
 
-La interfaz de usuario sigue los estándares oscuros neutros de macOS (superficies zinc/carbón y tipografía limpia), reservando el morado distintivo de La Matatena (`#8367c7`) únicamente para botones de acción clave, selecciones activas y resaltados interactivos.
+La interfaz de usuario sigue los estándares neutros de macOS tanto en modo oscuro como claro (superficies zinc/carbón y plata, con tipografía limpia y de alto contraste), reservando el morado distintivo de La Matatena (`#8367c7`) únicamente para botones de acción clave, selecciones activas y resaltados interactivos. Incluye además un selector en la barra superior para alternar entre **tema claro y oscuro**, sincronizado automáticamente con la preferencia del sistema.
 
 > **Convención de Proyectos de La Matatena:** Todas las herramientas bajo [`github.com/la-matatena`](https://github.com/la-matatena) siguen la nomenclatura [**MTTN Standards**](https://github.com/la-matatena/.github/blob/main/CONVENTIONS.md) (**`MTTN` + `NombreDeDosPalabras` + `[Sufijo]`**, ej. **MTTN AutoSubs Tool**, **MTTN PaperCraft Studio**) y la paleta de identidad visual `#8367c7` / `#6a4fb3`.
 
