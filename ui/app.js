@@ -1301,20 +1301,23 @@
     const hw = state.hwProfile || {};
     const isApple = hw.profile_id === "apple_silicon";
     const threads = $("threads-select").value || hw.threads_standalone || 4;
-    $("badge-cpu").textContent =
-      `${hw.cpu_short || "CPU"} (${threads}/${hw.logical_threads || 4} hilos)`;
+    const cpuBadge = $("badge-cpu");
+    cpuBadge.textContent = `${hw.cpu_short || "CPU"} · ${threads} hilos`;
+    cpuBadge.title = `${hw.cpu_short || "CPU"}: ${threads} de ${hw.logical_threads || 4} hilos para Whisper`;
 
     const noGpu = $("opt-no-gpu").checked;
     const gpuBadge = $("badge-gpu");
     if (isApple) {
-      gpuBadge.textContent = noGpu ? "GPU Metal: sin usar (-ng)" : "GPU Metal: activa";
-      gpuBadge.className = "pill " + (noGpu ? "pill-neutral" : "pill-ok");
+      gpuBadge.textContent = noGpu ? "Solo CPU" : "Metal";
+      gpuBadge.title = noGpu ? "GPU Metal: sin usar (-ng)" : "GPU Metal: activa";
+      gpuBadge.className = "pill pill-neutral";
     } else {
       const vram = hw.gpu_vram_mb ? ` ${Math.round(hw.gpu_vram_mb / 1024)} GB VRAM` : "";
-      gpuBadge.textContent = noGpu
+      gpuBadge.textContent = noGpu ? "GPU protegida" : "GPU en uso";
+      gpuBadge.title = noGpu
         ? `${hw.gpu_name || "GPU"}${vram}: 0 MB (-ng)`
-        : `${hw.gpu_name || "GPU"}${vram}: en uso`;
-      gpuBadge.className = "pill " + (noGpu ? "pill-ok" : "pill-warn");
+        : `${hw.gpu_name || "GPU"}${vram}: en uso (puede competir con Resolve)`;
+      gpuBadge.className = "pill " + (noGpu ? "pill-neutral" : "pill-warn");
     }
   }
 
@@ -1345,14 +1348,16 @@
       }
 
       const resolveBadge = $("badge-resolve");
-      resolveBadge.textContent = data.bridge.mode_label;
-      resolveBadge.className = "pill " + (
-        data.bridge.mode === "studio_direct"
-          ? "pill-ok"
-          : data.bridge.mode === "lua_bridge_ready"
-          ? "pill-info"
-          : "pill-warn"
-      );
+      const bridgeMode = data.bridge.mode;
+      resolveBadge.textContent =
+        bridgeMode === "studio_direct"
+          ? "Resolve Studio"
+          : bridgeMode === "lua_bridge_ready"
+          ? "Resolve listo"
+          : "Resolve sin scripts";
+      resolveBadge.title = data.bridge.mode_label;
+      resolveBadge.className =
+        "pill " + (bridgeMode === "studio_direct" || bridgeMode === "lua_bridge_ready" ? "pill-neutral" : "pill-warn");
 
       const hw = data.environment.hardware_profile || {};
       const firstLoad = !state.hwProfile;
