@@ -59,6 +59,17 @@ Cada fase del proceso está calibrada para aprovechar al máximo una iMac 2017 (
 | Gobernador de CPU | 3 hilos con `nice -n 10` cuando Resolve está abierto (4 hilos en independiente) | Aprovecha toda la potencia del procesador en modo independiente mientras reserva 1 núcleo cuando DaVinci Resolve está en uso para no congelar la edición. |
 | Renderizado de video | SRT nativo, quemado MP4 con `libx264` en CPU o títulos vectoriales `Text+` | Quema subtítulos en MP4 puramente por CPU con 0 MB de VRAM, o genera títulos vectoriales en DaVinci Resolve con total fluidez. |
 
+### Perfiles de hardware detectados automáticamente
+
+Al arrancar, la app detecta el equipo y elige un perfil (visible en el paso **2. Motor Whisper** y en las insignias de la barra superior):
+
+| Perfil | GPU para Whisper | Hilos (solo / con Resolve) | Codificador MP4 |
+| :--- | :--- | :--- | :--- |
+| **Intel iMac 2017** (cualquier Mac Intel) | Desactivada (`-ng`) para proteger la Radeon de 2 GB | 4 / 3 | `libx264` (CPU) |
+| **Apple Silicon** (M1–M4 y posteriores) | **Metal activado** | Núcleos de rendimiento, máx. 8 / reserva núcleos para Resolve | `h264_videotoolbox` (motor de vídeo por hardware) |
+
+Puedes forzar un perfil con la variable de entorno `AUTOSUBS_HW_PROFILE=intel_imac2017` o `AUTOSUBS_HW_PROFILE=apple_silicon`.
+
 ## Catálogo de modelos Whisper en español
 
 Tener suficiente memoria RAM (como los 32 GB de la iMac 2017 o los chips Apple Silicon) elimina los cuellos de botella de memoria. Puedes descargar cualquiera de los modelos directamente desde el paso **2. Motor Whisper (CPU i5)** con soporte de reanudación automática:
@@ -81,7 +92,7 @@ En los canales y contenidos de juegos de mesa en español es habitual mezclar t�
 
 ## Instalación en macOS
 
-El instalador configura automáticamente las herramientas `whisper-cpp` y `ffmpeg` mediante Homebrew, crea el paquete de aplicación nativo `~/Applications/MTTN AutoSubs Tool.app`, instala los scripts Lua y plantillas Fusion para DaVinci Resolve 20, y descarga el modelo predeterminado `ggml-large-v3-turbo-q8_0.bin`:
+El instalador configura automáticamente las herramientas `whisper-cpp`, `ffmpeg` y `ffmpeg-full` (necesario para quemar subtítulos en MP4, porque incluye `libass`) mediante Homebrew, crea el paquete de aplicación nativo `~/Applications/MTTN AutoSubs Tool.app`, instala los scripts Lua y plantillas Fusion para DaVinci Resolve 20, y descarga el modelo predeterminado `ggml-large-v3-turbo-q8_0.bin`:
 
 1. Abre **Terminal** y clona o ingresa a la carpeta del repositorio:
 
@@ -112,9 +123,10 @@ No es obligatorio tener DaVinci Resolve abierto ni instalado para subtitular vid
 2. Arrastra cualquier archivo de audio o video local (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov` o `.mkv`) sobre la zona de carga en **1. Audio de origen**. Los videos se reproducen de inmediato en el **Monitor previo** con subtítulos sincronizados cuadro por cuadro y barra de desplazamiento de audio.
 3. Ajusta las opciones en **2. Motor Whisper (CPU i5)** y **3. Español, dominio y reglas RAE**, y haz clic en **Transcribir en Español**.
 4. Exporta tus resultados desde la tarjeta **6. Exportar (Modo Independiente)**:
-   - **Archivos de subtítulos**: Descarga `.SRT Estándar`, `.SRT (01:00 TC)`, `.VTT Web`, `.ASS Karaoke`, `.FCPXML 1.9` o `.JSON Palabras`.
+   - **Archivos de subtítulos**: Descarga `.SRT Estándar`, `.SRT (01:00 TC)`, `.VTT Web`, `.ASS Estilizado`, `.FCPXML 1.9` o `.JSON Palabras`.
    - **Guiones limpios y transcripciones**: Exporta `.TXT Guion` (texto continuo en párrafos limpios), `.TXT + Tiempos` (guion con marcas de tiempo para revisión) o copia todo el texto al portapapeles con **Copiar guion**.
-   - **Video MP4 con subtítulos integrados**: Haz clic en **Render MP4 Subtitulado** para codificar un video H.264 `.mp4` usando `libx264` en el procesador (CPU), con 0 MB de impacto en la VRAM de tu tarjeta gráfica.
+   - **Video MP4 con subtítulos integrados**: Haz clic en **Render MP4 Subtitulado** para codificar un video H.264 `.mp4`: con `libx264` en el procesador (0 MB de VRAM) en Mac Intel, o con `h264_videotoolbox` por hardware en Apple Silicon. Requiere `ffmpeg-full` (`brew install ffmpeg-full`).
+   - **Karaoke palabra por palabra**: está **apagado por defecto**. Actívalo en **4. Estilo y tipografía** para resaltar cada palabra en la vista previa, el `.ASS` y el MP4. Al editar el texto, las palabras que se mantienen conservan sus tiempos de Whisper y las nuevas se reparten el tiempo restante.
 
 ### Transcripción por línea de comandos (CLI sin interfaz)
 
@@ -149,6 +161,7 @@ Selecciona **DaVinci Resolve 20** en la barra superior cuando desees una integra
 1. En **3. Español, dominio y reglas RAE**, selecciona **Juegos de Mesa + Anglicismos (BGG)** (o **General / Documental** / **Tech y Edición Vídeo**) junto con el **Acento regional** que corresponda (`Español Neutro`, `España`, `México / LatAm` o `Río de la Plata`).
 2. Agrega nombres de juegos, editoriales o términos propios en **Glosario personalizado**, o pulsa **+ Términos BGG** para cargar un vocabulario lúdico inicial.
 3. Haz clic en **Transcribir en Español**, y revisa los subtítulos en el **Monitor previo** y en el editor central (`÷` para dividir, `+Unir`, `×` para eliminar, etiquetas de CPS e indicador de **Aplicar reglas RAE y glosario**).
+4. Ajusta los tiempos directamente en la **forma de onda**: arrastra un bloque morado para moverlo o sus bordes para cambiar inicio y fin (`Esc` cancela). Usa `+`/`−`, ⌘ + rueda o el pellizco del trackpad para hacer zoom, y la rueda para desplazarte cuando hay zoom.
 
 ### 3. Tipografías personalizadas y paquetes animados
 
@@ -157,6 +170,23 @@ Arrastra fuentes `.otf`, `.ttf`, `.ttc` o archivos comprimidos `.zip` en **4. Es
 - Los paquetes con variantes numeradas (como el set de cinco fuentes de `Anitype Journal`) se agrupan automáticamente bajo una sola opción en **Packs animados (Flipbook)**.
 - Si una fuente carece de caracteres en español (`á`, `é`, `í`, `ó`, `ú`, `ü`, `ñ`, `¿`, `¡`), el sistema muestra una advertencia y ofrece el interruptor **Adaptar glifos ASCII** para que `Text+` muestre palabras completas en lugar de caracteres vacíos.
 - Las pistas de subtítulos nativas de DaVinci Resolve (`ST`) no admiten plugins ni expresiones de Fusion; por ello, MTTN AutoSubs Tool conecta los estilos animados con `AutoSubs_ES_Anitype_Animado` en una pista de video estándar (`V`) o genera títulos básicos cortados mediante `FCPXML 1.9`.
+
+### Colores, opacidad y estilos propios
+
+En **4. Estilo y tipografía > Colores y opacidad**, cada capa (texto, karaoke, contorno, sombra y caja) tiene su propio color y un control de opacidad de 0 a 100 %:
+
+- **Texto al 0 % con contorno visible** produce letras huecas (*outline*).
+- Una **caja al 50–80 %** deja ver el vídeo detrás sin perder legibilidad.
+- El indicador de **contraste** avisa cuando el texto se va a leer mal sobre su caja o contorno.
+- Cambia el **fondo del monitor** (negro, gris, claro o cuadrícula) para evaluar la transparencia antes de exportar.
+- Si modificas un preset, aparece **Restablecer**. Con **Guardar estilo** guardas tus combinaciones como presets propios en este navegador.
+
+| Destino | Opacidad |
+| :--- | :--- |
+| Monitor previo, `.ASS` y MP4 subtitulado | Todas las capas |
+| Clips `Text+` (Resolve Free y Studio) | Texto, contorno, sombra y caja |
+| `FCPXML 1.9` | Solo el texto; Resolve podría ignorarla al importar |
+| SRT, VTT y pista nativa de subtítulos (`ST`) | No aplica: estos formatos no guardan estilo |
 
 ### 4. Insertar los subtítulos en DaVinci Resolve 20
 

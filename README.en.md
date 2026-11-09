@@ -57,6 +57,17 @@ Every processing step is tuned for a 2017 iMac (Retina 4K, 21.5-inch) with a 3 G
 | CPU thread governor | `3` threads with `nice -n 10` when Resolve runs (`4` standalone) | Uses full Core i5 throughput in standalone mode while reserving 1 core whenever DaVinci Resolve 20 is open. |
 | Timeline rendering | Native SRT, CPU `libx264` MP4 burn-in, or GPU-light `Text+` | Burns standalone MP4 files on CPU with 0 MB VRAM, or renders native 3840x2160 vector Resolve titles safely. |
 
+### Automatically detected hardware profiles
+
+On startup the app detects the machine and picks a profile (shown in step **2. Motor Whisper** and in the top-bar badges):
+
+| Profile | GPU for Whisper | Threads (standalone / with Resolve) | MP4 encoder |
+| :--- | :--- | :--- | :--- |
+| **Intel iMac 2017** (any Intel Mac) | Disabled (`-ng`) to protect the 2 GB Radeon | 4 / 3 | `libx264` (CPU) |
+| **Apple Silicon** (M1–M4 and later) | **Metal enabled** | Performance cores, max 8 / keeps cores free for Resolve | `h264_videotoolbox` (hardware media engine) |
+
+Force a profile with `AUTOSUBS_HW_PROFILE=intel_imac2017` or `AUTOSUBS_HW_PROFILE=apple_silicon`.
+
 ## Spanish Whisper models for 32 GB RAM
 
 Your RAM removes bottlenecks for larger quantized GGML models. Download models inside **2. Motor Whisper (CPU i5)** with automatic HTTP resume support:
@@ -79,7 +90,7 @@ Spanish board-game channels mix regional Spanish grammar with English mechanics,
 
 ## Install MTTN AutoSubs Tool on macOS
 
-The installer sets up the `whisper-cpp` and `ffmpeg` packages through Homebrew, creates the standalone `~/Applications/MTTN AutoSubs Tool.app` macOS application bundle, copies the DaVinci Resolve 20 Lua bridge scripts and Fusion templates, and downloads the default `ggml-large-v3-turbo-q8_0.bin` Spanish model.
+The installer sets up the `whisper-cpp`, `ffmpeg`, and `ffmpeg-full` packages through Homebrew (`ffmpeg-full` ships `libass`, required for MP4 burn-in), creates the standalone `~/Applications/MTTN AutoSubs Tool.app` macOS application bundle, copies the DaVinci Resolve 20 Lua bridge scripts and Fusion templates, and downloads the default `ggml-large-v3-turbo-q8_0.bin` Spanish model.
 
 1. Open **Terminal** and clone or change to the `mttn-autosubs-tool` directory:
 
@@ -110,9 +121,10 @@ You do not need DaVinci Resolve open or installed to subtitle videos, interviews
 2. Drag any local audio or video file (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov`, or `.mkv`) onto the upload zone in **1. Audio de origen**. Video uploads stream directly inside **Monitor previo** with frame-accurate Spanish subtitles and audio scrubbing.
 3. Configure **2. Motor Whisper (CPU i5)** (`Large-v3-Turbo Q8_0` or `Large-v3 Completo Q5_0`) and **3. Español, dominio y reglas RAE**, then click **Transcribir en Español**.
 4. Export from **6. Exportar (Modo Independiente)**:
-   - **Subtitle files**: Download `.SRT Estándar`, `.SRT (01:00 TC)`, `.VTT Web`, `.ASS Karaoke`, `.FCPXML 1.9`, or `.JSON Palabras`.
+   - **Subtitle files**: Download `.SRT Estándar`, `.SRT (01:00 TC)`, `.VTT Web`, `.ASS Estilizado`, `.FCPXML 1.9`, or `.JSON Palabras`.
    - **Clean scripts and copy**: Export `.TXT Guion` (plain prose paragraphs), `.TXT + Tiempos` (timestamped review transcript), or copy the script to your clipboard with **Copiar guion**.
-   - **Burned-in MP4 video**: Click **Render MP4 Subtitulado** to encode an H.264 `.mp4` video with `libx264` CPU encoding and zero GPU Polaris VRAM pressure.
+   - **Burned-in MP4 video**: Click **Render MP4 Subtitulado** to encode an H.264 `.mp4` video: `libx264` on CPU (zero VRAM pressure) on Intel Macs, or hardware `h264_videotoolbox` on Apple Silicon. Requires `ffmpeg-full` (`brew install ffmpeg-full`).
+   - **Word-by-word karaoke**: **off by default**. Enable it in **4. Estilo y tipografía** to highlight each word in the preview, the `.ASS` export, and the MP4. When you edit text, unchanged words keep their Whisper timings and new words share the remaining time.
 
 ### Headless CLI transcription
 
@@ -147,6 +159,7 @@ Switch the top bar to **DaVinci Resolve 20** whenever you want round-trip timeli
 1. In **3. Español, dominio y reglas RAE**, select **Juegos de Mesa + Anglicismos (BGG)** (or **General / Documental** / **Tech y Edición Vídeo**) alongside your regional Spanish **Acento regional** (`Español Neutro`, `España`, `México / LatAm`, or `Río de la Plata`).
 2. Add specific game titles, publisher names, or custom terms in **Glosario personalizado**, or click **+ Términos BGG** to prefill starter board-game vocabulary.
 3. Click **Transcribir en Español**, then inspect cues in **Monitor previo** and the center editor (`÷`, `+Unir`, `×`, CPS badges, and **Aplicar reglas RAE y glosario**).
+4. Adjust timings directly on the **waveform**: drag a purple block to move it, or its edges to change start and end (`Esc` cancels). Zoom with `+`/`−`, ⌘ + scroll, or trackpad pinch, and scroll to pan while zoomed.
 
 ### Use custom fonts and animated packs
 
@@ -155,6 +168,23 @@ Upload `.otf`, `.ttf`, `.ttc`, or `.zip` font archives in **4. Estilo y tipograf
 - Numbered variant packs (such as the five-font `Anitype Journal` flipbook archive) group automatically into a single **Packs animados (Flipbook)** entry.
 - Fonts lacking Spanish glyphs (`á`, `é`, `í`, `ó`, `ú`, `ü`, `ñ`, `¿`, `¡`) trigger a glyph banner with an **Adaptar glifos ASCII** toggle so `Text+` renders complete words instead of blank spaces.
 - Native DaVinci Resolve subtitle tracks (`ST`) disallow Fusion plugins and expressions, so MTTN AutoSubs Tool pairs custom flipbook typography with `AutoSubs_ES_Anitype_Animado` on a Video (`V`) track or sliced `FCPXML 1.9` Basic Titles.
+
+### Colors, opacity, and saved styles
+
+In **4. Estilo y tipografía > Colores y opacidad**, each layer (text, karaoke, outline, shadow, and box) has its own color and a 0–100 % opacity control:
+
+- **Text at 0 % with a visible outline** produces hollow lettering.
+- A **box at 50–80 %** lets the video show through while staying readable.
+- The **contrast** indicator warns when the text will be hard to read against its box or outline.
+- Switch the **monitor background** (black, gray, light, or checkerboard) to judge transparency before exporting.
+- Edited presets show **Restablecer** (reset). **Guardar estilo** saves your combinations as custom presets in this browser.
+
+| Target | Opacity |
+| :--- | :--- |
+| Preview monitor, `.ASS`, and burned-in MP4 | All layers |
+| `Text+` clips (Resolve Free and Studio) | Text, outline, shadow, and box |
+| `FCPXML 1.9` | Text only; Resolve may ignore it on import |
+| SRT, VTT, and the native subtitle track (`ST`) | Not applicable: these formats carry no styling |
 
 ### Insert subtitles into DaVinci Resolve 20
 

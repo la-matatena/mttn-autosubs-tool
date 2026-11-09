@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import difflib
 import re
 from typing import Any
 
@@ -67,12 +68,14 @@ class SubtitleCue:
     if not lines:
       text_val = str(raw.get("text", "")).strip()
       lines = [ln.strip() for ln in text_val.splitlines() if ln.strip()]
-    words = [WordTiming.from_dict(w) for w in raw.get("words", [])]
-    token_count = sum(len(ln.split()) for ln in lines)
-    if words and len(words) != token_count:
-      words = []
     start_ms = int(raw.get("start_ms", 0))
     end_ms = max(start_ms + 40, int(raw.get("end_ms", start_ms + 500)))
+    words = align_words_to_lines(
+        [WordTiming.from_dict(w) for w in raw.get("words", [])],
+        lines,
+        start_ms,
+        end_ms,
+    )
     cue = cls(
         index=int(raw.get("index", 1)),
         start_ms=start_ms,
@@ -84,6 +87,104 @@ class SubtitleCue:
         warnings=list(raw.get("warnings", [])),
     )
     return refresh_cue_metrics(cue)
+
+
+def _norm_token(token: str) -> str:
+  return _strip_edge_punct(token)[1].lower()
+
+
+def align_words_to_lines(
+    words: list[WordTiming], lines: list[str], start_ms: int, end_ms: int
+) -> list[WordTiming]:
+  """Keeps one WordTiming per displayed token after edits, retiming, or drags.
+
+  Words still present after a text edit keep their Whisper timings (matched via
+  difflib); new or rewritten words share the time between their neighbours in
+  proportion to their length. Words outside [start_ms, end_ms] are rescaled.
+  """
+  tokens = [t for ln in lines for t in ln.split()]
+  if not tokens:
+    return []
+  start_ms = int(start_ms)
+  end_ms = max(start_ms + 40, int(end_ms))
+  src = [w for w in words if w.text.strip()]
+  speaker = src[0].speaker if src else "Hablante 1"
+
+  if src:
+    lo = src[0].start_ms
+    hi = max(w.end_ms for w in src)
+    if lo < start_ms or hi > end_ms:
+      scale = (end_ms - start_ms) / max(1, hi - lo)
+      src = [
+          WordTiming(
+              w.text,
+              start_ms + round((w.start_ms - lo) * scale),
+              start_ms + round((w.end_ms - lo) * scale),
+              w.prob,
+              w.speaker,
+          )
+          for w in src
+      ]
+
+  if len(src) == len(tokens):
+    return [
+        WordTiming(tok, w.start_ms, w.end_ms, w.prob, w.speaker)
+        for tok, w in zip(tokens, src)
+    ]
+
+  out: list[WordTiming | None] = [None] * len(tokens)
+  matcher = difflib.SequenceMatcher(
+      None,
+      [_norm_token(w.text) for w in src],
+      [_norm_token(t) for t in tokens],
+      autojunk=False,
+  )
+  for tag, i1, i2, j1, _ in matcher.get_opcodes():
+    if tag == "equal":
+      for k in range(i2 - i1):
+        w = src[i1 + k]
+        out[j1 + k] = WordTiming(
+            tokens[j1 + k], w.start_ms, w.end_ms, w.prob, w.speaker
+        )
+
+  j = 0
+  while j < len(tokens):
+    if out[j] is not None:
+      j += 1
+      continue
+    k = j
+    while k < len(tokens) and out[k] is None:
+      k += 1
+    left = out[j - 1] if j > 0 else None
+    right = out[k] if k < len(tokens) else None
+    lo = left.end_ms if left else start_ms
+    hi = right.start_ms if right else end_ms
+    need = 60 * (k - j)
+    if hi - lo < need:
+      # Borrow half of each neighbour so inserted words stay visible.
+      if left:
+        left.end_ms = max(left.start_ms + 20, (left.start_ms + left.end_ms) // 2)
+        lo = left.end_ms
+      if right:
+        right.start_ms = min(
+            right.end_ms - 20, (right.start_ms + right.end_ms) // 2
+        )
+        hi = right.start_ms
+      hi = max(hi, lo + need)
+    weights = [len(t) + 1 for t in tokens[j:k]]
+    total = float(sum(weights))
+    cursor = float(lo)
+    for idx in range(j, k):
+      seg_start = round(cursor)
+      cursor += (hi - lo) * weights[idx - j] / total
+      out[idx] = WordTiming(tokens[idx], seg_start, round(cursor), 0.5, speaker)
+    j = k
+
+  result = [w for w in out if w is not None]
+  for w in result:
+    w.start_ms = max(start_ms, min(w.start_ms, end_ms))
+    w.end_ms = max(w.start_ms, min(w.end_ms, end_ms))
+  return result
 
 
 @dataclass

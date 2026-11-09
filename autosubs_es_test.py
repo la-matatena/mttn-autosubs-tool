@@ -194,8 +194,80 @@ class HardwareIMac2017Test(unittest.TestCase):
       self.assertIn(r"\:", vf_arg)
       self.assertIn(r"\[", vf_arg)
 
+  def test_apple_silicon_profile_metal_and_videotoolbox(self) -> None:
+    prof = hardware_imac2017.build_apple_silicon_profile(
+        "Apple M4 Pro", perf_cores=10, total_cores=14, ram_gb=48
+    )
+    self.assertFalse(prof.force_no_gpu)
+    self.assertEqual(prof.threads_standalone, 8)
+    self.assertEqual(prof.threads_with_resolve, 6)
+    self.assertEqual(prof.video_encoder, "h264_videotoolbox")
+    small = hardware_imac2017.build_apple_silicon_profile(
+        "Apple M1", perf_cores=4, total_cores=8, ram_gb=8
+    )
+    self.assertEqual(small.threads_standalone, 4)
+    self.assertEqual(small.threads_with_resolve, 2)
+
+    cmd = hardware_imac2017.build_whisper_command(
+        whisper_bin="/opt/homebrew/bin/whisper-cli",
+        model_path="/tmp/m.bin",
+        wav_path="/tmp/in.wav",
+        output_prefix="/tmp/out",
+        threads=8,
+        force_no_gpu=False,
+        nice_level=0,
+    )
+    self.assertNotIn("-ng", cmd)
+    self.assertEqual(cmd[cmd.index("-t") + 1], "8")
+
+    vt_cmd = hardware_imac2017.build_ffmpeg_burnin_command(
+        ffmpeg_bin="/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg",
+        input_video_path="/tmp/in.mov",
+        ass_path="/tmp/sub.ass",
+        output_mp4_path="/tmp/out.mp4",
+        nice_level=0,
+        video_encoder="h264_videotoolbox",
+    )
+    self.assertIn("h264_videotoolbox", vt_cmd)
+    self.assertNotIn("libx264", vt_cmd)
+    self.assertNotIn("-crf", vt_cmd)
+
 
 class SpanishNlpTest(unittest.TestCase):
+
+  def test_align_words_keeps_timings_after_text_edits(self) -> None:
+    words = [
+        spanish_nlp.WordTiming("Hoy", 1000, 1300),
+        spanish_nlp.WordTiming("jugamos", 1300, 1900),
+        spanish_nlp.WordTiming("Katan", 1900, 2500),
+        spanish_nlp.WordTiming("otra", 2600, 2900),
+        spanish_nlp.WordTiming("vez.", 2900, 3200),
+    ]
+    # Fix a word, insert two, delete one.
+    aligned = spanish_nlp.align_words_to_lines(
+        words, ["Hoy jugamos a Catan", "de nuevo otra vez."], 1000, 3200
+    )
+    self.assertEqual(
+        [w.text for w in aligned],
+        ["Hoy", "jugamos", "a", "Catan", "de", "nuevo", "otra", "vez."],
+    )
+    by_text = {w.text: w for w in aligned}
+    # Untouched words keep their exact Whisper timings.
+    self.assertEqual((by_text["Hoy"].start_ms, by_text["Hoy"].end_ms), (1000, 1300))
+    self.assertEqual((by_text["vez."].start_ms, by_text["vez."].end_ms), (2900, 3200))
+    for prev, cur in zip(aligned, aligned[1:]):
+      self.assertLessEqual(prev.start_ms, cur.start_ms)
+      self.assertGreater(cur.end_ms, cur.start_ms)
+
+    # Moving/resizing the cue rescales out-of-range words into the new span.
+    moved = spanish_nlp.align_words_to_lines(words, ["Hoy jugamos Katan otra vez."], 5000, 6100)
+    self.assertEqual(moved[0].start_ms, 5000)
+    self.assertEqual(moved[-1].end_ms, 6100)
+
+    # Cues without word timings get proportional ones (karaoke still works).
+    synth = spanish_nlp.align_words_to_lines([], ["uno dos tres"], 0, 900)
+    self.assertEqual(len(synth), 3)
+    self.assertEqual(synth[-1].end_ms, 900)
 
   def test_parse_whisper_ojf_bpe_utf8_recovery_and_hallucinations(self) -> None:
     ojf = {
@@ -468,7 +540,14 @@ class ExportersTest(unittest.TestCase):
 
     ass = exporters.export_ass_karaoke(cues, style)
     self.assertIn("[V4+ Styles]", ass)
-    self.assertIn(r"{\kf40}¿Cómo", ass)
+    self.assertNotIn(r"\kf", ass)  # Karaoke is opt-in.
+    self.assertIn("Style: AutoSubsES,Open Sans,72,&H00FFFFFF,&H00FFFFFF,", ass)
+    ass_k = exporters.export_ass_karaoke(
+        cues, exporters.StyleConfig(karaoke_enabled=True)
+    )
+    self.assertIn(r"{\kf40}¿Cómo", ass_k)
+    # Primary = highlight (#FFD43B -> BGR 3BD4FF), Secondary = fill.
+    self.assertIn("Style: AutoSubsES,Open Sans,72,&H003BD4FF,&H00FFFFFF,", ass_k)
 
     for fps, expected_dur in ((24.0, "100/2400s"), (29.97, "1001/30000s")):
       xml_str = exporters.export_fcpxml(
@@ -493,6 +572,71 @@ class ExportersTest(unittest.TestCase):
     )
     self.assertIn('track_name = "Sub \\"ES\\""', lua_code)
     self.assertIn("¿Cómo estás\\nen Resolve 20?", lua_code)
+
+  def test_style_opacity_across_exporters(self) -> None:
+    cues = self._sample_cues()
+
+    # Clamping and safe fallbacks for malformed input.
+    parsed = exporters.StyleConfig.from_dict({
+        "fill_alpha": 2,
+        "outline_alpha": -1,
+        "shadow_alpha": "abc",
+        "box_alpha": 0.4,
+    })
+    self.assertEqual(parsed.fill_alpha, 1.0)
+    self.assertEqual(parsed.outline_alpha, 0.0)
+    self.assertEqual(parsed.shadow_alpha, 0.65)
+    self.assertEqual(parsed.box_alpha, 0.4)
+    self.assertEqual(
+        exporters.StyleConfig.from_dict({"font": "Arial"}).highlight_alpha, 1.0
+    )
+
+    # Defaults keep the historical style line byte-identical.
+    ass_default = exporters.export_ass_karaoke(cues, exporters.StyleConfig())
+    self.assertIn(
+        "&H00FFFFFF,&H00FFFFFF,&H00120D0B,&H59120D0B,", ass_default
+    )
+
+    # 50 % fill and 0 % outline -> ASS alpha bytes (00 opaque, FF clear).
+    ass_alpha = exporters.export_ass_karaoke(
+        cues, exporters.StyleConfig(fill_alpha=0.5, outline_alpha=0.0)
+    )
+    self.assertIn("&H80FFFFFF,&H80FFFFFF,&HFF120D0B,", ass_alpha)
+
+    # Opaque box (BorderStyle 3) is painted with OutlineColour.
+    ass_box = exporters.export_ass_karaoke(
+        cues,
+        exporters.StyleConfig(
+            box_enabled=True, box_hex="#112233", box_alpha=0.5
+        ),
+    )
+    self.assertIn("&H80332211,&H59332211,", ass_box)
+    self.assertIn(",3,6,0,2,", ass_box)
+
+    fcp_default = exporters.export_fcpxml(
+        cues, timeline_name="A", style=exporters.StyleConfig()
+    )
+    self.assertIn('fontColor="1.000 1.000 1.000 1"', fcp_default)
+    fcp_alpha = exporters.export_fcpxml(
+        cues, timeline_name="A", style=exporters.StyleConfig(fill_alpha=0.5)
+    )
+    self.assertIn('fontColor="1.000 1.000 1.000 0.5"', fcp_alpha)
+
+    lua_code = exporters.export_resolve_lua_payload(
+        cues=cues,
+        mode="textplus",
+        track_name="Sub",
+        template_name="AutoSubs_ES_Cine_Netflix",
+        srt_path="/tmp/a.srt",
+        srt_timeline_tc_path="/tmp/b.srt",
+        fcpxml_path="/tmp/c.fcpxml",
+        style=exporters.StyleConfig(
+            fill_alpha=0.25, outline_alpha=0.5, shadow_alpha=0.3
+        ),
+    )
+    self.assertIn("fill_a = 0.2500", lua_code)
+    self.assertIn("outline_a = 0.5000", lua_code)
+    self.assertIn("shadow_a = 0.3000", lua_code)
 
   def test_ndf_23976_timecode_ass_escaping_and_burnin_fontsdir(self) -> None:
     self.assertEqual(
@@ -535,7 +679,11 @@ class ExportersTest(unittest.TestCase):
     edited_raw["lines"] = ["Texto editado {2 VP}"]
     edited_raw["text"] = "Texto editado {2 VP}"
     edited_cue = spanish_nlp.SubtitleCue.from_dict(edited_raw)
-    self.assertEqual(edited_cue.words, [])
+    self.assertEqual(
+        [w.text for w in edited_cue.words], ["Texto", "editado", "{2", "VP}"]
+    )
+    self.assertGreaterEqual(edited_cue.words[0].start_ms, edited_cue.start_ms)
+    self.assertLessEqual(edited_cue.words[-1].end_ms, edited_cue.end_ms)
     edited_cue.speaker = "Alex, Host"
     ass_safe = exporters.export_ass_karaoke(
         [edited_cue],
@@ -792,7 +940,8 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
     self.assertEqual(st_status, 200)
     status_json = json.loads(status_bytes.decode("utf-8"))
     self.assertEqual(
-        status_json["environment"]["hardware_profile"]["ram_gb"], 32
+        status_json["environment"]["hardware_profile"]["profile_id"],
+        hardware_imac2017.detect_hardware_profile().profile_id,
     )
 
     # 2. Load Spanish Demo + verify waveform + HTTP 206 media Range
@@ -1173,6 +1322,16 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
     ui_html = (root / "ui" / "index.html").read_text(encoding="utf-8")
     for elem_id in (
         "btn-theme-toggle",
+        "st-fill-a",
+        "st-highlight-a",
+        "st-outline-a",
+        "st-shadow-a",
+        "st-box-a",
+        "btn-preset-reset",
+        "btn-preset-save",
+        "preset-save-form",
+        "style-contrast",
+        "stage-bg-toggle",
         "font-input",
         "st-ascii-fold",
         "st-anim-mode",

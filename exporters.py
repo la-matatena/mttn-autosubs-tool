@@ -59,6 +59,17 @@ def fold_spanish_to_ascii(text: str) -> str:
   return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
 
 
+def _clamp01(value: Any, default: float) -> float:
+  """Parses an opacity value into [0, 1], falling back to `default`."""
+  try:
+    num = float(value)
+  except (TypeError, ValueError):
+    return default
+  if num != num:  # NaN
+    return default
+  return max(0.0, min(num, 1.0))
+
+
 @dataclass
 class StyleConfig:
   """Visual styling options shared across Preview, ASS Karaoke, and Text+."""
@@ -76,12 +87,19 @@ class StyleConfig:
   box_enabled: bool = False
   box_hex: str = "#0B0D12"
   box_alpha: float = 0.72
+  # Opacity (0 = transparent, 1 = opaque) per shading layer. Defaults keep
+  # the historical output byte-identical.
+  fill_alpha: float = 1.0
+  highlight_alpha: float = 1.0
+  outline_alpha: float = 1.0
+  shadow_alpha: float = 0.65
   uppercase: bool = False
   ascii_fold: bool = False
   animation_mode: str = "none"
   anim_hold_frames: int = 3
   anim_jitter: float = 0.15
   font_variants: list[dict[str, str]] = field(default_factory=list)
+  karaoke_enabled: bool = False
 
   @classmethod
   def from_dict(cls, raw: dict[str, Any] | None) -> StyleConfig:
@@ -116,13 +134,18 @@ class StyleConfig:
         shadow_enabled=bool(raw.get("shadow_enabled", True)),
         box_enabled=bool(raw.get("box_enabled", False)),
         box_hex=str(raw.get("box_hex", "#0B0D12")),
-        box_alpha=max(0.0, min(float(raw.get("box_alpha", 0.72)), 1.0)),
+        box_alpha=_clamp01(raw.get("box_alpha"), 0.72),
+        fill_alpha=_clamp01(raw.get("fill_alpha"), 1.0),
+        highlight_alpha=_clamp01(raw.get("highlight_alpha"), 1.0),
+        outline_alpha=_clamp01(raw.get("outline_alpha"), 1.0),
+        shadow_alpha=_clamp01(raw.get("shadow_alpha"), 0.65),
         uppercase=bool(raw.get("uppercase", False)),
         ascii_fold=bool(raw.get("ascii_fold", False)),
         animation_mode=anim_mode,
         anim_hold_frames=max(1, min(int(raw.get("anim_hold_frames", 3)), 12)),
         anim_jitter=max(0.0, min(float(raw.get("anim_jitter", 0.15)), 1.0)),
         font_variants=variants,
+        karaoke_enabled=bool(raw.get("karaoke_enabled", False)),
     )
 
 
@@ -336,15 +359,28 @@ def export_ass_karaoke(
     width: int = 1920,
     height: int = 1080,
 ) -> str:
-  """Serializes cues to SubStation Alpha (.ass) with \\kf word karaoke."""
+  """Serializes cues to SubStation Alpha (.ass), with optional \\kf karaoke.
+
+  With `style.karaoke_enabled` each word sweeps from the fill colour to the
+  highlight colour; otherwise every cue is rendered in the fill colour.
+  """
   st = style or StyleConfig()
   font_name = _sanitize_ass_field(st.font) or "Open Sans"
   font_px = max(24, int(round(st.size * height * 1.15)))
   margin_v = max(24, int(round(st.pos_y * height * 0.6)))
-  primary = hex_to_ass_bgr(st.fill_hex, 1.0)
-  secondary = hex_to_ass_bgr(st.highlight_hex, 1.0)
-  outline = hex_to_ass_bgr(st.outline_hex, 1.0)
-  back = hex_to_ass_bgr(st.box_hex, st.box_alpha if st.box_enabled else 0.65)
+  fill = hex_to_ass_bgr(st.fill_hex, st.fill_alpha)
+  highlight = hex_to_ass_bgr(st.highlight_hex, st.highlight_alpha)
+  # \kf sweeps SecondaryColour -> PrimaryColour, so karaoke needs
+  # Primary=highlight; static text must use Primary=fill.
+  primary, secondary = (highlight, fill) if st.karaoke_enabled else (fill, fill)
+  fill_override = "{\\1c&H" + fill[4:] + "&\\1a&H" + fill[2:4] + "&}"
+  # BorderStyle 3 (opaque box) paints the box with OutlineColour, while
+  # BackColour is always the drop shadow.
+  if st.box_enabled:
+    outline = hex_to_ass_bgr(st.box_hex, st.box_alpha)
+  else:
+    outline = hex_to_ass_bgr(st.outline_hex, st.outline_alpha)
+  back = hex_to_ass_bgr(st.box_hex, st.shadow_alpha)
   border_style = 3 if st.box_enabled else 1
   outline_px = 6 if st.box_enabled else max(1, round(st.outline_thickness * 32))
   shadow_px = 2 if (st.shadow_enabled and not st.box_enabled) else 0
@@ -367,7 +403,7 @@ def export_ass_karaoke(
           " Alignment, MarginL, MarginR, MarginV, Encoding"
       ),
       (
-          f"Style: AutoSubsES,{font_name},{font_px},{secondary},{primary},"
+          f"Style: AutoSubsES,{font_name},{font_px},{primary},{secondary},"
           f"{outline},{back},{bold_flag},0,0,0,100,100,0,0,{border_style},"
           f"{outline_px},{shadow_px},2,60,60,{margin_v},1"
       ),
@@ -385,7 +421,7 @@ def export_ass_karaoke(
     end_str = format_ms_ass(max(cue.start_ms + 40, cue.end_ms))
     speaker = _sanitize_ass_field(cue.speaker) or "Hablante 1"
     line_tokens = sum(len(ln.split()) for ln in cue.lines)
-    if cue.words and line_tokens == len(cue.words):
+    if st.karaoke_enabled and cue.words and line_tokens == len(cue.words):
       # Map words onto line breaks using the cue's wrapped lines.
       word_idx = 0
       line_parts: list[str] = []
@@ -402,6 +438,8 @@ def export_ass_karaoke(
       dialogue = r"\N".join(line_parts)
     else:
       dialogue = _escape_ass_text(_cue_text(cue, st)).replace("\n", r"\N")
+      if st.karaoke_enabled:
+        dialogue = fill_override + dialogue
     events.append(
         f"Dialogue: 0,{start_str},{end_str},AutoSubsES,{speaker},0,0,0,,"
         f"{dialogue}"
@@ -431,6 +469,8 @@ def export_fcpxml(
   effective_fps = num / float(den)
   font_px = max(24, int(round(st.size * height * 1.15)))
   r, g, b = hex_to_rgb_norm(st.fill_hex)
+  # Resolve may ignore the alpha component on import (documented as partial).
+  fill_a = f"{st.fill_alpha:g}"
   # FCPXML Basic Title Center Y: bottom safe area roughly -360..420 on 1080p.
   y_offset_px = int(round((st.pos_y - 0.5) * height))
 
@@ -481,7 +521,7 @@ def export_fcpxml(
             f'          <text-style-def id="{style_id}">\n'
             f'            <text-style font="{xml_escape(v_font)}"'
             f' fontSize="{font_px}" fontFace="{xml_escape(v_face)}"'
-            f' fontColor="{r:.3f} {g:.3f} {b:.3f} 1" alignment="center"/>\n'
+            f' fontColor="{r:.3f} {g:.3f} {b:.3f} {fill_a}" alignment="center"/>\n'
             "          </text-style-def>"
         )
         title_nodes.append(
@@ -505,7 +545,7 @@ def export_fcpxml(
           f'          <text-style-def id="{style_id}">\n'
           f'            <text-style font="{xml_escape(st.font)}"'
           f' fontSize="{font_px}" fontFace="{xml_escape(st.font_style)}"'
-          f' fontColor="{r:.3f} {g:.3f} {b:.3f} 1" alignment="center"/>\n'
+          f' fontColor="{r:.3f} {g:.3f} {b:.3f} {fill_a}" alignment="center"/>\n'
           "          </text-style-def>"
       )
       title_nodes.append(
@@ -621,8 +661,10 @@ def export_resolve_lua_payload(
       f" font = {lua_quote(st.font)},\n    font_style ="
       f" {lua_quote(st.font_style)},\n    size = {st.size:.4f},\n    pos_y ="
       f" {st.pos_y:.4f},\n    fill_r = {fr:.4f}, fill_g = {fg:.4f}, fill_b ="
-      f" {fb:.4f},\n    outline_r = {olr:.4f}, outline_g = {olg:.4f}, outline_b"
-      f" = {olb:.4f},\n    outline_thickness = {st.outline_thickness:.4f},\n   "
+      f" {fb:.4f}, fill_a = {st.fill_alpha:.4f},\n    outline_r = {olr:.4f},"
+      f" outline_g = {olg:.4f}, outline_b = {olb:.4f}, outline_a ="
+      f" {st.outline_alpha:.4f},\n    shadow_a = {st.shadow_alpha:.4f},\n   "
+      f" outline_thickness = {st.outline_thickness:.4f},\n   "
       f" shadow_enabled = {'true' if st.shadow_enabled else 'false'},\n   "
       f" box_enabled = {'true' if st.box_enabled else 'false'},\n    box_r ="
       f" {br:.4f}, box_g = {bg:.4f}, box_b = {bb:.4f},\n    box_alpha ="

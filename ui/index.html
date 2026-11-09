@@ -40,8 +40,8 @@
       </div>
     </div>
     <div class="hw-badges">
-      <span id="badge-cpu" class="pill pill-neutral">CPU i5 AVX2 (4/4 hilos)</span>
-      <span id="badge-gpu" class="pill pill-ok">Polaris 2 GB VRAM: 0 MB (-ng)</span>
+      <span id="badge-cpu" class="pill pill-neutral">Detectando hardware...</span>
+      <span id="badge-gpu" class="pill pill-neutral">GPU: ...</span>
       <span id="badge-resolve" class="pill pill-warn">Comprobando Resolve 20...</span>
       <button id="btn-theme-toggle" class="btn btn-ghost btn-sm theme-toggle-btn" type="button" aria-label="Cambiar tema de color" title="Cambiar tema claro / oscuro">
         <span class="theme-state theme-state-to-light">
@@ -58,7 +58,7 @@
         </span>
       </button>
       <button id="btn-demo" class="btn btn-secondary btn-sm" type="button">Probar Demo ES</button>
-      <button id="btn-refresh" class="btn btn-ghost btn-sm" type="button">Refrescar</button>
+      <button id="btn-refresh" class="btn btn-ghost btn-sm" type="button" title="Vuelve a comprobar DaVinci Resolve, los modelos instalados y el buzón de audio">Actualizar estado</button>
     </div>
   </header>
 
@@ -68,7 +68,7 @@
       <section class="card">
         <h2>1. Audio de origen</h2>
         <div class="tabs">
-          <button class="tab-btn active" data-tab="resolve" type="button">DaVinci Resolve 20</button>
+          <button class="tab-btn active" data-tab="resolve" type="button">Timeline de Resolve</button>
           <button class="tab-btn" data-tab="file" type="button">Archivo local</button>
         </div>
 
@@ -96,7 +96,8 @@
       </section>
 
       <section class="card">
-        <h2>2. Motor Whisper (CPU i5)</h2>
+        <h2>2. Motor Whisper</h2>
+        <p id="hw-profile-note" class="hint"></p>
         <div class="field">
           <label for="model-select">Modelo local en español</label>
           <div class="inline-field">
@@ -108,7 +109,7 @@
 
         <div class="grid-2">
           <div class="field">
-            <label for="threads-select">Núcleos i5</label>
+            <label for="threads-select">Hilos de CPU</label>
             <select id="threads-select">
               <option value="3">3 hilos (Seguro con Resolve)</option>
               <option value="4">4 hilos (Máximo CPU)</option>
@@ -126,7 +127,7 @@
 
         <label class="check-row">
           <input id="opt-no-gpu" type="checkbox" checked>
-          <span>Proteger Radeon Polaris 2 GB (<code>-ng</code> CPU AVX2)</span>
+          <span id="opt-no-gpu-label">Solo CPU, sin GPU (<code>-ng</code>)</span>
         </label>
         <label class="check-row">
           <input id="opt-enhance-voice" type="checkbox" checked>
@@ -231,9 +232,17 @@
             <h2>Monitor previo</h2>
             <span id="media-name-badge" class="pill pill-neutral">Sin audio</span>
           </div>
-          <div class="aspect-toggle">
-            <button id="btn-aspect-16-9" class="btn btn-sm btn-secondary active" type="button">16:9</button>
-            <button id="btn-aspect-9-16" class="btn btn-sm btn-ghost" type="button">9:16</button>
+          <div class="preview-tools">
+            <div id="stage-bg-toggle" class="stage-bg-toggle" role="group" aria-label="Fondo de prueba del monitor">
+              <button class="bg-swatch bg-black" data-bg="black" type="button" aria-pressed="true" title="Fondo negro"><span class="visually-hidden">Negro</span></button>
+              <button class="bg-swatch bg-gray" data-bg="gray" type="button" aria-pressed="false" title="Fondo gris"><span class="visually-hidden">Gris</span></button>
+              <button class="bg-swatch bg-light" data-bg="light" type="button" aria-pressed="false" title="Fondo claro"><span class="visually-hidden">Claro</span></button>
+              <button class="bg-swatch bg-checker" data-bg="checker" type="button" aria-pressed="false" title="Cuadrícula (transparencia)"><span class="visually-hidden">Cuadrícula</span></button>
+            </div>
+            <div class="aspect-toggle">
+              <button id="btn-aspect-16-9" class="btn btn-sm btn-secondary active" type="button">16:9</button>
+              <button id="btn-aspect-9-16" class="btn btn-sm btn-ghost" type="button">9:16</button>
+            </div>
           </div>
         </div>
 
@@ -257,9 +266,16 @@
             <option value="1.25">1.25x</option>
             <option value="1.5">1.5x</option>
           </select>
+          <div class="zoom-group" role="group" aria-label="Zoom de la forma de onda">
+            <button id="btn-zoom-out" class="btn btn-ghost btn-sm" type="button" title="Alejar (⌘ + rueda)">−</button>
+            <span id="zoom-readout" class="mono zoom-readout">Todo</span>
+            <button id="btn-zoom-in" class="btn btn-ghost btn-sm" type="button" title="Acercar (⌘ + rueda)">+</button>
+            <button id="btn-zoom-fit" class="btn btn-ghost btn-sm" type="button" title="Ver todo el audio">Ajustar</button>
+          </div>
         </div>
 
-        <canvas id="waveform-canvas" width="960" height="84"></canvas>
+        <canvas id="waveform-canvas" width="960" height="96" aria-label="Forma de onda: arrastra los bloques para mover subtítulos o sus bordes para ajustar inicio y fin"></canvas>
+        <p class="hint waveform-hint">Arrastra un bloque morado para moverlo, o sus bordes para ajustar inicio/fin. <kbd>Esc</kbd> cancela. ⌘ + rueda o pellizco para zoom; desplaza con la rueda cuando hay zoom.</p>
         <audio id="audio-player" preload="metadata"></audio>
       </section>
 
@@ -296,20 +312,20 @@
           <button class="chip" data-style="caja" type="button">Caja Editorial</button>
           <button class="chip chip-wide" data-style="anitype" type="button">★ Anitype Animado (Flipbook)</button>
         </div>
-
-        <div class="font-upload-box">
-          <div class="font-upload-row">
-            <label class="btn btn-secondary btn-sm font-upload-btn" for="font-input">
-              + Subir fuente (.otf / .ttf / .zip)
-              <input id="font-input" type="file" multiple accept=".otf,.ttf,.ttc,.zip">
-            </label>
-          </div>
-          <label class="check-row check-compact">
-            <input id="opt-install-macos-font" type="checkbox" checked>
-            <span>Instalar en macOS (<code>~/Library/Fonts</code>)</span>
-          </label>
-          <div id="font-upload-status" class="hint"></div>
+        <div id="custom-chips" class="style-chips custom-chips hidden" aria-label="Mis estilos"></div>
+        <div class="preset-status" aria-live="polite">
+          <span id="preset-status-text" class="hint">Preset: Cine Netflix</span>
+          <span class="preset-actions">
+            <button id="btn-preset-reset" class="link-btn hidden" type="button">Restablecer</button>
+            <button id="btn-preset-save" class="link-btn" type="button">Guardar estilo</button>
+          </span>
         </div>
+        <form id="preset-save-form" class="preset-save-form hidden">
+          <label for="preset-save-name" class="visually-hidden">Nombre del estilo</label>
+          <input id="preset-save-name" type="text" maxlength="28" placeholder="Nombre (p. ej. Mi canal)" required>
+          <button class="btn btn-primary btn-sm" type="submit">Guardar</button>
+          <button id="btn-preset-save-cancel" class="btn btn-ghost btn-sm" type="button">Cancelar</button>
+        </form>
 
         <div class="grid-2">
           <div class="field">
@@ -334,6 +350,79 @@
         </div>
 
         <div id="font-glyph-warning" class="warn-banner hidden"></div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="st-size">Tamaño <output id="st-size-val" class="range-val" for="st-size">5.8 %</output></label>
+            <input id="st-size" type="range" min="0.03" max="0.11" step="0.002" value="0.058">
+          </div>
+          <div class="field">
+            <label for="st-posy">Altura <output id="st-posy-val" class="range-val" for="st-posy">14 %</output></label>
+            <input id="st-posy" type="range" min="0.06" max="0.85" step="0.01" value="0.14">
+          </div>
+        </div>
+
+        <details id="sec-colors" class="style-section" open>
+          <summary>Colores y opacidad</summary>
+          <p id="style-contrast" class="contrast-badge" aria-live="polite"></p>
+          <div class="color-grid-head" aria-hidden="true"><span></span><span>Color</span><span>Opacidad</span><span></span></div>
+          <div class="color-row">
+            <label class="color-row-label" for="st-fill">Texto</label>
+            <input id="st-fill" type="color" value="#ffffff">
+            <input id="st-fill-a" class="alpha-range" type="range" min="0" max="100" step="5" value="100" aria-label="Opacidad: Texto">
+            <output id="st-fill-a-val" class="alpha-val" for="st-fill-a"><span class="alpha-chip"><i></i></span><span class="alpha-num">100 %</span></output>
+          </div>
+          <div class="color-row">
+            <label class="color-row-label" for="st-highlight">Karaoke</label>
+            <input id="st-highlight" type="color" value="#ffd43b">
+            <input id="st-highlight-a" class="alpha-range" type="range" min="0" max="100" step="5" value="100" aria-label="Opacidad: Karaoke">
+            <output id="st-highlight-a-val" class="alpha-val" for="st-highlight-a"><span class="alpha-chip"><i></i></span><span class="alpha-num">100 %</span></output>
+          </div>
+          <div class="color-row">
+            <label class="color-row-label" for="st-outline">Contorno</label>
+            <input id="st-outline" type="color" value="#0b0d12">
+            <input id="st-outline-a" class="alpha-range" type="range" min="0" max="100" step="5" value="100" aria-label="Opacidad: Contorno">
+            <output id="st-outline-a-val" class="alpha-val" for="st-outline-a"><span class="alpha-chip"><i></i></span><span class="alpha-num">100 %</span></output>
+          </div>
+          <div class="field field-indent">
+            <label for="st-outline-w">Grosor del contorno <output id="st-outline-w-val" class="range-val" for="st-outline-w">0.09</output></label>
+            <input id="st-outline-w" type="range" min="0" max="0.22" step="0.01" value="0.09">
+          </div>
+          <div class="color-row">
+            <label class="color-row-label check-inline"><input id="st-shadow" type="checkbox" checked> Sombra</label>
+            <span class="color-placeholder" aria-hidden="true"></span>
+            <input id="st-shadow-a" class="alpha-range" type="range" min="0" max="100" step="5" value="65" aria-label="Opacidad: Sombra">
+            <output id="st-shadow-a-val" class="alpha-val" for="st-shadow-a"><span class="alpha-chip"><i></i></span><span class="alpha-num">65 %</span></output>
+          </div>
+          <div class="color-row">
+            <label class="color-row-label check-inline"><input id="st-box" type="checkbox"> Caja</label>
+            <input id="st-box-color" type="color" value="#0b0d12" aria-label="Color de caja de fondo">
+            <input id="st-box-a" class="alpha-range" type="range" min="0" max="100" step="5" value="75" aria-label="Opacidad: Caja">
+            <output id="st-box-a-val" class="alpha-val" for="st-box-a"><span class="alpha-chip"><i></i></span><span class="alpha-num">75 %</span></output>
+          </div>
+          <label class="check-row">
+            <input id="st-karaoke" type="checkbox">
+            <span>Karaoke palabra por palabra (vista previa, <code>.ASS</code> y MP4)</span>
+          </label>
+          <p class="hint">Texto al 0 % + contorno = letras huecas. Evalúa la transparencia cambiando el fondo del monitor.</p>
+          <p id="style-target-hint" class="hint hidden"></p>
+        </details>
+
+        <details id="sec-fonts" class="style-section">
+          <summary>Fuentes propias y animación</summary>
+        <div class="font-upload-box">
+          <div class="font-upload-row">
+            <label class="btn btn-secondary btn-sm font-upload-btn" for="font-input">
+              + Subir fuente (.otf / .ttf / .zip)
+              <input id="font-input" type="file" multiple accept=".otf,.ttf,.ttc,.zip">
+            </label>
+          </div>
+          <label class="check-row check-compact">
+            <input id="opt-install-macos-font" type="checkbox" checked>
+            <span>Instalar en macOS (<code>~/Library/Fonts</code>)</span>
+          </label>
+          <div id="font-upload-status" class="hint"></div>
+        </div>
 
         <label class="check-row">
           <input id="st-ascii-fold" type="checkbox">
@@ -362,49 +451,7 @@
           </div>
           <p id="anim-hint" class="hint hidden"></p>
         </div>
-
-        <div class="grid-2">
-          <div class="field">
-            <label for="st-size">Tamaño</label>
-            <input id="st-size" type="range" min="0.03" max="0.11" step="0.002" value="0.058">
-          </div>
-          <div class="field">
-            <label for="st-posy">Altura Y</label>
-            <input id="st-posy" type="range" min="0.06" max="0.85" step="0.01" value="0.14">
-          </div>
-        </div>
-
-        <div class="grid-3">
-          <div class="field">
-            <label for="st-fill">Texto</label>
-            <input id="st-fill" type="color" value="#ffffff">
-          </div>
-          <div class="field">
-            <label for="st-highlight">Karaoke</label>
-            <input id="st-highlight" type="color" value="#ffd43b">
-          </div>
-          <div class="field">
-            <label for="st-outline">Borde</label>
-            <input id="st-outline" type="color" value="#0b0d12">
-          </div>
-        </div>
-
-        <div class="field">
-          <label for="st-outline-w">Grosor contorno</label>
-          <input id="st-outline-w" type="range" min="0" max="0.22" step="0.01" value="0.09">
-        </div>
-
-        <label class="check-row">
-          <input id="st-shadow" type="checkbox" checked>
-          <span>Sombra ligera (Shading Element 3)</span>
-        </label>
-        <div class="box-row">
-          <label class="check-row">
-            <input id="st-box" type="checkbox">
-            <span>Caja de fondo</span>
-          </label>
-          <input id="st-box-color" type="color" value="#0b0d12" aria-label="Color de caja de fondo">
-        </div>
+        </details>
       </section>
 
       <section id="card-resolve-push" class="card">
@@ -447,7 +494,7 @@
           <button class="btn btn-secondary btn-sm export-btn" data-fmt="srt" type="button">.SRT Estándar</button>
           <button class="btn btn-secondary btn-sm export-btn" data-fmt="srt_tc" type="button">.SRT (01:00 TC)</button>
           <button class="btn btn-secondary btn-sm export-btn" data-fmt="vtt" type="button">.VTT Web</button>
-          <button class="btn btn-secondary btn-sm export-btn" data-fmt="ass" type="button">.ASS Karaoke</button>
+          <button class="btn btn-secondary btn-sm export-btn" data-fmt="ass" type="button" title="Subtítulos con estilo; incluye karaoke si está activado en 4. Estilo">.ASS Estilizado</button>
           <button class="btn btn-secondary btn-sm export-btn" data-fmt="txt" type="button">.TXT Guion</button>
           <button class="btn btn-secondary btn-sm export-btn" data-fmt="txt_tc" type="button">.TXT + Tiempos</button>
           <button class="btn btn-secondary btn-sm export-btn" data-fmt="fcpxml" type="button">.FCPXML 1.9</button>

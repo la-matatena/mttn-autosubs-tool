@@ -98,9 +98,13 @@ def prepare_wav_16k(
 
 
 def extract_waveform_peaks(
-    wav_path: str, num_buckets: int = 900
+    wav_path: str, num_buckets: int | None = None
 ) -> dict[str, Any]:
-  """Computes normalized 0.0..1.0 waveform peaks from a PCM WAV in chunks."""
+  """Computes normalized 0.0..1.0 waveform peaks from a PCM WAV in chunks.
+
+  By default uses ~25 peaks per second (40 ms, 900–60,000 buckets) so the
+  editor waveform stays detailed when zoomed in.
+  """
   path = Path(wav_path)
   if not path.is_file():
     return {"peaks": [], "duration_ms": 0, "sample_rate": 16000}
@@ -115,6 +119,8 @@ def extract_waveform_peaks(
       return {"peaks": [], "duration_ms": 0, "sample_rate": rate or 16000}
 
     duration_ms = int(round((total_frames / float(rate)) * 1000.0))
+    if num_buckets is None:
+      num_buckets = max(900, min(60_000, duration_ms // 40))
     buckets = max(16, min(int(num_buckets), total_frames))
     frames_per_bucket = max(1, total_frames // buckets)
     peaks: list[float] = []
@@ -657,12 +663,15 @@ class ResolveBridge:
     tp1.SetInput("Red1", fr)
     tp1.SetInput("Green1", fg)
     tp1.SetInput("Blue1", fb)
+    tp1.SetInput("Alpha1", style.fill_alpha)
     tp1.SetInput("Enabled2", 1 if style.outline_thickness > 0 else 0)
     tp1.SetInput("Thickness2", style.outline_thickness)
     tp1.SetInput("Red2", olr)
     tp1.SetInput("Green2", olg)
     tp1.SetInput("Blue2", olb)
+    tp1.SetInput("Alpha2", style.outline_alpha)
     tp1.SetInput("Enabled3", 1 if style.shadow_enabled else 0)
+    tp1.SetInput("Alpha3", style.shadow_alpha)
     tp1.SetInput("Enabled4", 1 if style.box_enabled else 0)
     tp1.SetInput("Red4", br)
     tp1.SetInput("Green4", bg)

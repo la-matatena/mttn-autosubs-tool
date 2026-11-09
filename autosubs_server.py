@@ -132,7 +132,7 @@ class AppState:
     self.format_config = spanish_nlp.SpanishFormatConfig()
     self.demo_mode: bool = False
 
-  def session_snapshot(self) -> dict[str, Any]:
+  def session_snapshot(self, include_peaks: bool = True) -> dict[str, Any]:
     with self.lock:
       is_video = bool(
           self.media_path
@@ -163,7 +163,7 @@ class AppState:
               "/api/exported-video" if has_exported_video else None
           ),
           "duration_ms": self.duration_ms,
-          "peaks": list(self.peaks),
+          "peaks": list(self.peaks) if include_peaks else None,
           "word_count": len(self.words),
           "cue_count": len(self.cues),
           "cues": [c.to_dict() for c in self.cues],
@@ -446,7 +446,9 @@ class AppState:
     threads = payload.get("threads")
     fast_beam = bool(payload.get("fast_beam", False))
     enhance_voice = bool(payload.get("enhance_voice", True))
-    force_no_gpu = bool(payload.get("force_no_gpu", True))
+    profile = hardware_imac2017.detect_hardware_profile()
+    force_no_gpu = bool(payload.get("force_no_gpu", profile.force_no_gpu))
+    accel_label = "CPU, GPU libre" if force_no_gpu else "GPU Metal"
 
     job_id = self.create_job("transcribe", "Preparando audio 16 kHz mono...")
 
@@ -468,8 +470,8 @@ class AppState:
             job_id,
             progress=15,
             stage=(
-                f"Transcribiendo en español con {spec.label} (CPU AVX2, GPU"
-                " Polaris libre)..."
+                f"Transcribiendo en español con {spec.label}"
+                f" ({accel_label})..."
             ),
         )
 
@@ -600,18 +602,34 @@ class AppState:
       raise ValueError("No hay subtítulos activos para quemar en el vídeo.")
 
     env = hardware_imac2017.detect_environment()
-    ffmpeg_bin = env.get("ffmpeg_path")
+    if not env.get("ffmpeg_path"):
+      raise RuntimeError(
+          "No se encontró ffmpeg. Instala con: brew install ffmpeg-full"
+      )
+    ffmpeg_bin = hardware_imac2017.find_burnin_ffmpeg()
     if not ffmpeg_bin:
       raise RuntimeError(
-          "No se encontró ffmpeg. Instala con: brew install ffmpeg"
+          "Tu FFmpeg no incluye libass (filtro 'ass') para quemar"
+          " subtítulos. Instala con: brew install ffmpeg-full"
       )
+    profile = hardware_imac2017.detect_hardware_profile()
+    video_encoder = profile.video_encoder
+    if video_encoder != "libx264" and not (
+        hardware_imac2017.ffmpeg_supports_encoder(ffmpeg_bin, video_encoder)
+    ):
+      video_encoder = "libx264"
+    encoder_label = (
+        "VideoToolbox por hardware"
+        if video_encoder == "h264_videotoolbox"
+        else "CPU libx264"
+    )
 
     style = exporters.StyleConfig.from_dict(payload.get("style"))
     width = int(payload.get("width") or 1920)
     height = int(payload.get("height") or 1080)
     threads = int(payload.get("threads") or env.get("recommended_threads") or 3)
     job_id = self.create_job(
-        "burnin", "Preparando render CPU (libx264, GPU Polaris libre)..."
+        "burnin", f"Preparando render MP4 ({encoder_label})..."
     )
 
     def _worker() -> None:
@@ -624,7 +642,7 @@ class AppState:
         self.update_job(
             job_id,
             progress=25,
-            stage="Codificando MP4 con subtítulos (CPU libx264)...",
+            stage=f"Codificando MP4 con subtítulos ({encoder_label})...",
         )
         cmd = hardware_imac2017.build_ffmpeg_burnin_command(
             ffmpeg_bin=ffmpeg_bin,
@@ -633,6 +651,7 @@ class AppState:
             output_mp4_path=str(out_mp4),
             threads=threads,
             fonts_dir=str(self.fonts.app_fonts_dir),
+            video_encoder=video_encoder,
         )
         proc = subprocess.Popen(
             cmd,
@@ -1233,12 +1252,19 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
         if updated and cue.start_ms < updated[-1].end_ms:
           cue.start_ms = updated[-1].end_ms
           cue.end_ms = max(cue.start_ms + 80, cue.end_ms)
+          cue.words = spanish_nlp.align_words_to_lines(
+              cue.words, cue.lines, cue.start_ms, cue.end_ms
+          )
         spanish_nlp.refresh_cue_metrics(cue, cfg)
         updated.append(cue)
       self.state.cues = updated
 
     self._send_json(
-        HTTPStatus.OK, {"ok": True, "session": self.state.session_snapshot()}
+        HTTPStatus.OK,
+        {
+            "ok": True,
+            "session": self.state.session_snapshot(include_peaks=False),
+        },
     )
 
 
@@ -1284,8 +1310,9 @@ def run_cli_transcription(
     threads: int | None = None,
     fast_beam: bool = False,
     enhance_voice: bool = True,
-    force_no_gpu: bool = True,
+    force_no_gpu: bool | None = None,
     remove_muletillas: bool = False,
+    karaoke: bool = False,
     app_dir: Path | None = None,
 ) -> int:
   """Runs standalone offline Spanish transcription directly from CLI."""
@@ -1373,7 +1400,7 @@ def run_cli_transcription(
     ojf_data = json.loads(ojf_json.read_text(encoding="utf-8"))
     words = spanish_nlp.parse_whisper_ojf(ojf_data)
     cues = spanish_nlp.segment_and_wrap_spanish(words, cfg)
-    style = exporters.StyleConfig()
+    style = exporters.StyleConfig(karaoke_enabled=karaoke)
 
     try:
       content, fname, _ = exporters.render_export(
@@ -1457,6 +1484,11 @@ def main(argv: list[str] | None = None) -> int:
   parser.add_argument("--threads", type=int, default=None)
   parser.add_argument("--fast-beam", action="store_true")
   parser.add_argument("--remove-muletillas", action="store_true")
+  parser.add_argument(
+      "--karaoke",
+      action="store_true",
+      help="Incluye karaoke palabra por palabra (\\kf) en exportaciones .ass.",
+  )
   args = parser.parse_args(argv)
 
   if args.cli:
@@ -1472,15 +1504,18 @@ def main(argv: list[str] | None = None) -> int:
         threads=args.threads,
         fast_beam=args.fast_beam,
         remove_muletillas=args.remove_muletillas,
+        karaoke=args.karaoke,
     )
 
   server, _ = create_server(host=args.host, port=args.port)
   actual_port = server.server_address[1]
   url = f"http://{args.host}:{actual_port}"
   print(f"[MTTN AutoSubs Tool] Servidor activo en {url}")
+  profile = hardware_imac2017.detect_hardware_profile()
   print(
-      "[MTTN AutoSubs Tool] La Matatena · Optimizado para CPU AVX2 y GPU"
-      " Polaris libre"
+      f"[MTTN AutoSubs Tool] La Matatena · Perfil de hardware: {profile.name}"
+      f" ({'solo CPU' if profile.force_no_gpu else 'GPU Metal'},"
+      f" {profile.threads_standalone} hilos)"
   )
   if not args.no_browser:
     opener = open_standalone_window if args.app_window else webbrowser.open

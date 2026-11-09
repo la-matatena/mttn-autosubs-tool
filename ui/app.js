@@ -26,6 +26,12 @@
     selectedPack: null,
     animClockMs: 0,
     animTimer: null,
+    hwProfile: null,
+    editSeq: 0,
+    view: { startMs: 0, spanMs: 0 },
+    drag: null,
+    playUntilMs: null,
+    playUntilRaf: 0,
   };
 
   function activeMedia() {
@@ -82,6 +88,11 @@
       shadow_enabled: true,
       box_enabled: false,
       box_hex: "#0b0d12",
+      fill_alpha: 1,
+      highlight_alpha: 1,
+      outline_alpha: 1,
+      shadow_alpha: 0.65,
+      box_alpha: 0.75,
       animation_mode: "none",
       anim_hold_frames: 3,
       anim_jitter: 0.15,
@@ -101,6 +112,11 @@
       shadow_enabled: true,
       box_enabled: false,
       box_hex: "#0b0d12",
+      fill_alpha: 1,
+      highlight_alpha: 1,
+      outline_alpha: 1,
+      shadow_alpha: 0.65,
+      box_alpha: 0.75,
       animation_mode: "none",
       anim_hold_frames: 3,
       anim_jitter: 0.15,
@@ -120,6 +136,11 @@
       shadow_enabled: true,
       box_enabled: false,
       box_hex: "#13101b",
+      fill_alpha: 1,
+      highlight_alpha: 1,
+      outline_alpha: 1,
+      shadow_alpha: 0.8,
+      box_alpha: 0.75,
       animation_mode: "none",
       anim_hold_frames: 3,
       anim_jitter: 0.15,
@@ -139,6 +160,11 @@
       shadow_enabled: false,
       box_enabled: true,
       box_hex: "#15121e",
+      fill_alpha: 1,
+      highlight_alpha: 1,
+      outline_alpha: 1,
+      shadow_alpha: 0.65,
+      box_alpha: 0.8,
       animation_mode: "none",
       anim_hold_frames: 3,
       anim_jitter: 0.15,
@@ -158,6 +184,11 @@
       shadow_enabled: true,
       box_enabled: false,
       box_hex: "#0d1017",
+      fill_alpha: 1,
+      highlight_alpha: 1,
+      outline_alpha: 1,
+      shadow_alpha: 0.65,
+      box_alpha: 0.75,
       animation_mode: "font_cycle_boil",
       anim_hold_frames: 3,
       anim_jitter: 0.15,
@@ -238,7 +269,275 @@
       eTitle.textContent =
         state.appMode === "standalone" ? "6. Exportar (Modo Independiente)" : "6. Exportar archivos";
     }
+    updateStyleTargetHint();
     renderCueList();
+  }
+
+  function alphaOf(id) {
+    const el = $(id);
+    const v = el ? Number(el.value) : 100;
+    return Math.max(0, Math.min(1, (Number.isFinite(v) ? v : 100) / 100));
+  }
+
+  function hexToRgba(hex, alpha) {
+    const h = String(hex || "#000000").replace("#", "");
+    const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h.padEnd(6, "0");
+    const r = parseInt(full.slice(0, 2), 16) || 0;
+    const g = parseInt(full.slice(2, 4), 16) || 0;
+    const b = parseInt(full.slice(4, 6), 16) || 0;
+    return `rgba(${r}, ${g}, ${b}, ${Number(alpha).toFixed(3)})`;
+  }
+
+  // Valores visibles junto a cada slider y color de la muestra de opacidad.
+  const ALPHA_ROWS = [
+    ["st-fill-a", "st-fill"],
+    ["st-highlight-a", "st-highlight"],
+    ["st-outline-a", "st-outline"],
+    ["st-shadow-a", null],
+    ["st-box-a", "st-box-color"],
+  ];
+
+  function updateStyleReadouts() {
+    $("st-size-val").textContent = `${(Number($("st-size").value) * 100).toFixed(1)} %`;
+    $("st-posy-val").textContent = `${Math.round(Number($("st-posy").value) * 100)} %`;
+    $("st-outline-w-val").textContent = Number($("st-outline-w").value).toFixed(2);
+    $("st-size").setAttribute("aria-valuetext", `${$("st-size-val").textContent} de la altura del vídeo`);
+    $("st-posy").setAttribute("aria-valuetext", `${$("st-posy-val").textContent} desde abajo`);
+    ALPHA_ROWS.forEach(([alphaId, colorId]) => {
+      const out = $(`${alphaId}-val`);
+      if (!out) return;
+      const pct = Math.round(alphaOf(alphaId) * 100);
+      out.querySelector(".alpha-num").textContent = `${pct} %`;
+      const color = colorId ? $(colorId).value : "#000000";
+      out.querySelector(".alpha-chip i").style.background = hexToRgba(color, pct / 100);
+      $(alphaId).setAttribute("aria-valuetext", `${pct} por ciento`);
+    });
+  }
+
+  // Desactiva controles que no tienen efecto en el estado actual.
+  function syncStyleControlStates() {
+    const karaoke = $("st-karaoke").checked;
+    $("st-highlight").disabled = !karaoke;
+    $("st-highlight-a").disabled = !karaoke;
+    $("st-shadow-a").disabled = !$("st-shadow").checked;
+    const box = $("st-box").checked;
+    $("st-box-color").disabled = !box;
+    $("st-box-a").disabled = !box;
+    document.querySelectorAll(".color-row").forEach((row) => {
+      const range = row.querySelector(".alpha-range");
+      row.classList.toggle("is-disabled", Boolean(range && range.disabled));
+    });
+  }
+
+  // Estilos guardados por el usuario (localStorage).
+  const CUSTOM_PRESETS_KEY = "autosubs-custom-presets";
+
+  function loadCustomPresets() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(CUSTOM_PRESETS_KEY) || "{}");
+      return raw && typeof raw === "object" ? raw : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function saveCustomPresets(map) {
+    try {
+      localStorage.setItem(CUSTOM_PRESETS_KEY, JSON.stringify(map));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function getPreset(key) {
+    if (!key) return null;
+    if (key.startsWith("custom:")) return loadCustomPresets()[key.slice(7)] || null;
+    return STYLE_PRESETS[key] || null;
+  }
+
+  function renderCustomChips() {
+    const box = $("custom-chips");
+    const map = loadCustomPresets();
+    const ids = Object.keys(map);
+    box.textContent = "";
+    box.classList.toggle("hidden", ids.length === 0);
+    ids.forEach((id) => {
+      const wrap = document.createElement("span");
+      wrap.className = "custom-chip-wrap";
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip";
+      chip.dataset.style = `custom:${id}`;
+      chip.textContent = map[id].preset_name || id;
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "chip-delete";
+      del.dataset.deletePreset = id;
+      del.setAttribute("aria-label", `Borrar estilo ${map[id].preset_name || id}`);
+      del.textContent = "×";
+      wrap.append(chip, del);
+      box.appendChild(wrap);
+    });
+    updatePresetStatus();
+  }
+
+  function saveCurrentAsPreset(name) {
+    const clean = String(name || "").trim().slice(0, 28);
+    if (!clean) return;
+    const st = readStyleFromUI();
+    const id = clean.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || String(Date.now());
+    const map = loadCustomPresets();
+    map[id] = {
+      preset_name: clean,
+      font: $("st-font").value,
+      font_style: st.font_style,
+      size: st.size,
+      pos_y: st.pos_y,
+      fill_hex: st.fill_hex,
+      highlight_hex: st.highlight_hex,
+      outline_hex: st.outline_hex,
+      outline_thickness: st.outline_thickness,
+      shadow_enabled: st.shadow_enabled,
+      box_enabled: st.box_enabled,
+      box_hex: st.box_hex,
+      fill_alpha: st.fill_alpha,
+      highlight_alpha: st.highlight_alpha,
+      outline_alpha: st.outline_alpha,
+      shadow_alpha: st.shadow_alpha,
+      box_alpha: st.box_alpha,
+      animation_mode: st.animation_mode,
+      anim_hold_frames: st.anim_hold_frames,
+      anim_jitter: st.anim_jitter,
+      ascii_fold: st.ascii_fold,
+      template_name: $("push-template").value,
+    };
+    if (!saveCustomPresets(map)) {
+      showToast("No se pudo guardar el estilo (almacenamiento del navegador bloqueado).");
+      return;
+    }
+    renderCustomChips();
+    applyStylePreset(`custom:${id}`);
+    showToast(`Estilo «${clean}» guardado.`);
+  }
+
+  // Contraste aproximado (WCAG) entre el texto y lo que tiene detrás, ya
+  // mezclado con su opacidad. Se evalúa sobre fondo blanco y negro y se toma
+  // el peor caso, porque no sabemos qué habrá en el vídeo.
+  function parseHex(hex) {
+    const h = String(hex || "#000000").replace("#", "").padEnd(6, "0");
+    return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) || 0);
+  }
+
+  function blend(top, alpha, under) {
+    return top.map((c, i) => c * alpha + under[i] * (1 - alpha));
+  }
+
+  function luminance(rgb) {
+    const [r, g, b] = rgb.map((v) => {
+      const c = v / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }
+
+  function contrastRatio(a, b) {
+    const la = luminance(a);
+    const lb = luminance(b);
+    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+  }
+
+  function updateContrastBadge() {
+    const el = $("style-contrast");
+    if (!el) return;
+    const st = readStyleFromUI();
+    const outlineVisible = st.outline_thickness > 0 && st.outline_alpha >= 0.15;
+    let msg = "";
+    let level = "ok";
+    if (st.fill_alpha < 0.2) {
+      msg = outlineVisible
+        ? "Letras huecas: la legibilidad depende del contorno."
+        : "Texto casi invisible: sube la opacidad del texto o añade contorno.";
+      level = outlineVisible ? "info" : "warn";
+    } else if (!st.box_enabled && !outlineVisible) {
+      msg = st.shadow_enabled
+        ? "Sin contorno ni caja: solo la sombra separa el texto del vídeo."
+        : "Sin contorno, caja ni sombra: la legibilidad dependerá del vídeo.";
+      level = "warn";
+    } else {
+      const layerHex = st.box_enabled ? st.box_hex : st.outline_hex;
+      const layerA = st.box_enabled ? st.box_alpha : st.outline_alpha;
+      const ratio = Math.min(...[[255, 255, 255], [0, 0, 0]].map((backdrop) => {
+        const bg = blend(parseHex(layerHex), layerA, backdrop);
+        const fg = blend(parseHex(st.fill_hex), st.fill_alpha, bg);
+        return contrastRatio(fg, bg);
+      }));
+      const ref = st.box_enabled ? "la caja" : "el contorno";
+      if (ratio < 3) {
+        level = "warn";
+        msg = `Legibilidad baja: contraste ${ratio.toFixed(1)}:1 con ${ref}.`;
+      } else if (ratio < 4.5) {
+        level = "info";
+        msg = `Contraste justo: ${ratio.toFixed(1)}:1 con ${ref} (recomendado ≥ 4.5:1).`;
+      } else {
+        msg = `Contraste ${ratio.toFixed(1)}:1 con ${ref}.`;
+      }
+    }
+    el.textContent = msg;
+    el.dataset.level = level;
+  }
+
+  // Campos que definen un preset; sirven para detectar si el usuario lo modificó.
+  const PRESET_KEYS = [
+    "size", "pos_y", "fill_hex", "highlight_hex", "outline_hex", "outline_thickness",
+    "shadow_enabled", "box_enabled", "box_hex", "fill_alpha", "highlight_alpha",
+    "outline_alpha", "shadow_alpha", "box_alpha", "font_style", "animation_mode", "ascii_fold",
+  ];
+
+  function styleSignature() {
+    const st = readStyleFromUI();
+    return JSON.stringify(PRESET_KEYS.map((k) => {
+      const v = st[k];
+      return typeof v === "number" ? Number(v.toFixed(3)) : typeof v === "string" ? v.toLowerCase() : v;
+    }).concat([$("st-font").value]));
+  }
+
+  function updatePresetStatus() {
+    const key = state.activePreset;
+    const preset = getPreset(key);
+    const modified = Boolean(preset && state.presetSignature && styleSignature() !== state.presetSignature);
+    $("preset-status-text").textContent = preset
+      ? `Preset: ${preset.preset_name}${modified ? " · modificado" : ""}`
+      : "Estilo personalizado";
+    $("btn-preset-reset").classList.toggle("hidden", !modified);
+    document.querySelectorAll(".chip").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.style === key);
+      btn.classList.toggle("modified", btn.dataset.style === key && modified);
+    });
+  }
+
+
+  function updateStyleTargetHint() {
+    const el = $("style-target-hint");
+    if (!el) return;
+    const mode = state.appMode === "standalone" ? "" : $("push-mode").value;
+    const msg =
+      mode === "subtitle_srt"
+        ? "La pista nativa de subtítulos de Resolve no admite colores ni opacidad. Estos ajustes se aplican a Text+, FCPXML, .ASS y al MP4 subtitulado."
+        : mode === "fcpxml"
+        ? "En FCPXML solo viaja la opacidad del texto, y Resolve podría ignorarla al importar. Para transparencias completas usa Text+, .ASS o MP4."
+        : "";
+    el.textContent = msg;
+    el.classList.toggle("hidden", !msg);
+  }
+
+  function onStyleControlChanged() {
+    syncStyleControlStates();
+    updateStyleReadouts();
+    updatePresetStatus();
+    updateContrastBadge();
+    renderPreviewAtMs((activeMedia().currentTime || 0) * 1000);
   }
 
   function readStyleFromUI() {
@@ -268,13 +567,18 @@
       shadow_enabled: $("st-shadow").checked,
       box_enabled: $("st-box").checked,
       box_hex: $("st-box-color").value,
-      box_alpha: 0.78,
+      box_alpha: alphaOf("st-box-a"),
+      fill_alpha: alphaOf("st-fill-a"),
+      highlight_alpha: alphaOf("st-highlight-a"),
+      outline_alpha: alphaOf("st-outline-a"),
+      shadow_alpha: alphaOf("st-shadow-a"),
       uppercase: $("cfg-uppercase").checked,
       ascii_fold: $("st-ascii-fold").checked,
       animation_mode: $("st-anim-mode").value || "none",
       anim_hold_frames: Number($("st-anim-hold").value || 3),
       anim_jitter: Number($("st-anim-jitter").value || 0.15),
       font_variants: fontVariants,
+      karaoke_enabled: $("st-karaoke").checked,
     };
   }
 
@@ -472,8 +776,9 @@
   }
 
   function applyStylePreset(key) {
-    const p = STYLE_PRESETS[key];
+    const p = getPreset(key);
     if (!p) return;
+    const isCustom = key.startsWith("custom:");
 
     let selectedSupportsSpanish = true;
     if (key === "anitype") {
@@ -488,8 +793,11 @@
       }
       $("push-mode").value = "textplus";
       $("template-field").classList.remove("hidden");
-    } else if (state.packByOptionValue[p.font]) {
+    } else if (state.packByOptionValue[p.font] ||
+               Array.from($("st-font").options).some((o) => o.value === p.font)) {
       $("st-font").value = p.font;
+    } else if (isCustom) {
+      showToast(`La fuente «${p.font}» de este estilo no está disponible; se mantiene la actual.`);
     }
 
     $("st-size").value = p.size;
@@ -501,17 +809,26 @@
     $("st-shadow").checked = p.shadow_enabled;
     $("st-box").checked = p.box_enabled;
     $("st-box-color").value = p.box_hex;
+    $("st-fill-a").value = Math.round((p.fill_alpha ?? 1) * 100);
+    $("st-highlight-a").value = Math.round((p.highlight_alpha ?? 1) * 100);
+    $("st-outline-a").value = Math.round((p.outline_alpha ?? 1) * 100);
+    $("st-shadow-a").value = Math.round((p.shadow_alpha ?? 0.65) * 100);
+    $("st-box-a").value = Math.round((p.box_alpha ?? 0.75) * 100);
     $("st-anim-mode").value = p.animation_mode || "none";
     $("st-anim-hold").value = p.anim_hold_frames || 3;
     $("st-anim-jitter").value = p.anim_jitter ?? 0.15;
     $("st-ascii-fold").checked = key === "anitype" ? !selectedSupportsSpanish : Boolean(p.ascii_fold);
-    $("push-template").value = p.template_name;
+    if (p.template_name) $("push-template").value = p.template_name;
 
     syncFontSelection(false, p.font_style);
+    if ((p.animation_mode || "none") !== "none") $("sec-fonts").open = true;
 
-    document.querySelectorAll(".chip").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.style === key);
-    });
+    state.activePreset = key;
+    syncStyleControlStates();
+    updateStyleReadouts();
+    state.presetSignature = styleSignature();
+    updatePresetStatus();
+    updateContrastBadge();
     renderPreviewAtMs((activeMedia().currentTime || 0) * 1000);
   }
 
@@ -554,7 +871,7 @@
     video.classList.toggle("hidden", !state.isVideo);
     if ($("btn-burn-video")) {
       $("btn-burn-video").title = state.canBurninVideo
-        ? "Exportar MP4 con subtítulos incrustados (CPU libx264)"
+        ? "Exportar MP4 con subtítulos incrustados"
         : "Sube primero un archivo de vídeo (.mp4 / .mov / .mkv) para renderizar MP4";
     }
 
@@ -600,11 +917,71 @@
       $("cfg-uppercase").checked = Boolean(fc.uppercase);
     }
 
+    state.view = { startMs: 0, spanMs: 0 };
+    updateZoomReadout();
+
     const previewMs = state.cues.length > 0 ? state.cues[0].start_ms + 120 : 0;
     state.activeCueIndex = state.cues.length > 0 ? 0 : -1;
     renderCueList();
     drawWaveform(previewMs);
     renderPreviewAtMs(previewMs);
+  }
+
+  // Perfil de hardware detectado por el servidor (Intel iMac 2017 / Apple Silicon).
+  function initHardwareControls(hw) {
+    const isApple = hw.profile_id === "apple_silicon";
+    const maxT = Number(hw.threads_standalone || 4);
+    const resolveT = Number(hw.threads_with_resolve || 3);
+    const sel = $("threads-select");
+    sel.innerHTML = "";
+    [
+      [maxT, "Máximo"],
+      [resolveT, "Seguro con Resolve"],
+      [2, "Silencioso"],
+    ]
+      .filter(([n], i, arr) => arr.findIndex(([m]) => m === n) === i)
+      .forEach(([n, label]) => {
+        const opt = document.createElement("option");
+        opt.value = String(n);
+        opt.textContent = `${n} hilos (${label})`;
+        sel.appendChild(opt);
+      });
+
+    $("opt-no-gpu").checked = Boolean(hw.force_no_gpu);
+    const lbl = $("opt-no-gpu-label");
+    lbl.textContent = "";
+    const code = document.createElement("code");
+    code.textContent = "-ng";
+    if (isApple) {
+      lbl.append("Solo CPU, desactivar GPU Metal (", code, ")");
+    } else {
+      const vram = hw.gpu_vram_mb ? ` ${Math.round(hw.gpu_vram_mb / 1024)} GB` : "";
+      lbl.append(`Proteger ${hw.gpu_name || "GPU"}${vram} (`, code, ", solo CPU)");
+    }
+    $("hw-profile-note").textContent = hw.name
+      ? `Perfil detectado: ${hw.name} · ${hw.cpu_description || ""}`
+      : "";
+  }
+
+  function updateHardwareBadges() {
+    const hw = state.hwProfile || {};
+    const isApple = hw.profile_id === "apple_silicon";
+    const threads = $("threads-select").value || hw.threads_standalone || 4;
+    $("badge-cpu").textContent =
+      `${hw.cpu_short || "CPU"} (${threads}/${hw.logical_threads || 4} hilos)`;
+
+    const noGpu = $("opt-no-gpu").checked;
+    const gpuBadge = $("badge-gpu");
+    if (isApple) {
+      gpuBadge.textContent = noGpu ? "GPU Metal: sin usar (-ng)" : "GPU Metal: activa";
+      gpuBadge.className = "pill " + (noGpu ? "pill-neutral" : "pill-ok");
+    } else {
+      const vram = hw.gpu_vram_mb ? ` ${Math.round(hw.gpu_vram_mb / 1024)} GB VRAM` : "";
+      gpuBadge.textContent = noGpu
+        ? `${hw.gpu_name || "GPU"}${vram}: 0 MB (-ng)`
+        : `${hw.gpu_name || "GPU"}${vram}: en uso`;
+      gpuBadge.className = "pill " + (noGpu ? "pill-ok" : "pill-warn");
+    }
   }
 
   async function refreshStatus() {
@@ -637,12 +1014,17 @@
           : "pill-warn"
       );
 
+      const hw = data.environment.hardware_profile || {};
+      if (!state.hwProfile) {
+        state.hwProfile = hw;
+        initHardwareControls(hw);
+      }
       const recThreads = String(data.environment.recommended_threads || 3);
       if (!state.threadsInitialized) {
         $("threads-select").value = recThreads;
         state.threadsInitialized = true;
       }
-      $("badge-cpu").textContent = `CPU i5 AVX2 (${$("threads-select").value || recThreads}/4 hilos)`;
+      updateHardwareBadges();
 
       const meta = data.bridge.timeline_meta || {};
       const metaBox = $("resolve-meta-box");
@@ -719,26 +1101,37 @@
       times.innerHTML = `<strong>#${cue.index}</strong>`;
 
       const startIn = document.createElement("input");
+      startIn.className = "cue-start";
       startIn.type = "number";
-      startIn.step = "50";
+      startIn.step = "10";
       startIn.value = String(cue.start_ms);
       startIn.title = "Inicio en milisegundos";
       startIn.addEventListener("change", () => {
+        const oldStart = cue.start_ms;
         cue.start_ms = Math.max(0, Number(startIn.value || 0));
+        cue.words = rescaleWords(cue.words, oldStart, cue.end_ms, cue.start_ms, cue.end_ms);
+        updateCueRowTimes(idx);
+        drawWaveform(currentMs());
         scheduleSaveCues();
       });
 
       const endIn = document.createElement("input");
+      endIn.className = "cue-end";
       endIn.type = "number";
-      endIn.step = "50";
+      endIn.step = "10";
       endIn.value = String(cue.end_ms);
       endIn.title = "Fin en milisegundos";
       endIn.addEventListener("change", () => {
+        const oldEnd = cue.end_ms;
         cue.end_ms = Math.max(cue.start_ms + 80, Number(endIn.value || cue.start_ms + 500));
+        cue.words = rescaleWords(cue.words, cue.start_ms, oldEnd, cue.start_ms, cue.end_ms);
+        updateCueRowTimes(idx);
+        drawWaveform(currentMs());
         scheduleSaveCues();
       });
 
       const tcSpan = document.createElement("span");
+      tcSpan.className = "cue-tc";
       tcSpan.textContent = `${formatMsReadable(cue.start_ms)} → ${formatMsReadable(cue.end_ms)}`;
 
       times.appendChild(startIn);
@@ -753,7 +1146,7 @@
       cpsBadge.textContent = `${Number(cue.cps || 0).toFixed(1)} CPS`;
       actions.appendChild(cpsBadge);
 
-      const btnPlayCue = makeMiniBtn("▶", "Escuchar este subtítulo", () => seekAndPlay(cue.start_ms));
+      const btnPlayCue = makeMiniBtn("▶", "Escuchar este subtítulo", () => seekAndPlay(cue.start_ms, cue.end_ms));
       const btnSplit = makeMiniBtn("÷", "Dividir en dos subtítulos", () => splitCue(idx));
       const btnMerge = makeMiniBtn("+Unir", "Unir con el siguiente", () => mergeCue(idx));
       const btnDel = makeMiniBtn("×", "Eliminar subtítulo", () => deleteCue(idx));
@@ -772,6 +1165,8 @@
       textarea.value = cue.text || "";
       textarea.addEventListener("focus", () => {
         state.activeCueIndex = idx;
+        ensureMsVisible(cue.start_ms);
+        drawWaveform(currentMs());
         renderPreviewAtMs(cue.start_ms + 10);
       });
       textarea.addEventListener("input", () => {
@@ -800,12 +1195,24 @@
     });
   }
 
+  // Las palabras se conservan al editar: el servidor (align_words_to_lines)
+  // mantiene los tiempos de Whisper de las palabras que siguen y reparte el
+  // tiempo entre las nuevas. Aquí solo se sincroniza el texto si coincide el número.
   function syncCueWordsAfterTextEdit(cue) {
-    const tokCount = (cue.lines || []).reduce(
-      (n, ln) => n + ln.split(/\s+/).filter(Boolean).length,
-      0
-    );
-    if (cue.words && cue.words.length !== tokCount) cue.words = [];
+    const tokens = (cue.lines || []).flatMap((ln) => ln.split(/\s+/).filter(Boolean));
+    if (cue.words && cue.words.length === tokens.length) {
+      cue.words.forEach((w, i) => { w.text = tokens[i]; });
+    }
+  }
+
+  function rescaleWords(words, oldStart, oldEnd, newStart, newEnd) {
+    if (!words || !words.length) return [];
+    const scale = (newEnd - newStart) / Math.max(1, oldEnd - oldStart);
+    return words.map((w) => ({
+      ...w,
+      start_ms: Math.round(newStart + (w.start_ms - oldStart) * scale),
+      end_ms: Math.round(newStart + (w.end_ms - oldStart) * scale),
+    }));
   }
 
   function makeMiniBtn(label, title, onClick) {
@@ -819,18 +1226,29 @@
   }
 
   function scheduleSaveCues() {
+    state.editSeq += 1;
     clearTimeout(state.saveTimer);
     state.saveTimer = setTimeout(saveCuesToServer, 350);
   }
 
   async function saveCuesToServer() {
+    clearTimeout(state.saveTimer);
+    const seq = state.editSeq;
     try {
       const data = await apiJson("/api/cues", {
         method: "PUT",
         body: JSON.stringify({ cues: state.cues }),
       });
-      if (data.session) {
-        state.cues = data.session.cues;
+      // Ignora respuestas viejas si hubo ediciones mientras viajaba la petición.
+      if (data.session && seq === state.editSeq) {
+        const serverCues = data.session.cues || [];
+        if (serverCues.length === state.cues.length) {
+          // Actualiza en sitio: los textareas abiertos siguen apuntando a estos objetos.
+          serverCues.forEach((c, i) => Object.assign(state.cues[i], c));
+        } else {
+          state.cues = serverCues;
+          renderCueList();
+        }
         const avgCps = state.cues.length
           ? state.cues.reduce((acc, c) => acc + (c.cps || 0), 0) / state.cues.length
           : 0;
@@ -852,20 +1270,23 @@
     const words = (cue.text || "").trim().split(/\s+/);
     if (words.length < 2) return;
     const midWord = Math.floor(words.length / 2);
-    const midMs = Math.floor((cue.start_ms + cue.end_ms) / 2);
+    // Con tiempos por palabra, corta justo donde empieza la palabra central.
+    const timed = (cue.words || []).length === words.length ? cue.words : null;
+    const rawMid = timed ? timed[midWord].start_ms : (cue.start_ms + cue.end_ms) / 2;
+    const midMs = Math.round(Math.min(Math.max(rawMid, cue.start_ms + 80), cue.end_ms - 80));
     const first = {
       ...cue,
       end_ms: midMs,
       lines: [words.slice(0, midWord).join(" ")],
       text: words.slice(0, midWord).join(" "),
-      words: [],
+      words: timed ? timed.slice(0, midWord) : [],
     };
     const second = {
       ...cue,
       start_ms: midMs,
       lines: [words.slice(midWord).join(" ")],
       text: words.slice(midWord).join(" "),
-      words: [],
+      words: timed ? timed.slice(midWord) : [],
     };
     state.cues.splice(idx, 1, first, second);
     await saveCuesToServer();
@@ -923,8 +1344,8 @@
     const stageH = $("preview-stage").clientHeight || 260;
     cap.style.fontSize = `${Math.max(12, Math.round(st.size * stageH * 1.15))}px`;
     cap.style.bottom = `${Math.round(st.pos_y * 100)}%`;
-    cap.style.color = st.fill_hex;
-    cap.style.background = st.box_enabled ? st.box_hex : "transparent";
+    cap.style.color = hexToRgba(st.fill_hex, st.fill_alpha);
+    cap.style.background = st.box_enabled ? hexToRgba(st.box_hex, st.box_alpha) : "transparent";
 
     if (
       (st.animation_mode === "boil" || st.animation_mode === "font_cycle_boil") &&
@@ -940,15 +1361,14 @@
       cap.style.transform = "none";
     }
 
+    // Contorno real (stroke) pintado bajo el relleno: con texto al 0 % quedan
+    // letras huecas, igual que en .ASS y Text+.
     const ol = Math.max(0, Math.round(st.outline_thickness * 18));
-    if (ol > 0) {
-      cap.style.textShadow =
-        `${ol}px 0 0 ${st.outline_hex}, -${ol}px 0 0 ${st.outline_hex}, ` +
-        `0 ${ol}px 0 ${st.outline_hex}, 0 -${ol}px 0 ${st.outline_hex}` +
-        (st.shadow_enabled ? ", 0 3px 8px rgba(0,0,0,0.75)" : "");
-    } else {
-      cap.style.textShadow = st.shadow_enabled ? "0 3px 8px rgba(0,0,0,0.8)" : "none";
-    }
+    cap.style.webkitTextStroke = ol > 0 ? `${ol * 2}px ${hexToRgba(st.outline_hex, st.outline_alpha)}` : "0";
+    cap.style.paintOrder = "stroke fill";
+    cap.style.textShadow = st.shadow_enabled
+      ? `0 3px 8px ${hexToRgba("#000000", st.shadow_alpha)}`
+      : "none";
 
     const transformToken = (txt) => {
       let out = st.ascii_fold ? foldSpanishToAsciiPreview(txt) : txt;
@@ -964,7 +1384,11 @@
       return;
     }
 
-    if (active.words && active.words.length > 0 && ms >= active.start_ms && ms <= active.end_ms) {
+    if (
+      st.karaoke_enabled &&
+      active.words && active.words.length > 0 &&
+      ms >= active.start_ms && ms <= active.end_ms
+    ) {
       cap.innerHTML = "";
       let wIdx = 0;
       (active.lines || [active.text]).forEach((line, lIdx) => {
@@ -976,7 +1400,7 @@
           wIdx += 1;
           span.textContent = transformToken(tok);
           if (wObj && ms >= wObj.start_ms && ms <= wObj.end_ms) {
-            span.style.color = st.highlight_hex;
+            span.style.color = hexToRgba(st.highlight_hex, st.highlight_alpha);
           }
           cap.appendChild(span);
         });
@@ -1042,51 +1466,422 @@
     showToast(`Tema ${target === "light" ? "claro" : "oscuro"} activado`);
   }
 
-  function drawWaveform(playheadMs) {
+  // ---------------------------------------------------------------------------
+  // Forma de onda: regla de tiempo, zoom/desplazamiento y arrastre de subtítulos
+  // ---------------------------------------------------------------------------
+  const WAVE_RULER_H = 14;
+  const WAVE_LANE_H = 26;
+  const WAVE_EDGE_PX = 8;
+  const MIN_CUE_MS = 200;
+  const MIN_VIEW_MS = 2000;
+
+  function currentMs() {
+    return (activeMedia().currentTime || 0) * 1000;
+  }
+
+  function totalDurMs() {
+    const m = activeMedia();
+    const lastEnd = state.cues.length ? state.cues[state.cues.length - 1].end_ms : 0;
+    return Math.max(1000, state.durationMs || (m.duration ? m.duration * 1000 : 0) || lastEnd);
+  }
+
+  function viewRange() {
+    const dur = totalDurMs();
+    const span = state.view.spanMs > 0 ? Math.min(state.view.spanMs, dur) : dur;
+    const start = Math.max(0, Math.min(state.view.startMs, dur - span));
+    return { start, span, dur };
+  }
+
+  function setView(startMs, spanMs) {
+    const dur = totalDurMs();
+    const span = Math.max(MIN_VIEW_MS, Math.min(spanMs, dur));
+    state.view.spanMs = span >= dur ? 0 : span;
+    state.view.startMs = Math.max(0, Math.min(startMs, dur - span));
+    updateZoomReadout();
+    drawWaveform(currentMs());
+  }
+
+  function zoomAround(centerMs, factor) {
+    const { start, span } = viewRange();
+    const f = Math.max(0.25, Math.min(4, factor));
+    const frac = (centerMs - start) / span;
+    setView(centerMs - frac * span * f, span * f);
+  }
+
+  function updateZoomReadout() {
+    const el = $("zoom-readout");
+    if (!el) return;
+    const { span, dur } = viewRange();
+    el.textContent =
+      span >= dur ? "Todo"
+      : span >= 60000 ? `${(span / 60000).toFixed(1)} min`
+      : `${(span / 1000).toFixed(span < 10000 ? 1 : 0)} s`;
+  }
+
+  function ensureMsVisible(ms, pad = 0.1) {
+    if (state.view.spanMs <= 0) return;
+    const { start, span } = viewRange();
+    if (ms < start || ms > start + span) setView(ms - span * pad, span);
+  }
+
+  function waveSize() {
     const canvas = $("waveform-canvas");
+    const rect = canvas.getBoundingClientRect();
+    return { canvas, w: rect.width || 960, h: rect.height || 96 };
+  }
+
+  const msToX = (ms, w, vr) => ((ms - vr.start) / vr.span) * w;
+  const xToMs = (x, w, vr) => vr.start + (x / w) * vr.span;
+
+  function formatTick(ms, step) {
+    const totalS = ms / 1000;
+    const m = Math.floor(totalS / 60);
+    const sec = totalS - m * 60;
+    const secStr = step < 1000 ? sec.toFixed(1).padStart(4, "0") : String(Math.floor(sec)).padStart(2, "0");
+    return `${m}:${secStr}`;
+  }
+
+  function drawWaveform(playheadMs) {
+    const { canvas, w, h } = waveSize();
+    const dpr = window.devicePixelRatio || 1;
+    const pw = Math.round(w * dpr);
+    const ph = Math.round(h * dpr);
+    if (canvas.width !== pw || canvas.height !== ph) {
+      canvas.width = pw;
+      canvas.height = ph;
+    }
     const ctx = canvas.getContext("2d");
-    const w = canvas.width;
-    const h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const isLight = getCurrentScheme() === "light";
     ctx.fillStyle = isLight ? "#f0f0f3" : "#141417";
     ctx.fillRect(0, 0, w, h);
 
-    const dur = Math.max(1, state.durationMs || (state.cues.length ? state.cues[state.cues.length - 1].end_ms : 1000));
+    const vr = viewRange();
+    const laneTop = h - WAVE_LANE_H;
+    const waveTop = WAVE_RULER_H;
+    const waveBottom = laneTop - 2;
+    const waveMid = (waveTop + waveBottom) / 2;
+    const waveHalf = (waveBottom - waveTop) / 2;
+    const mutedText = isLight ? "#71717a" : "#92929c";
 
-    // Dibujar bloques de subtítulos en la parte inferior
-    state.cues.forEach((cue, idx) => {
-      const x1 = (cue.start_ms / dur) * w;
-      const x2 = Math.max(x1 + 2, (cue.end_ms / dur) * w);
-      ctx.fillStyle = idx === state.activeCueIndex
-        ? "rgba(131,103,199,0.85)"
-        : (isLight ? "rgba(131,103,199,0.28)" : "rgba(131,103,199,0.22)");
-      ctx.fillRect(x1, h - 16, x2 - x1, 14);
-    });
-
-    // Dibujar picos de audio
-    const peaks = state.peaks;
-    if (peaks && peaks.length > 0) {
-      const step = w / peaks.length;
-      ctx.fillStyle = isLight ? "#94949e" : "#555562";
-      peaks.forEach((p, i) => {
-        const amp = Math.max(2, p * (h - 22));
-        const y = (h - 18 - amp) / 2;
-        ctx.fillRect(i * step, y, Math.max(1, step - 0.5), amp);
-      });
+    // Regla de tiempo
+    const steps = [100, 250, 500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000];
+    const step = steps.find((st) => (st / vr.span) * w >= 70) || 600000;
+    ctx.fillStyle = mutedText;
+    ctx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.textBaseline = "top";
+    for (let t = Math.ceil(vr.start / step) * step; t <= vr.start + vr.span; t += step) {
+      const x = Math.round(msToX(t, w, vr));
+      ctx.fillRect(x, 0, 1, 4);
+      ctx.fillText(formatTick(t, step), x + 3, 2);
     }
 
+    // Regiones de subtítulos sobre la onda
+    state.cues.forEach((cue, idx) => {
+      const x1 = msToX(cue.start_ms, w, vr);
+      const x2 = msToX(cue.end_ms, w, vr);
+      if (x2 < 0 || x1 > w) return;
+      ctx.fillStyle = idx === state.activeCueIndex ? "rgba(131,103,199,0.16)" : "rgba(131,103,199,0.06)";
+      ctx.fillRect(x1, waveTop, Math.max(1, x2 - x1), waveBottom - waveTop);
+    });
+
+    // Picos de audio (máximo por columna de píxel en la ventana visible)
+    const peaks = state.peaks || [];
+    if (peaks.length > 0 && state.durationMs > 0) {
+      const n = peaks.length;
+      const perMs = n / state.durationMs;
+      ctx.fillStyle = isLight ? "#94949e" : "#555562";
+      for (let x = 0; x < w; x++) {
+        const i0 = Math.max(0, Math.floor(xToMs(x, w, vr) * perMs));
+        const i1 = Math.min(n, Math.max(i0 + 1, Math.floor(xToMs(x + 1, w, vr) * perMs)));
+        let pk = 0;
+        for (let i = i0; i < i1; i++) if (peaks[i] > pk) pk = peaks[i];
+        const amp = Math.max(0.5, pk * waveHalf);
+        ctx.fillRect(x, waveMid - amp, 1, amp * 2);
+      }
+    }
+
+    // Carril de bloques arrastrables
+    ctx.textBaseline = "middle";
+    state.cues.forEach((cue, idx) => {
+      const x1 = msToX(cue.start_ms, w, vr);
+      const x2 = msToX(cue.end_ms, w, vr);
+      if (x2 < 0 || x1 > w) return;
+      const active = idx === state.activeCueIndex || (state.drag && state.drag.idx === idx);
+      const bw = Math.max(2, x2 - x1 - 1);
+      ctx.fillStyle = active
+        ? "rgba(131,103,199,0.92)"
+        : isLight ? "rgba(131,103,199,0.35)" : "rgba(131,103,199,0.32)";
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x1 + 0.5, laneTop + 2, bw, WAVE_LANE_H - 4, 4);
+      else ctx.rect(x1 + 0.5, laneTop + 2, bw, WAVE_LANE_H - 4);
+      ctx.fill();
+      if (active && bw > 10) {
+        ctx.fillStyle = "rgba(255,255,255,0.85)";
+        ctx.fillRect(x1 + 2, laneTop + 8, 2, WAVE_LANE_H - 16);
+        ctx.fillRect(x2 - 4, laneTop + 8, 2, WAVE_LANE_H - 16);
+      }
+      if (bw > 34) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x1 + 6, laneTop, bw - 12, WAVE_LANE_H);
+        ctx.clip();
+        ctx.fillStyle = active ? "#ffffff" : isLight ? "#3f3f46" : "#d4d4d8";
+        ctx.fillText(`#${idx + 1} ${(cue.text || "").replace(/\n/g, " ")}`, x1 + 7, laneTop + WAVE_LANE_H / 2);
+        ctx.restore();
+      }
+    });
+
     // Cabezal de reproducción
-    const px = Math.max(0, Math.min(w - 1, (playheadMs / dur) * w));
-    ctx.fillStyle = "#8367c7";
-    ctx.fillRect(px, 0, 2, h);
+    const px = msToX(playheadMs, w, vr);
+    if (px >= 0 && px <= w) {
+      ctx.fillStyle = "#8367c7";
+      ctx.fillRect(Math.round(px), 0, 2, h);
+    }
   }
 
-  function seekAndPlay(ms) {
+  // Devuelve { idx, mode: "start" | "end" | "move" } si el puntero está sobre un bloque.
+  function hitTestCue(x, y) {
+    const { w, h } = waveSize();
+    // El carril acepta clics un poco por encima de su borde superior.
+    if (y < h - WAVE_LANE_H - 8) return null;
+    const vr = viewRange();
+    const spans = state.cues.map((cue) => [msToX(cue.start_ms, w, vr), msToX(cue.end_ms, w, vr)]);
+    const tolFor = (x1, x2) => Math.min(WAVE_EDGE_PX, Math.max(2, (x2 - x1) / 3));
+    // Dentro de un bloque solo cuentan sus propios bordes (nunca los del vecino).
+    const insideIdx = spans.findIndex(([x1, x2]) => x >= x1 && x <= x2);
+    if (insideIdx >= 0) {
+      const [x1, x2] = spans[insideIdx];
+      const tol = tolFor(x1, x2);
+      if (x - x1 <= tol) return { idx: insideIdx, mode: "start" };
+      if (x2 - x <= tol) return { idx: insideIdx, mode: "end" };
+      return { idx: insideIdx, mode: "move" };
+    }
+    // En un hueco: el borde más cercano dentro de la tolerancia.
+    let edge = null;
+    spans.forEach(([x1, x2], idx) => {
+      const tol = tolFor(x1, x2);
+      [["start", Math.abs(x - x1)], ["end", Math.abs(x - x2)]].forEach(([mode, dist]) => {
+        if (dist <= tol && (!edge || dist < edge.dist)) edge = { idx, mode, dist };
+      });
+    });
+    return edge;
+  }
+
+  function seekToMs(ms) {
+    state.playUntilMs = null;
+    const clamped = Math.max(0, Math.min(ms, totalDurMs()));
+    const m = activeMedia();
+    try {
+      if (m.getAttribute("src")) m.currentTime = clamped / 1000;
+    } catch (_) {}
+    drawWaveform(clamped);
+    renderPreviewAtMs(clamped);
+  }
+
+  function selectCue(idx) {
+    state.activeCueIndex = idx;
+    document.querySelectorAll(".cue-item").forEach((el, i) => el.classList.toggle("active", i === idx));
+    scrollCueIntoList(idx);
+  }
+
+  // Desplaza solo la lista de subtítulos. scrollIntoView también movía la
+  // página y la forma de onda quedaba en otro sitio bajo el puntero, así que el
+  // siguiente clic en un borde caía en el lugar equivocado.
+  function scrollCueIntoList(idx) {
+    const list = $("cue-list");
+    const el = list.querySelector(`.cue-item[data-index="${idx}"]`);
+    if (!el) return;
+    const lr = list.getBoundingClientRect();
+    const er = el.getBoundingClientRect();
+    if (er.top < lr.top) list.scrollTop += er.top - lr.top - 4;
+    else if (er.bottom > lr.bottom) list.scrollTop += er.bottom - lr.bottom + 4;
+  }
+
+  function updateCueRowTimes(idx) {
+    const cue = state.cues[idx];
+    const el = document.querySelector(`.cue-item[data-index="${idx}"]`);
+    if (!cue || !el) return;
+    el.querySelector(".cue-start").value = String(cue.start_ms);
+    el.querySelector(".cue-end").value = String(cue.end_ms);
+    el.querySelector(".cue-tc").textContent =
+      `${formatMsReadable(cue.start_ms)} → ${formatMsReadable(cue.end_ms)}`;
+  }
+
+  function applyCueDrag(d, deltaMs) {
+    const cue = state.cues[d.idx];
+    const prevEnd = d.idx > 0 ? state.cues[d.idx - 1].end_ms : 0;
+    const nextStart = d.idx < state.cues.length - 1 ? state.cues[d.idx + 1].start_ms : totalDurMs();
+    const { start, end } = d.orig;
+    const snap = (v) => Math.round(v / 10) * 10;
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(v, Math.max(lo, hi)));
+    let ns = start;
+    let ne = end;
+    if (d.mode === "start") {
+      ns = clamp(snap(start + deltaMs), prevEnd, end - MIN_CUE_MS);
+    } else if (d.mode === "end") {
+      ne = clamp(snap(end + deltaMs), start + MIN_CUE_MS, nextStart);
+    } else {
+      const len = end - start;
+      ns = clamp(snap(start + deltaMs), prevEnd, nextStart - len);
+      ne = ns + len;
+    }
+    cue.start_ms = ns;
+    cue.end_ms = ne;
+    cue.words = rescaleWords(d.orig.words, start, end, ns, ne);
+    updateCueRowTimes(d.idx);
+    renderPreviewAtMs(d.mode === "end" ? ne - 20 : ns + 20);
+    drawWaveform(currentMs());
+  }
+
+  function cancelCueDrag() {
+    const d = state.drag;
+    if (!d || d.kind !== "cue") return;
+    const cue = state.cues[d.idx];
+    cue.start_ms = d.orig.start;
+    cue.end_ms = d.orig.end;
+    cue.words = d.orig.words;
+    state.drag = null;
+    updateCueRowTimes(d.idx);
+    drawWaveform(currentMs());
+    renderPreviewAtMs(currentMs());
+  }
+
+  function wireWaveform() {
+    const canvas = $("waveform-canvas");
+    const local = (ev) => {
+      const r = canvas.getBoundingClientRect();
+      return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+    };
+
+    canvas.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0) return;
+      const { x, y } = local(ev);
+      const { w } = waveSize();
+      const vr = viewRange();
+      canvas.setPointerCapture(ev.pointerId);
+      const hit = hitTestCue(x, y);
+      if (hit) {
+        const cue = state.cues[hit.idx];
+        state.drag = {
+          kind: "cue",
+          idx: hit.idx,
+          mode: hit.mode,
+          grabMs: xToMs(x, w, vr),
+          startX: x,
+          moved: false,
+          orig: { start: cue.start_ms, end: cue.end_ms, words: (cue.words || []).map((wd) => ({ ...wd })) },
+        };
+        selectCue(hit.idx);
+        drawWaveform(currentMs());
+      } else {
+        state.drag = { kind: "scrub" };
+        seekToMs(xToMs(x, w, vr));
+      }
+    });
+
+    canvas.addEventListener("pointermove", (ev) => {
+      const { x, y } = local(ev);
+      const d = state.drag;
+      if (!d) {
+        const hit = hitTestCue(x, y);
+        canvas.style.cursor = !hit ? "pointer" : hit.mode === "move" ? "grab" : "ew-resize";
+        return;
+      }
+      const { w } = waveSize();
+      const vr = viewRange();
+      if (d.kind === "scrub") {
+        seekToMs(xToMs(x, w, vr));
+        return;
+      }
+      if (!d.moved && Math.abs(x - d.startX) < 3) return;
+      d.moved = true;
+      canvas.style.cursor = d.mode === "move" ? "grabbing" : "ew-resize";
+      applyCueDrag(d, xToMs(x, w, vr) - d.grabMs);
+    });
+
+    const endDrag = (cancelled) => {
+      const d = state.drag;
+      if (!d) return;
+      if (d.kind !== "cue") {
+        state.drag = null;
+        return;
+      }
+      if (cancelled) {
+        cancelCueDrag();
+        return;
+      }
+      state.drag = null;
+      const cue = state.cues[d.idx];
+      if (!d.moved) {
+        seekToMs(cue.start_ms);
+        return;
+      }
+      scheduleSaveCues();
+      renderCueList();
+      selectCue(d.idx);
+      drawWaveform(currentMs());
+    };
+    canvas.addEventListener("pointerup", () => endDrag(false));
+    canvas.addEventListener("pointercancel", () => endDrag(true));
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && state.drag && state.drag.kind === "cue") cancelCueDrag();
+    });
+
+    canvas.addEventListener(
+      "wheel",
+      (ev) => {
+        const { x } = local(ev);
+        const { w } = waveSize();
+        const vr = viewRange();
+        if (ev.ctrlKey || ev.metaKey) {
+          // Pellizco en trackpad (ctrlKey) o ⌘ + rueda: zoom alrededor del puntero.
+          ev.preventDefault();
+          zoomAround(xToMs(x, w, vr), Math.exp(ev.deltaY * 0.01));
+        } else if (state.view.spanMs > 0) {
+          ev.preventDefault();
+          const delta = Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY;
+          setView(vr.start + (delta / w) * vr.span, vr.span);
+        }
+      },
+      { passive: false }
+    );
+
+    const zoomCenter = () => {
+      const { start, span } = viewRange();
+      const ms = currentMs();
+      return ms >= start && ms <= start + span ? ms : start + span / 2;
+    };
+    $("btn-zoom-in").addEventListener("click", () => zoomAround(zoomCenter(), 0.5));
+    $("btn-zoom-out").addEventListener("click", () => zoomAround(zoomCenter(), 2));
+    $("btn-zoom-fit").addEventListener("click", () => setView(0, Infinity));
+    window.addEventListener("resize", () => drawWaveform(currentMs()));
+  }
+
+  // Reproduce desde `ms`; con `stopAtMs` se pausa sola al llegar ahí
+  // (se revisa en cada frame, así no se pasa ~250 ms como con timeupdate).
+  function seekAndPlay(ms, stopAtMs = null) {
     const mediaEl = activeMedia();
+    state.playUntilMs = stopAtMs;
     mediaEl.currentTime = Math.max(0, ms / 1000);
     mediaEl.play().catch(() => {});
+    if (stopAtMs == null) return;
+    cancelAnimationFrame(state.playUntilRaf);
+    const tick = () => {
+      const m = activeMedia();
+      if (state.playUntilMs == null || m.paused) {
+        state.playUntilMs = null;
+        return;
+      }
+      if (m.currentTime * 1000 >= state.playUntilMs) {
+        m.pause();
+        state.playUntilMs = null;
+        return;
+      }
+      state.playUntilRaf = requestAnimationFrame(tick);
+    };
+    state.playUntilRaf = requestAnimationFrame(tick);
   }
 
   async function jumpResolve(ms) {
@@ -1203,9 +1998,6 @@
     });
 
     $("model-select").addEventListener("change", updateModelHint);
-    $("threads-select").addEventListener("change", () => {
-      $("badge-cpu").textContent = `CPU i5 AVX2 (${$("threads-select").value}/4 hilos)`;
-    });
     if ($("btn-theme-toggle")) {
       $("btn-theme-toggle").addEventListener("click", toggleTheme);
     }
@@ -1334,6 +2126,7 @@
     const audio = $("audio-player");
     const video = $("video-player");
     $("btn-play").addEventListener("click", () => {
+      state.playUntilMs = null; // El botón principal reproduce sin límite.
       const m = activeMedia();
       if (m.paused) m.play().catch(() => {});
       else m.pause();
@@ -1352,6 +2145,7 @@
           el.classList.toggle("active", i === idx);
         });
       }
+      if (!m.paused && !state.drag) ensureMsVisible(ms);
       renderPreviewAtMs(ms);
       drawWaveform(ms);
     };
@@ -1374,17 +2168,7 @@
       video.playbackRate = rate;
     });
 
-    $("waveform-canvas").addEventListener("click", (ev) => {
-      const rect = ev.target.getBoundingClientRect();
-      const frac = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
-      const m = activeMedia();
-      const dur = state.durationMs || (m.duration ? m.duration * 1000 : 0);
-      if (dur > 0) {
-        m.currentTime = (frac * dur) / 1000;
-        drawWaveform(frac * dur);
-        renderPreviewAtMs(frac * dur);
-      }
-    });
+    wireWaveform();
 
     // Aspecto 16:9 / 9:16
     function setAspect(mode) {
@@ -1474,17 +2258,98 @@
       });
     });
 
-    document.querySelectorAll(".chip").forEach((chip) => {
-      chip.addEventListener("click", () => applyStylePreset(chip.dataset.style));
+    document.querySelectorAll(".style-chips").forEach((box) => {
+      box.addEventListener("click", (ev) => {
+        const del = ev.target.closest("[data-delete-preset]");
+        if (del) {
+          const map = loadCustomPresets();
+          const name = (map[del.dataset.deletePreset] || {}).preset_name || "";
+          delete map[del.dataset.deletePreset];
+          saveCustomPresets(map);
+          if (state.activePreset === `custom:${del.dataset.deletePreset}`) state.activePreset = null;
+          renderCustomChips();
+          showToast(`Estilo «${name}» borrado.`);
+          return;
+        }
+        const chip = ev.target.closest(".chip[data-style]");
+        if (chip) applyStylePreset(chip.dataset.style);
+      });
     });
-    ["st-weight", "st-ascii-fold", "st-size", "st-posy", "st-fill", "st-highlight", "st-outline", "st-outline-w", "st-shadow", "st-box", "st-box-color", "cfg-uppercase"]
-      .forEach((id) => $(id).addEventListener("input", () => renderPreviewAtMs((activeMedia().currentTime || 0) * 1000)));
+
+    const saveForm = $("preset-save-form");
+    const toggleSaveForm = (open) => {
+      saveForm.classList.toggle("hidden", !open);
+      $("btn-preset-save").classList.toggle("hidden", open);
+      if (open) {
+        $("preset-save-name").value = "";
+        $("preset-save-name").focus();
+      }
+    };
+    $("btn-preset-save").addEventListener("click", () => toggleSaveForm(true));
+    $("btn-preset-save-cancel").addEventListener("click", () => toggleSaveForm(false));
+    saveForm.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      saveCurrentAsPreset($("preset-save-name").value);
+      toggleSaveForm(false);
+    });
+    saveForm.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") toggleSaveForm(false);
+    });
+    renderCustomChips();
+
+    // Karaoke global (apagado por defecto, se recuerda entre sesiones).
+    const syncKaraoke = () => {
+      const on = $("st-karaoke").checked;
+      syncStyleControlStates();
+      updatePresetStatus();
+      try { localStorage.setItem("autosubs-karaoke", on ? "1" : "0"); } catch (_) {}
+      renderPreviewAtMs(currentMs());
+    };
+    try { $("st-karaoke").checked = localStorage.getItem("autosubs-karaoke") === "1"; } catch (_) {}
+    syncStyleControlStates();
+    $("st-karaoke").addEventListener("change", syncKaraoke);
+
+    $("btn-preset-reset").addEventListener("click", () => {
+      if (state.activePreset) applyStylePreset(state.activePreset);
+    });
+
+    // Fondo de prueba del monitor (útil para evaluar transparencias).
+    const STAGE_BGS = ["black", "gray", "light", "checker"];
+    const setStageBg = (bg, persist = true) => {
+      const value = STAGE_BGS.includes(bg) ? bg : "black";
+      const stage = $("preview-stage");
+      STAGE_BGS.forEach((b) => stage.classList.toggle(`stage-bg-${b}`, b === value));
+      document.querySelectorAll("#stage-bg-toggle .bg-swatch").forEach((btn) => {
+        btn.setAttribute("aria-pressed", String(btn.dataset.bg === value));
+      });
+      if (persist) {
+        try { localStorage.setItem("autosubs-stage-bg", value); } catch (_) {}
+      }
+    };
+    document.querySelectorAll("#stage-bg-toggle .bg-swatch").forEach((btn) => {
+      btn.addEventListener("click", () => setStageBg(btn.dataset.bg));
+    });
+    let savedBg = "black";
+    try { savedBg = localStorage.getItem("autosubs-stage-bg") || "black"; } catch (_) {}
+    setStageBg(savedBg, false);
+
+    $("threads-select").addEventListener("change", updateHardwareBadges);
+    $("opt-no-gpu").addEventListener("change", updateHardwareBadges);
+    ["st-weight", "st-ascii-fold", "st-size", "st-posy", "st-fill", "st-highlight", "st-outline", "st-outline-w", "st-shadow", "st-box", "st-box-color", "cfg-uppercase",
+     "st-fill-a", "st-highlight-a", "st-outline-a", "st-shadow-a", "st-box-a", "st-anim-mode"]
+      .forEach((id) => {
+        $(id).addEventListener("input", onStyleControlChanged);
+        $(id).addEventListener("change", onStyleControlChanged);
+      });
+    $("st-font").addEventListener("change", updatePresetStatus);
 
     function syncPushModeVisibility() {
       $("template-field").classList.toggle("hidden", $("push-mode").value !== "textplus");
     }
     $("push-mode").addEventListener("change", syncPushModeVisibility);
+    $("push-mode").addEventListener("change", updateStyleTargetHint);
     syncPushModeVisibility();
+    updateStyleTargetHint();
 
     // Push a DaVinci Resolve 20
     $("btn-push-resolve").addEventListener("click", async () => {

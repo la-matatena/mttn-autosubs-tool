@@ -239,6 +239,7 @@ for i, item in ipairs(appended) do
           tp:SetInput("Red1", st.fill_r)
           tp:SetInput("Green1", st.fill_g)
           tp:SetInput("Blue1", st.fill_b)
+          tp:SetInput("Alpha1", st.fill_a or 1.0)
         end
         if st.outline_thickness ~= nil then
           tp:SetInput("Enabled2", st.outline_thickness > 0 and 1 or 0)
@@ -246,8 +247,10 @@ for i, item in ipairs(appended) do
           tp:SetInput("Red2", st.outline_r or 0)
           tp:SetInput("Green2", st.outline_g or 0)
           tp:SetInput("Blue2", st.outline_b or 0)
+          tp:SetInput("Alpha2", st.outline_a or 1.0)
         end
         tp:SetInput("Enabled3", st.shadow_enabled and 1 or 0)
+        if st.shadow_a ~= nil then tp:SetInput("Alpha3", st.shadow_a) end
         tp:SetInput("Enabled4", st.box_enabled and 1 or 0)
         if st.box_enabled then
           tp:SetInput("Red4", st.box_r or 0)

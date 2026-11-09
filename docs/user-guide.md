@@ -152,6 +152,12 @@ Configure CPU scheduling, Whisper model precision, board-game terminology, and S
     -   Edit subtitle text inline, click **Aplicar reglas RAE y glosario** after changing domain, glossary, **Máx car.**, **Líneas**, or **Pausa ms**, or fix recurring terms across all cues with **Reemplazar todo**.
     -   Choose a template chip (`Cine Netflix`, `Amarillo Clásico`, `Reels Impacto`, `Caja Editorial`, or `★ Anitype Animado (Flipbook)`) in **4. Estilo y tipografía** and fine-tune font family, size, vertical position (`Altura Y`), fill, karaoke, and outline colors, shadow, or background pill box.
 
+### Set colors and opacity
+
+Open **4. Estilo y tipografía > Colores y opacidad** to give each layer (text, karaoke, outline, shadow, and box) its own color and opacity from 0 to 100 %. Set the text to 0 % with a visible outline for hollow lettering, and use the monitor background selector (black, gray, light, or checkerboard) to judge transparency. Opacity applies to the preview, `.ASS`, burned-in MP4, and `Text+` clips. `FCPXML 1.9` carries only the text opacity, which Resolve may ignore on import. SRT, VTT, and the native subtitle track carry no styling.
+
+Click **Guardar estilo** to store the current combination as a custom preset in your browser, or **Restablecer** to undo edits to the active preset.
+
 ## Use custom fonts and animated packs
 
 Upload custom `.otf`, `.ttf`, `.ttc`, or `.zip` font packs in **4. Estilo y tipografía** to preview custom typography in **Monitor previo** and install font files for DaVinci Resolve 20.

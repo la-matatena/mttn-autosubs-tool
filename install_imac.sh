@@ -51,7 +51,9 @@ fi
 
 if [[ -n "${BREW_BIN}" ]]; then
   echo "Homebrew detectado: ${BREW_BIN}"
-  for pkg in whisper-cpp ffmpeg; do
+  # ffmpeg-full (keg-only) adds libass, required to burn subtitles into MP4;
+  # the slim ffmpeg formula only covers audio preparation for Whisper.
+  for pkg in whisper-cpp ffmpeg ffmpeg-full; do
     if ! "${BREW_BIN}" list "${pkg}" >/dev/null 2>&1; then
       echo "Instalando ${pkg} mediante Homebrew..."
       "${BREW_BIN}" install "${pkg}"
@@ -61,7 +63,7 @@ if [[ -n "${BREW_BIN}" ]]; then
   done
 else
   echo "Aviso: Homebrew no detectado. Instala Homebrew (https://brew.sh) y ejecuta:"
-  echo "  brew install whisper-cpp ffmpeg"
+  echo "  brew install whisper-cpp ffmpeg ffmpeg-full"
 fi
 
 echo "Creando directorios de puente, fuentes y modelos en: ${APP_DATA_DIR}"
