@@ -114,12 +114,12 @@
       size: 0.075,
       pos_y: 0.28,
       fill_hex: "#ffffff",
-      highlight_hex: "#ff5c4d",
+      highlight_hex: "#b197fc",
       outline_hex: "#08080a",
       outline_thickness: 0.16,
       shadow_enabled: true,
       box_enabled: false,
-      box_hex: "#0b0d12",
+      box_hex: "#13101b",
       animation_mode: "none",
       anim_hold_frames: 3,
       anim_jitter: 0.15,
@@ -128,17 +128,17 @@
     },
     caja: {
       preset_name: "Caja Editorial",
-      font: "SF Pro Display",
-      font_style: "Semibold",
+      font: "Montserrat",
+      font_style: "Bold",
       size: 0.052,
       pos_y: 0.14,
       fill_hex: "#fafafa",
-      highlight_hex: "#4da3ff",
+      highlight_hex: "#b197fc",
       outline_hex: "#0b0d12",
       outline_thickness: 0.0,
       shadow_enabled: false,
       box_enabled: true,
-      box_hex: "#0d1017",
+      box_hex: "#15121e",
       animation_mode: "none",
       anim_hold_frames: 3,
       anim_jitter: 0.15,
@@ -666,7 +666,7 @@
         });
       } else {
         metaBox.textContent =
-          "Ejecuta en Resolve: Workspace > Scripts > 1 - AutoSubs ES - Exportar Audio.";
+          "Ejecuta en Resolve: Workspace > Scripts > 1 - MTTN AutoSubs - Exportar Audio.";
       }
 
       if (
@@ -990,7 +990,7 @@
     const w = canvas.width;
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "#12151c";
+    ctx.fillStyle = "#13101b";
     ctx.fillRect(0, 0, w, h);
 
     const dur = Math.max(1, state.durationMs || (state.cues.length ? state.cues[state.cues.length - 1].end_ms : 1000));
@@ -999,7 +999,7 @@
     state.cues.forEach((cue, idx) => {
       const x1 = (cue.start_ms / dur) * w;
       const x2 = Math.max(x1 + 2, (cue.end_ms / dur) * w);
-      ctx.fillStyle = idx === state.activeCueIndex ? "rgba(255,92,77,0.55)" : "rgba(77,163,255,0.28)";
+      ctx.fillStyle = idx === state.activeCueIndex ? "rgba(131,103,199,0.68)" : "rgba(159,133,227,0.25)";
       ctx.fillRect(x1, h - 18, x2 - x1, 16);
     });
 
@@ -1007,7 +1007,7 @@
     const peaks = state.peaks;
     if (peaks && peaks.length > 0) {
       const step = w / peaks.length;
-      ctx.fillStyle = "#5c6a84";
+      ctx.fillStyle = "#7e72a4";
       peaks.forEach((p, i) => {
         const amp = Math.max(2, p * (h - 24));
         const y = (h - 20 - amp) / 2;
@@ -1017,7 +1017,7 @@
 
     // Cabezal de reproducción
     const px = Math.max(0, Math.min(w - 1, (playheadMs / dur) * w));
-    ctx.fillStyle = "#ff5c4d";
+    ctx.fillStyle = "#b197fc";
     ctx.fillRect(px, 0, 2, h);
   }
 
@@ -1534,6 +1534,18 @@
   }
 
   wireEvents();
+  if (typeof CSS !== "undefined" && !CSS.supports("accent-color: #8367c7")) {
+    document.querySelectorAll('input[type="range"]').forEach((slider) => {
+      const updateProgress = () => {
+        const min = Number(slider.min) || 0;
+        const max = Number(slider.max) || 100;
+        const pct = ((Number(slider.value) - min) / (max - min)) * 100;
+        slider.style.setProperty("--progress", `${pct}%`);
+      };
+      slider.addEventListener("input", updateProgress);
+      updateProgress();
+    });
+  }
   applyStylePreset("netflix");
   refreshStatus();
 })();

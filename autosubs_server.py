@@ -1406,7 +1406,8 @@ def run_cli_transcription(
 def main(argv: list[str] | None = None) -> int:
   parser = argparse.ArgumentParser(
       description=(
-          "AutoSubs ES — App independiente y puente para DaVinci Resolve 20"
+          "MTTN AutoSubs Tool (La Matatena) — App independiente y puente para"
+          " DaVinci Resolve 20"
       )
   )
   parser.add_argument("--host", default="127.0.0.1")
@@ -1476,8 +1477,11 @@ def main(argv: list[str] | None = None) -> int:
   server, _ = create_server(host=args.host, port=args.port)
   actual_port = server.server_address[1]
   url = f"http://{args.host}:{actual_port}"
-  print(f"[AutoSubs ES] Servidor activo en {url}")
-  print("[AutoSubs ES] Optimizado para iMac 2017 (CPU AVX2, GPU Polaris libre)")
+  print(f"[MTTN AutoSubs Tool] Servidor activo en {url}")
+  print(
+      "[MTTN AutoSubs Tool] La Matatena · Optimizado para CPU AVX2 y GPU"
+      " Polaris libre"
+  )
   if not args.no_browser:
     opener = open_standalone_window if args.app_window else webbrowser.open
     threading.Timer(0.6, lambda: opener(url)).start()
@@ -1485,7 +1489,7 @@ def main(argv: list[str] | None = None) -> int:
   try:
     server.serve_forever()
   except KeyboardInterrupt:
-    print("\n[AutoSubs ES] Cerrando servidor...")
+    print("\n[MTTN AutoSubs Tool] Cerrando servidor...")
   finally:
     server.server_close()
   return 0

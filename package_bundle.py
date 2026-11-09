@@ -22,6 +22,7 @@ EXECUTABLE_REL_PATHS = frozenset({
 REQUIRED_BUNDLE_ENTRIES = (
     f"{ARCHIVE_PREFIX}/.gitignore",
     f"{ARCHIVE_PREFIX}/BUILD",
+    f"{ARCHIVE_PREFIX}/LICENSE",
     f"{ARCHIVE_PREFIX}/README.md",
     f"{ARCHIVE_PREFIX}/autosubs_server.py",
     f"{ARCHIVE_PREFIX}/autosubs_es_test.py",
@@ -121,7 +122,7 @@ def _should_skip_entry(rel_parts: tuple[str, ...], filename: str) -> bool:
     return True
   if filename in (".DS_Store", "__init__.py"):
     return True
-  if filename in ("BUILD", ".gitignore"):
+  if filename in ("BUILD", ".gitignore", "LICENSE"):
     return False
   return not filename.endswith(_ALLOWED_EXTENSIONS)
 
@@ -211,17 +212,22 @@ def write_bundle_zip(
 
 def main(argv: list[str] | None = None) -> int:
   parser = argparse.ArgumentParser(
-      description="Empaqueta AutoSubs ES y su documentación en AutoSubs_ES.zip"
+      description=(
+          "Empaqueta MTTN AutoSubs Tool y su documentación en un archivo .zip"
+      )
   )
   parser.add_argument(
       "--output",
-      default="AutoSubs_ES.zip",
-      help="Ruta de salida para el archivo .zip (por defecto AutoSubs_ES.zip)",
+      default="MTTN_AutoSubs_Tool.zip",
+      help=(
+          "Ruta de salida para el archivo .zip (por defecto"
+          " MTTN_AutoSubs_Tool.zip)"
+      ),
   )
   args = parser.parse_args(argv)
   meta = write_bundle_zip(args.output)
   print(
-      f"[AutoSubs ES] ZIP creado: {meta['output_path']} "
+      f"[MTTN AutoSubs Tool] ZIP creado: {meta['output_path']} "
       f"({meta['file_count']} archivos, {meta['size_bytes']} bytes, "
       f"sha256={meta['sha256']})"
   )

@@ -776,7 +776,14 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
     # 1. Static UI & Status
     st_html, _, html = self._request("/")
     self.assertEqual(st_html, 200)
-    self.assertIn("AutoSubs ES", html.decode("utf-8"))
+    html_txt = html.decode("utf-8")
+    self.assertIn("MTTN", html_txt)
+    self.assertIn("AutoSubs Tool", html_txt)
+    self.assertIn("La Matatena", html_txt)
+
+    st_css, _, css = self._request("/styles.css")
+    self.assertEqual(st_css, 200)
+    self.assertIn("#8367c7", css.decode("utf-8"))
 
     st_status, _, status_bytes = self._request("/api/status")
     self.assertEqual(st_status, 200)
@@ -1171,10 +1178,11 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
 
     zip_bytes = package_bundle.build_zip_bytes(root)
     meta = package_bundle.verify_zip_bytes(zip_bytes)
-    self.assertEqual(meta["file_count"], 33, meta["entries"])
+    self.assertEqual(meta["file_count"], 34, meta["entries"])
     self.assertNotIn("AutoSubs_ES/__init__.py", meta["entries"])
     self.assertIn("AutoSubs_ES/.gitignore", meta["entries"])
     self.assertIn("AutoSubs_ES/BUILD", meta["entries"])
+    self.assertIn("AutoSubs_ES/LICENSE", meta["entries"])
     self.assertIn("AutoSubs_ES/pyproject.toml", meta["entries"])
     self.assertIn("AutoSubs_ES/font_manager.py", meta["entries"])
     self.assertIn(

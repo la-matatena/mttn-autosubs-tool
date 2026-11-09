@@ -24,19 +24,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run AutoSubs ES unit & integration tests
+      - name: Run MTTN AutoSubs Tool unit & integration tests
         run: python3 -B autosubs_es_test.py -v
 
-      - name: Build verified AutoSubs_ES.zip bundle
+      - name: Build verified MTTN_AutoSubs_Tool.zip bundle
         run: |
           mkdir -p dist
-          python3 -B package_bundle.py --output dist/AutoSubs_ES.zip
+          python3 -B package_bundle.py --output dist/MTTN_AutoSubs_Tool.zip
 
       - name: Upload workflow build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AutoSubs_ES
-          path: dist/AutoSubs_ES.zip
+          name: MTTN_AutoSubs_Tool
+          path: dist/MTTN_AutoSubs_Tool.zip
 
       - name: Publish GitHub Release on version tag
         if: startsWith(github.ref, 'refs/tags/v')
@@ -49,7 +49,7 @@ jobs:
             PRERELEASE_ARGS+=(--prerelease)
           fi
           gh release create "${TAG_NAME}" \
-            dist/AutoSubs_ES.zip \
-            --title "AutoSubs ES ${TAG_NAME}" \
+            dist/MTTN_AutoSubs_Tool.zip \
+            --title "MTTN AutoSubs Tool ${TAG_NAME}" \
             --generate-notes \
             "${PRERELEASE_ARGS[@]}"

@@ -268,17 +268,20 @@ class ResolveBridge:
     return wavs[0] if wavs else None
 
   def list_installed_templates(self) -> list[str]:
-    """Lists installed AutoSubs ES Fusion .setting templates plus defaults."""
-    templates_dir = (
+    """Lists installed MTTN AutoSubs Fusion .setting templates plus defaults."""
+    titles_root = (
         hardware_imac2017.get_resolve_user_fusion_dir()
         / "Templates"
         / "Edit"
         / "Titles"
-        / "AutoSubs ES"
     )
-    names = []
-    if templates_dir.is_dir():
-      names = sorted(p.stem for p in templates_dir.glob("*.setting"))
+    names: list[str] = []
+    for folder_name in ("MTTN AutoSubs", "AutoSubs ES"):
+      templates_dir = titles_root / folder_name
+      if templates_dir.is_dir():
+        names = sorted(p.stem for p in templates_dir.glob("*.setting"))
+        if names:
+          break
     if not names:
       names = [
           "AutoSubs_ES_Cine_Netflix",
@@ -299,6 +302,8 @@ class ResolveBridge:
         hardware_imac2017.get_resolve_user_fusion_dir() / "Scripts" / "Utility"
     )
     lua_installed = (
+        scripts_dir / "1 - MTTN AutoSubs - Exportar Audio.lua"
+    ).is_file() or (
         scripts_dir / "1 - AutoSubs ES - Exportar Audio.lua"
     ).is_file()
 
@@ -334,7 +339,7 @@ class ResolveBridge:
           "requires_lua": True,
           "message": (
               "DaVinci Resolve 20 Free bloquea la API externa. En Resolve abre:"
-              " Workspace > Scripts > 1 - AutoSubs ES - Exportar Audio."
+              " Workspace > Scripts > 1 - MTTN AutoSubs - Exportar Audio."
           ),
       }
     project = resolve.GetProjectManager().GetCurrentProject()
@@ -504,7 +509,7 @@ class ResolveBridge:
             if pushed_directly
             else (
                 "Paquete preparado para DaVinci Resolve 20. En Resolve haz clic"
-                " en Workspace > Scripts > 2 - AutoSubs ES - Insertar"
+                " en Workspace > Scripts > 2 - MTTN AutoSubs - Insertar"
                 " Subtitulos."
             )
         ),
@@ -721,7 +726,7 @@ class ResolveBridge:
         "timecode": tc,
         "jumped_directly": False,
         "message": (
-            f"Timecode {tc} preparado. Ejecuta Workspace > Scripts > 3 -"
-            " AutoSubs ES - Ir a Tiempo."
+            f"Timecode {tc} preparado. Ejecuta Workspace > Scripts > 3 - MTTN"
+            " AutoSubs - Ir a Tiempo."
         ),
     }

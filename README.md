@@ -1,12 +1,20 @@
-<!-- go/g3mark-in-g3doc -->
+# MTTN AutoSubs Tool
 
-## MTTN AutoSubs Tool 
+[![CI & Release](https://github.com/la-matatena/mttn-autosubs-tool/actions/workflows/ci-release.yml/badge.svg)](https://github.com/la-matatena/mttn-autosubs-tool/actions/workflows/ci-release.yml)
+[![Latest Release](https://img.shields.io/github/v/release/la-matatena/mttn-autosubs-tool?color=8367c7&label=release)](https://github.com/la-matatena/mttn-autosubs-tool/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-8367c7.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-6a4fb3.svg)](pyproject.toml)
+[![DaVinci Resolve 20](https://img.shields.io/badge/DaVinci%20Resolve-20%20Free%20%7C%20Studio-8367c7.svg)](docs/user-guide.md)
+[![Platform: macOS](https://img.shields.io/badge/platform-macOS%20Intel%20%7C%20Apple%20Silicon-6a4fb3.svg)](install_imac.sh)
+[![Brand: La Matatena](https://img.shields.io/badge/La%20Matatena-MTTN-8367c7.svg)](https://github.com/la-matatena)
 
-MTTN AutoSubs helps Spanish-language creators generate accurate subtitles locally on macOS—either as a standalone desktop and CLI studio or paired directly with DaVinci Resolve 20 Free and Studio—without sending audio to cloud servers or exhausting GPU VRAM. It ships tuned for a 2017 Retina 4K iMac (`3 GHz Quad-Core Intel Core i5`, `32 GB DDR4 RAM`, `2 GB AMD Radeon Polaris VRAM`), runs persistent-prompt 8-bit and full Large-v3 Whisper models, and recognizes Spanish board-game terms and anglicisms out of the box.
+**MTTN AutoSubs Tool** (by **[La Matatena](https://la-matatena.com)** · [@la-matatena](https://github.com/la-matatena)) helps Spanish-language creators generate accurate subtitles locally on macOS—either as a standalone desktop and CLI studio or paired directly with DaVinci Resolve 20 Free and Studio—without sending audio to cloud servers or exhausting GPU VRAM. It ships tuned for a 2017 Retina 4K iMac (`3 GHz Quad-Core Intel Core i5`, `32 GB DDR4 RAM`, `2 GB AMD Radeon Polaris VRAM`), runs persistent-prompt 8-bit and full Large-v3 Whisper models, and recognizes Spanish board-game terms and anglicisms out of the box.
+
+> **La Matatena Open Projects Convention:** All open tools under [`github.com/la-matatena`](https://github.com/la-matatena) follow the **`MTTN` + `TwoWordNameInPascalCase` + `[Suffix]`** naming standard (e.g., **MTTN AutoSubs Tool**, **MTTN PaperCraft Studio**) and La Matatena's `#8367c7` / `#6a4fb3` brand palette.
 
 ## Interface preview
 
-MTTN AutoSubs adapts the workflow for standalone local video subtitling, DaVinci Resolve 20 timeline insertion, and animated custom font packs:
+MTTN AutoSubs Tool adapts the workflow for standalone local video subtitling, DaVinci Resolve 20 timeline insertion, and animated custom font packs:
 
 ![MTTN AutoSubs studio overview in DaVinci Resolve 20 mode showing Large-v3-Turbo Q8_0 model selection, the 16:9 karaoke preview monitor, waveform timeline, Spanish cue editor, and Resolve push controls](docs/images/autosubs-es-overview.png)
 
@@ -59,25 +67,22 @@ Your 32 GB DDR4 memory pool removes RAM bottlenecks for larger quantized GGML mo
 
 ## Board-game vocabulary and anglicisms (`juegos_mesa`)
 
-Spanish board-game channels mix regional Spanish grammar with English mechanics, publisher names, and Hispanicized pronunciations. MTTN AutoSubs pairs **Temática y anglicismos** (`Juegos de Mesa + Anglicismos (BGG)` by default) with any regional **Acento regional** (`Español Neutro`, `España (Peninsular)`, `México / LatAm`, or `Río de la Plata`):
+Spanish board-game channels mix regional Spanish grammar with English mechanics, publisher names, and Hispanicized pronunciations. MTTN AutoSubs Tool pairs **Temática y anglicismos** (`Juegos de Mesa + Anglicismos (BGG)` by default) with any regional **Acento regional** (`Español Neutro`, `España (Peninsular)`, `México / LatAm`, or `Río de la Plata`):
 
 -   **Persistent Whisper conditioning**: `build_spanish_initial_prompt` seeds `whisper-cli --prompt` with domain terms (`BoardGameGeek`, `BGG`, `eurogame`, `ameritrash`, `meeples`, `deckbuilding`, `worker placement`, `set collection`, `draft`, `setup`, `playmat`, `downtime`, `kingmaking`, `alpha player`, `filler`, `gateway`, `Kickstarter`, `Gamefound`) plus your **Glosario personalizado** and keeps them active across the whole timeline when `whisper-cli` supports `--carry-initial-prompt`.
 -   **Deterministic phonetic repair**: `BOARDGAME_PHONETIC_FIXES` corrects ~70 common Spanish Whisper phonetic mistakes after transcription—for example turning `eurogueim` into `eurogame`, `mipels` into `meeples`, `dec bilding` into `deckbuilding`, `setap` into `setup`, `pleimat` into `playmat`, `dauntaim` into `downtime`, `worker pleisment` into `worker placement`, `kikstarter` into `Kickstarter`, and `be ge ge` into `BGG`—while preserving case-insensitive custom glossary overrides from **+ Términos BGG**.
 -   **Hesitation-aware punctuation**: `_repair_inverted_spanish_punctuation` skips leading hesitations (`eh`, `em`, `mm`) before inserting `¿` or `¡`, turning `eh Sabías... ?` into `eh ¿Sabías...?` before optional filler cleanup runs.
 
-## Install MTTN AutoSubs on macOS
+## Install MTTN AutoSubs Tool on macOS
 
-The installer sets up the `whisper-cpp` and `ffmpeg` packages through Homebrew, creates the standalone `~/Applications/MTTN AutoSubs.app` macOS application bundle, copies the DaVinci Resolve 20 Lua bridge scripts and Fusion templates, and downloads the default `ggml-large-v3-turbo-q8_0.bin` Spanish model.
+The installer sets up the `whisper-cpp` and `ffmpeg` packages through Homebrew, creates the standalone `~/Applications/MTTN AutoSubs Tool.app` macOS application bundle, copies the DaVinci Resolve 20 Lua bridge scripts and Fusion templates, and downloads the default `ggml-large-v3-turbo-q8_0.bin` Spanish model.
 
-1.  Open **Terminal** and change to the `autosubs_es` directory:
+1.  Open **Terminal** and clone or change to the `mttn-autosubs-tool` directory:
 
     ```bash
-    cd AUTOSUBS_DIR
+    git clone https://github.com/la-matatena/mttn-autosubs-tool.git
+    cd mttn-autosubs-tool
     ```
-
-    Replace the following:
-
-    -   `AUTOSUBS_DIR`: the directory where you saved MTTN AutoSubs.
 
 2.  Run the installer script:
 
@@ -87,7 +92,7 @@ The installer sets up the `whisper-cpp` and `ffmpeg` packages through Homebrew, 
 
     Optional: Pass `--model=large-v3-q5` to download the full 32-layer maximum-accuracy Spanish model instead, or pass `--skip-model` to download models later inside the UI.
 
-3.  Launch **MTTN AutoSubs** from **Applications** (`MTTN AutoSubs.app`), double-click `Iniciar MTTN AutoSubs.command`, or run the server from Terminal:
+3.  Launch **MTTN AutoSubs Tool** from **Applications** (`MTTN AutoSubs Tool.app`), double-click `Iniciar AutoSubs ES.command`, or run the server from Terminal:
 
     ```bash
     python3 -B autosubs_server.py --app-window
@@ -123,7 +128,7 @@ Replace the following:
 -   `INPUT_MEDIA`: the local audio or video file path to transcribe.
 -   `OUTPUT_SRT`: the destination path for the formatted Spanish `.srt` subtitle file.
 
-## Use MTTN AutoSubs with DaVinci Resolve 20
+## Use MTTN AutoSubs Tool with DaVinci Resolve 20
 
 Switch the top bar to **DaVinci Resolve 20** whenever you want round-trip timeline integration with DaVinci Resolve 20 Free or DaVinci Resolve 20 Studio. See the [user guide](docs/user-guide.md) for detailed instructions.
 
@@ -131,7 +136,7 @@ Switch the top bar to **DaVinci Resolve 20** whenever you want round-trip timeli
 
 1.  Open your project and target timeline in DaVinci Resolve 20.
 2.  In the top menu bar, click **Workspace** > **Scripts** > **1 - MTTN AutoSubs - Exportar Audio** (or click **Exportar audio (Studio)** directly in Resolve Studio).
-3.  Wait until the DaVinci Resolve Console reports that the audio bounce is complete, then return to MTTN AutoSubs and click **Leer buzón**.
+3.  Wait until the DaVinci Resolve Console reports that the audio bounce is complete, then return to MTTN AutoSubs Tool and click **Leer buzón**.
 
 ### Transcribe and edit Spanish subtitles
 
@@ -145,7 +150,7 @@ Upload `.otf`, `.ttf`, `.ttc`, or `.zip` font archives in **4. Estilo y tipograf
 
 -   Numbered variant packs (such as the five-font `Anitype Journal` flipbook archive) group automatically into a single **Packs animados (Flipbook)** entry.
 -   Fonts lacking Spanish glyphs (`á`, `é`, `í`, `ó`, `ú`, `ü`, `ñ`, `¿`, `¡`) trigger a glyph banner with an **Adaptar glifos ASCII** toggle so `Text+` renders complete words instead of blank spaces.
--   Native DaVinci Resolve subtitle tracks (`ST`) disallow Fusion plugins and expressions, so MTTN AutoSubs pairs custom flipbook typography with `AutoSubs_ES_Anitype_Animado` on a Video (`V`) track or sliced `FCPXML 1.9` Basic Titles.
+-   Native DaVinci Resolve subtitle tracks (`ST`) disallow Fusion plugins and expressions, so MTTN AutoSubs Tool pairs custom flipbook typography with `AutoSubs_ES_Anitype_Animado` on a Video (`V`) track or sliced `FCPXML 1.9` Basic Titles.
 
 ### Insert subtitles into DaVinci Resolve 20
 
@@ -158,10 +163,10 @@ Upload `.otf`, `.ttf`, `.ttc`, or `.zip` font archives in **4. Estilo y tipograf
 
 ## Package a standalone distribution archive
 
-Build a clean, permission-preserving `AutoSubs_ES.zip` bundle for sharing across Macs:
+Build a clean, permission-preserving `MTTN_AutoSubs_Tool.zip` bundle for sharing across Macs:
 
 ```bash
-python3 -B package_bundle.py --output ~/Downloads/AutoSubs_ES.zip
+python3 -B package_bundle.py --output ~/Downloads/MTTN_AutoSubs_Tool.zip
 ```
 
 ## Verify the installation locally
@@ -171,3 +176,7 @@ Run the included unit and HTTP integration test suite to verify the Spanish NLP 
 ```bash
 python3 -B autosubs_es_test.py -v
 ```
+
+## License
+
+Released under the [MIT License](LICENSE) — Copyright (c) 2026 [La Matatena](https://la-matatena.com).

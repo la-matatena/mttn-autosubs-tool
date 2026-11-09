@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DATA_DIR="${HOME}/Library/Application Support/AutoSubsES"
 RESOLVE_FUSION_DIR="${HOME}/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion"
 RESOLVE_SCRIPTS_DIR="${RESOLVE_FUSION_DIR}/Scripts/Utility"
-RESOLVE_TEMPLATES_DIR="${RESOLVE_FUSION_DIR}/Templates/Edit/Titles/AutoSubs ES"
+RESOLVE_TEMPLATES_DIR="${RESOLVE_FUSION_DIR}/Templates/Edit/Titles/MTTN AutoSubs"
 MODEL_ID="turbo-q8"
 SKIP_MODEL=false
 
@@ -33,7 +33,7 @@ case "${MODEL_ID}" in
 esac
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${MODEL_FILE}"
 
-echo "=== AutoSubs ES — Instalador App Independiente + DaVinci Resolve 20 (iMac Intel x86_64) ==="
+echo "=== MTTN AutoSubs Tool (La Matatena) — Instalador macOS + DaVinci Resolve 20 ==="
 echo "Sistema: $(uname -s) $(uname -m)"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -69,9 +69,9 @@ mkdir -p "${APP_DATA_DIR}/models" "${APP_DATA_DIR}/fonts" "${APP_DATA_DIR}/bridg
 
 echo "Instalando scripts Lua en DaVinci Resolve 20: ${RESOLVE_SCRIPTS_DIR}"
 mkdir -p "${RESOLVE_SCRIPTS_DIR}"
-cp "${SCRIPT_DIR}/lua/1_AutoSubs_ES_Exportar_Audio.lua" "${RESOLVE_SCRIPTS_DIR}/1 - AutoSubs ES - Exportar Audio.lua"
-cp "${SCRIPT_DIR}/lua/2_AutoSubs_ES_Insertar_Subtitulos.lua" "${RESOLVE_SCRIPTS_DIR}/2 - AutoSubs ES - Insertar Subtitulos.lua"
-cp "${SCRIPT_DIR}/lua/3_AutoSubs_ES_Ir_A_Tiempo.lua" "${RESOLVE_SCRIPTS_DIR}/3 - AutoSubs ES - Ir a Tiempo.lua"
+cp "${SCRIPT_DIR}/lua/1_AutoSubs_ES_Exportar_Audio.lua" "${RESOLVE_SCRIPTS_DIR}/1 - MTTN AutoSubs - Exportar Audio.lua"
+cp "${SCRIPT_DIR}/lua/2_AutoSubs_ES_Insertar_Subtitulos.lua" "${RESOLVE_SCRIPTS_DIR}/2 - MTTN AutoSubs - Insertar Subtitulos.lua"
+cp "${SCRIPT_DIR}/lua/3_AutoSubs_ES_Ir_A_Tiempo.lua" "${RESOLVE_SCRIPTS_DIR}/3 - MTTN AutoSubs - Ir a Tiempo.lua"
 
 echo "Instalando 5 plantillas Text+ GPU-Light en: ${RESOLVE_TEMPLATES_DIR}"
 mkdir -p "${RESOLVE_TEMPLATES_DIR}"
@@ -103,13 +103,13 @@ create_macos_app_bundle() {
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key>
-  <string>AutoSubs ES</string>
+  <string>MTTN AutoSubs Tool</string>
   <key>CFBundleDisplayName</key>
-  <string>AutoSubs ES</string>
+  <string>MTTN AutoSubs Tool</string>
   <key>CFBundleIdentifier</key>
-  <string>com.autosubses.app</string>
+  <string>com.lamatatena.mttn.autosubstool</string>
   <key>CFBundleVersion</key>
-  <string>3.0</string>
+  <string>1.2.0</string>
   <key>CFBundleExecutable</key>
   <string>AutoSubsES</string>
   <key>CFBundlePackageType</key>
@@ -153,11 +153,11 @@ LAUNCHER
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
   mkdir -p "${HOME}/Applications"
-  create_macos_app_bundle "${HOME}/Applications/AutoSubs ES.app"
-  echo "✓ App de escritorio creada en: ${HOME}/Applications/AutoSubs ES.app"
+  create_macos_app_bundle "${HOME}/Applications/MTTN AutoSubs Tool.app"
+  echo "✓ App de escritorio creada en: ${HOME}/Applications/MTTN AutoSubs Tool.app"
 fi
 
 echo ""
 echo "Instalación completada."
-echo "1. Abre ~/Applications/AutoSubs ES.app (Spotlight/Launchpad) o haz doble clic en 'Iniciar AutoSubs ES.command'"
-echo "2. Usa AutoSubs ES de forma independiente o con DaVinci Resolve 20: Workspace > Scripts > 1 - AutoSubs ES - Exportar Audio"
+echo "1. Abre ~/Applications/MTTN AutoSubs Tool.app (Spotlight/Launchpad) o haz doble clic en 'Iniciar AutoSubs ES.command'"
+echo "2. Usa MTTN AutoSubs Tool de forma independiente o con DaVinci Resolve 20: Workspace > Scripts > 1 - MTTN AutoSubs - Exportar Audio"
