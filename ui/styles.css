@@ -1,5 +1,5 @@
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
 
   /* Official La Matatena Brand Highlights (Used strictly for accents, active states, and primary CTAs) */
   --mttn-purple: #8367c7;
@@ -10,6 +10,29 @@
   --mttn-purple-border: rgba(131, 103, 199, 0.45);
   --mttn-purple-control: #9f85e3;
   --mttn-purple-tint: #d5c7f7;
+
+  /* Dimensions & macOS Radii */
+  --radius-lg: 10px;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --radius-xs: 4px;
+
+  /* Typography: Native Apple Font Stack */
+  --font-heading: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+  accent-color: var(--mttn-purple);
+  scrollbar-width: thin;
+}
+
+/* ==========================================================================
+   THEME TOKENS: MACOS DARK MODE (DEFAULT)
+   ========================================================================== */
+:root,
+:root[data-theme="dark"],
+:root:has(> head > meta[name="color-scheme"][content="dark"]) {
+  color-scheme: dark;
 
   /* Native macOS Dark Surfaces (Neutral Charcoal & Zinc) */
   --bg: #18181b;
@@ -45,20 +68,108 @@
   --info-bg: rgba(56, 189, 248, 0.12);
   --info-border: rgba(56, 189, 248, 0.35);
 
-  /* Dimensions & macOS Radii */
-  --radius-lg: 10px;
-  --radius: 8px;
-  --radius-sm: 6px;
-  --radius-xs: 4px;
-
-  /* Typography: Native Apple Font Stack */
-  --font-heading: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
-  --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "SF Mono", Menlo, Monaco, Consolas, monospace;
-
-  accent-color: var(--mttn-purple);
-  scrollbar-width: thin;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-topbar: 0 1px 4px rgba(0, 0, 0, 0.25);
+  --waveform-bg: #141417;
+  --waveform-peak: #555562;
   scrollbar-color: #4a4a55 var(--surface-inset);
+}
+
+/* ==========================================================================
+   THEME TOKENS: MACOS LIGHT MODE (SYSTEM AUTO)
+   ========================================================================== */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not(:has(> head > meta[name="color-scheme"][content="dark"])) {
+    color-scheme: light;
+
+    /* Native macOS Light Surfaces (Clean Silver & White) */
+    --bg: #f4f4f6;
+    --topbar-bg: #ffffff;
+    --panel: #f4f4f6;
+    --card: #ffffff;
+    --card-header: #18181b;
+    --surface-inset: #f0f0f3;
+    --surface-elevated: #e4e4e7;
+    --surface-hover: #ececee;
+
+    /* Neutral Borders */
+    --border: #d4d4d8;
+    --border-control: #c4c4c8;
+    --border-focus: var(--mttn-purple);
+
+    /* Typography Colors */
+    --text: #18181b;
+    --text-secondary: #3f3f46;
+    --muted: #71717a;
+
+    /* Semantic Status Tokens (Calibrated for light background contrast) */
+    --ok: #15803d;
+    --ok-bg: rgba(21, 128, 61, 0.10);
+    --ok-border: rgba(21, 128, 61, 0.30);
+    --warn: #b45309;
+    --warn-bg: rgba(180, 83, 9, 0.10);
+    --warn-border: rgba(180, 83, 9, 0.30);
+    --danger: #b91c1c;
+    --danger-bg: rgba(185, 28, 28, 0.10);
+    --danger-border: rgba(185, 28, 28, 0.30);
+    --info: #0284c7;
+    --info-bg: rgba(2, 132, 199, 0.10);
+    --info-border: rgba(2, 132, 199, 0.30);
+
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+    --shadow-topbar: 0 1px 4px rgba(0, 0, 0, 0.06);
+    --waveform-bg: #f0f0f3;
+    --waveform-peak: #94949e;
+    scrollbar-color: #b0b0b8 var(--surface-inset);
+  }
+}
+
+/* ==========================================================================
+   THEME TOKENS: MACOS LIGHT MODE (EXPLICIT OVERRIDE)
+   ========================================================================== */
+:root[data-theme="light"],
+:root:has(> head > meta[name="color-scheme"][content="light"]) {
+  color-scheme: light;
+
+  /* Native macOS Light Surfaces (Clean Silver & White) */
+  --bg: #f4f4f6;
+  --topbar-bg: #ffffff;
+  --panel: #f4f4f6;
+  --card: #ffffff;
+  --card-header: #18181b;
+  --surface-inset: #f0f0f3;
+  --surface-elevated: #e4e4e7;
+  --surface-hover: #ececee;
+
+  /* Neutral Borders */
+  --border: #d4d4d8;
+  --border-control: #c4c4c8;
+  --border-focus: var(--mttn-purple);
+
+  /* Typography Colors */
+  --text: #18181b;
+  --text-secondary: #3f3f46;
+  --muted: #71717a;
+
+  /* Semantic Status Tokens */
+  --ok: #15803d;
+  --ok-bg: rgba(21, 128, 61, 0.10);
+  --ok-border: rgba(21, 128, 61, 0.30);
+  --warn: #b45309;
+  --warn-bg: rgba(180, 83, 9, 0.10);
+  --warn-border: rgba(180, 83, 9, 0.30);
+  --danger: #b91c1c;
+  --danger-bg: rgba(185, 28, 28, 0.10);
+  --danger-border: rgba(185, 28, 28, 0.30);
+  --info: #0284c7;
+  --info-bg: rgba(2, 132, 199, 0.10);
+  --info-border: rgba(2, 132, 199, 0.30);
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-topbar: 0 1px 4px rgba(0, 0, 0, 0.06);
+  --waveform-bg: #f0f0f3;
+  --waveform-peak: #94949e;
+  scrollbar-color: #b0b0b8 var(--surface-inset);
 }
 
 @media (forced-colors: active) {
@@ -130,7 +241,7 @@ code {
   padding: 10px 18px;
   background: var(--topbar-bg);
   border-bottom: 1px solid var(--border);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-topbar);
 }
 
 .brand {
@@ -247,6 +358,49 @@ code {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+/* Theme Toggle Button (Light / Dark) */
+.theme-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+}
+
+.theme-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.theme-state-to-dark {
+  display: none;
+}
+
+.theme-state-to-light {
+  display: inline-flex;
+}
+
+:root[data-theme="light"] .theme-state-to-light,
+:root:has(> head > meta[name="color-scheme"][content="light"]) .theme-state-to-light {
+  display: none;
+}
+
+:root[data-theme="light"] .theme-state-to-dark,
+:root:has(> head > meta[name="color-scheme"][content="light"]) .theme-state-to-dark {
+  display: inline-flex;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not(:has(> head > meta[name="color-scheme"][content="dark"])) .theme-state-to-light {
+    display: none;
+  }
+  :root:not([data-theme="dark"]):not(:has(> head > meta[name="color-scheme"][content="dark"])) .theme-state-to-dark {
+    display: inline-flex;
+  }
 }
 
 .badge, .pill {
@@ -528,7 +682,7 @@ button:focus-visible,
 .btn-danger {
   background: var(--danger-bg);
   border-color: var(--danger-border);
-  color: #fca5a5;
+  color: var(--danger);
 }
 
 .btn-danger:hover {
@@ -935,7 +1089,7 @@ button:focus-visible,
 
 .chip.active {
   border-color: var(--mttn-purple);
-  background: var(--mttn-purple-subtle);
+  background: var(--mttn-purple);
   color: #ffffff;
 }
 
@@ -975,7 +1129,7 @@ button:focus-visible,
 .warn-banner {
   background: var(--warn-bg);
   border: 1px solid var(--warn-border);
-  color: #fde047;
+  color: var(--warn);
   border-radius: var(--radius-sm);
   padding: 6px 9px;
   font-size: 11px;
@@ -1014,12 +1168,12 @@ button:focus-visible,
   bottom: 18px;
   background: var(--surface-elevated);
   border: 1px solid var(--mttn-purple);
-  color: #ffffff;
+  color: var(--text);
   padding: 9px 14px;
   border-radius: var(--radius);
   font-size: 12px;
   max-width: 380px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
   z-index: 999;
 }
 

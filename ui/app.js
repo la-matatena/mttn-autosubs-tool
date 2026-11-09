@@ -986,13 +986,71 @@
     }
   }
 
+  function getCurrentScheme() {
+    const meta = document.querySelector('meta[name="color-scheme"]');
+    const content = meta ? meta.content : "light dark";
+    if (content === "light" || content === "dark") return content;
+    const attr = document.documentElement.getAttribute("data-theme");
+    if (attr === "light" || attr === "dark") return attr;
+    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) {
+      return "light";
+    }
+    return "dark";
+  }
+
+  function applyTheme(theme, persist = true) {
+    const meta = document.querySelector('meta[name="color-scheme"]');
+    const systemPref = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+
+    if (theme === "system" || !theme) {
+      if (persist) {
+        try { localStorage.removeItem("autosubs-theme"); } catch (_) {}
+      }
+      if (meta) meta.content = "light dark";
+      document.documentElement.removeAttribute("data-theme");
+    } else {
+      if (persist) {
+        try {
+          if (theme === systemPref) {
+            localStorage.removeItem("autosubs-theme");
+          } else {
+            localStorage.setItem("autosubs-theme", theme);
+          }
+        } catch (_) {}
+      }
+      if (meta) meta.content = theme;
+      document.documentElement.setAttribute("data-theme", theme);
+    }
+
+    const btn = $("btn-theme-toggle");
+    if (btn) {
+      const active = getCurrentScheme();
+      btn.setAttribute("aria-label", active === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro");
+      btn.title = active === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro";
+    }
+
+    if (typeof drawWaveform === "function") {
+      const mediaEl = activeMedia();
+      drawWaveform(mediaEl ? (mediaEl.currentTime || 0) * 1000 : 0);
+    }
+  }
+
+  function toggleTheme() {
+    const current = getCurrentScheme();
+    const target = current === "dark" ? "light" : "dark";
+    applyTheme(target, true);
+    showToast(`Tema ${target === "light" ? "claro" : "oscuro"} activado`);
+  }
+
   function drawWaveform(playheadMs) {
     const canvas = $("waveform-canvas");
     const ctx = canvas.getContext("2d");
     const w = canvas.width;
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "#141417";
+
+    const isLight = getCurrentScheme() === "light";
+    ctx.fillStyle = isLight ? "#f0f0f3" : "#141417";
     ctx.fillRect(0, 0, w, h);
 
     const dur = Math.max(1, state.durationMs || (state.cues.length ? state.cues[state.cues.length - 1].end_ms : 1000));
@@ -1001,7 +1059,9 @@
     state.cues.forEach((cue, idx) => {
       const x1 = (cue.start_ms / dur) * w;
       const x2 = Math.max(x1 + 2, (cue.end_ms / dur) * w);
-      ctx.fillStyle = idx === state.activeCueIndex ? "rgba(131,103,199,0.75)" : "rgba(131,103,199,0.22)";
+      ctx.fillStyle = idx === state.activeCueIndex
+        ? "rgba(131,103,199,0.85)"
+        : (isLight ? "rgba(131,103,199,0.28)" : "rgba(131,103,199,0.22)");
       ctx.fillRect(x1, h - 16, x2 - x1, 14);
     });
 
@@ -1009,7 +1069,7 @@
     const peaks = state.peaks;
     if (peaks && peaks.length > 0) {
       const step = w / peaks.length;
-      ctx.fillStyle = "#555562";
+      ctx.fillStyle = isLight ? "#94949e" : "#555562";
       peaks.forEach((p, i) => {
         const amp = Math.max(2, p * (h - 22));
         const y = (h - 18 - amp) / 2;
@@ -1146,6 +1206,9 @@
     $("threads-select").addEventListener("change", () => {
       $("badge-cpu").textContent = `CPU i5 AVX2 (${$("threads-select").value}/4 hilos)`;
     });
+    if ($("btn-theme-toggle")) {
+      $("btn-theme-toggle").addEventListener("click", toggleTheme);
+    }
     $("btn-refresh").addEventListener("click", refreshStatus);
     $("btn-check-inbox").addEventListener("click", async () => {
       try {
@@ -1533,9 +1596,30 @@
         $("btn-play").click();
       }
     });
+
+    // Sincronización de tema entre pestañas y con el sistema
+    window.addEventListener("storage", (e) => {
+      if (e.key === "autosubs-theme") {
+        const t = e.newValue;
+        applyTheme(t === "light" || t === "dark" ? t : "system", false);
+      }
+    });
+
+    if (window.matchMedia) {
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+        let saved = null;
+        try { saved = localStorage.getItem("autosubs-theme"); } catch (_) {}
+        if (!saved) {
+          applyTheme("system", false);
+        }
+      });
+    }
   }
 
   wireEvents();
+  let initialTheme = null;
+  try { initialTheme = localStorage.getItem("autosubs-theme"); } catch (_) {}
+  applyTheme(initialTheme, false);
   if (typeof CSS !== "undefined" && !CSS.supports("accent-color: #8367c7")) {
     document.querySelectorAll('input[type="range"]').forEach((slider) => {
       const updateProgress = () => {

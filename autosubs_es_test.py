@@ -783,7 +783,10 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
 
     st_css, _, css = self._request("/styles.css")
     self.assertEqual(st_css, 200)
-    self.assertIn("#8367c7", css.decode("utf-8"))
+    css_str = css.decode("utf-8")
+    self.assertIn("#8367c7", css_str)
+    self.assertIn("color-scheme", css_str)
+    self.assertIn("theme-toggle-btn", css_str)
 
     st_status, _, status_bytes = self._request("/api/status")
     self.assertEqual(st_status, 200)
@@ -1169,6 +1172,7 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
 
     ui_html = (root / "ui" / "index.html").read_text(encoding="utf-8")
     for elem_id in (
+        "btn-theme-toggle",
         "font-input",
         "st-ascii-fold",
         "st-anim-mode",
