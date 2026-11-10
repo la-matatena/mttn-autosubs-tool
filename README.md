@@ -26,13 +26,11 @@ MTTN AutoSubs Tool organiza el flujo de trabajo en **6 pasos numerados** y permi
 
 *Estudio en 3 columnas en modo **DaVinci Resolve 20** con el modelo `Large-v3-Turbo Q8_0` seleccionado, temática **Juegos de Mesa + Anglicismos (BGG)** activa y reproducción sincronizada en el **Monitor previo**.*
 
-![Modo de aplicación independiente de MTTN AutoSubs mostrando la corrección fonética de términos lúdicos y anglicismos junto a los botones de exportación independiente a TXT, SRT, VTT, ASS, FCPXML, JSON y renderizado de video MP4 subtitulado](docs/images/autosubs-es-standalone-models.png)
+El selector de modo está junto al título, en la barra superior:
 
-*Modo **App Independiente (Standalone)** aplicando el glosario de **Juegos de Mesa + Anglicismos (BGG)** y reparación fonética (`Eurogame`, `meeples`, `Deckbuilding`, `playmat`, `Worker Placement`, `Kickstarter`, `BGG`), con exportaciones directas a `.TXT`, `.SRT`, `.VTT`, `.ASS`, `.FCPXML`, `.JSON` y renderizado de video `.MP4` por CPU.*
+<img src="docs/images/autosubs-es-mode-switch.png" width="500" alt="Barra superior de MTTN AutoSubs con el selector de modo: App Independiente y DaVinci Resolve 20 (activo)">
 
-![Sección «Fuentes propias y animación» de MTTN AutoSubs con el preset Anitype Animado (flipbook): subida de fuentes .otf/.ttf/.zip, instalación en macOS, adaptación de glifos ASCII y controles de animación multi-fuente con vibración](docs/images/autosubs-es-anitype-fonts.png)
-
-*Controles de animación flipbook con 5 variantes tipográficas (**Anitype Journal**), detección automática de glifos en español en tablas OpenType `cmap` y adaptación no destructiva a caracteres ASCII para plantillas `Text+`.*
+Cada sección de esta página muestra de cerca la parte de la interfaz de la que habla.
 
 ## Documentación detallada
 
@@ -74,6 +72,10 @@ Puedes forzar un perfil con la variable de entorno `AUTOSUBS_HW_PROFILE=intel_im
 
 El botón de estado de la barra superior (⚙ con el procesador, la GPU y el estado de Resolve) abre un panel con el equipo detectado y los ajustes de rendimiento. Se guardan **solo en esa Mac** (`~/Library/Application Support/AutoSubsES/settings.json`), así que la iMac puede quedarse en modo seguro mientras una MacBook usa todo su potencial:
 
+<img src="docs/images/autosubs-es-status-button.png" width="490" alt="Botón de estado de la barra superior: Apple M4 Pro · 8 hilos · Metal · Resolve listo, junto a Probar Demo ES, Actualizar y el selector de tema">
+
+<img src="docs/images/autosubs-es-machine-panel.png" width="640" alt="Panel Rendimiento de esta Mac con el equipo detectado, los perfiles Automático, Seguro, Máximo y Personalizado, hilos, precisión, modelo por defecto, Probar velocidad y preferencias portátiles">
+
 - **Perfil**: **Automático** (recomendado: usa toda la Mac y cede núcleos cuando Resolve está abierto), **Seguro** (pocos hilos y búsqueda rápida para editar sin tirones), **Máximo** o **Personalizado** (hilos, GPU y precisión a mano). El paso 2 muestra un resumen del perfil activo (por ejemplo, `8 hilos · GPU · precisión`) y el enlace **Ajustar…** para abrir este panel.
 - **Modelo por defecto** de esa Mac y **Restablecer a lo recomendado**.
 - **Probar velocidad**: transcribe unos 30 s de voz en español (voz del sistema) con el modelo elegido y muestra cuántas veces más rápido que el tiempo real va, con una recomendación de modelo. Referencia: en una MacBook Pro M4 Pro, `turbo-q8` va entre 6× y 20× más rápido que el tiempo real con Metal (según si el modelo ya está en memoria) y unas 4× solo con CPU.
@@ -84,6 +86,8 @@ El acento, la temática, el glosario y el formato también se recuerdan entre se
 ## Catálogo de modelos Whisper en español
 
 Tener suficiente memoria RAM (como los 32 GB de la iMac 2017 o los chips Apple Silicon) elimina los cuellos de botella de memoria. Puedes descargar cualquiera de los modelos directamente desde el paso **2. Motor Whisper** con soporte de reanudación automática:
+
+<img src="docs/images/autosubs-es-step2-whisper.png" width="348" alt="Paso 2. Motor Whisper: perfil Automático (8 hilos · GPU · precisión), enlace Ajustar…, modelo Large-v3-Turbo Q8_0 instalado y botón Transcribir en Español">
 
 | ID del modelo | Archivo | Tamaño de descarga | RAM máxima | WER aprox. en español | Caso de uso recomendado |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -96,6 +100,8 @@ Tener suficiente memoria RAM (como los 32 GB de la iMac 2017 o los chips Apple S
 ## Vocabulario especializado de juegos de mesa y anglicismos (`juegos_mesa`)
 
 En los canales y contenidos de juegos de mesa en español es habitual mezclar términos en inglés, nombres de editoriales, mecánicas y pronunciaciones castellanizadas. MTTN AutoSubs Tool combina el selector **Temática y anglicismos** (`Juegos de Mesa + Anglicismos (BGG)` por defecto) con cualquier **Acento regional** (`Español Neutro`, `España (Peninsular)`, `México / LatAm` o `Río de la Plata`):
+
+<img src="docs/images/autosubs-es-step3-spanish.png" width="348" alt="Paso 3. Español, dominio y reglas RAE: temática Juegos de Mesa + Anglicismos (BGG), acento, formato, glosario con + Términos BGG y la sección Reglas de texto desplegada">
 
 - **Condicionamiento continuo de Whisper**: `build_spanish_initial_prompt` alimenta el prompt de `whisper-cli` con términos lúdicos esenciales (`BoardGameGeek`, `BGG`, `eurogame`, `ameritrash`, `meeples`, `deckbuilding`, `worker placement`, `set collection`, `draft`, `setup`, `playmat`, `downtime`, `kingmaking`, `alpha player`, `filler`, `gateway`, `Kickstarter`, `Gamefound`) más los términos de tu **Glosario personalizado**, manteniéndolos activos en todo el video mediante `--carry-initial-prompt`.
 - **Reparación fonética determinista**: `BOARDGAME_PHONETIC_FIXES` corrige de inmediato más de 70 errores fonéticos frecuentes de Whisper en español tras la transcripción—por ejemplo convirtiendo `eurogueim` en `eurogame`, `mipels` en `meeples`, `dec bilding` en `deckbuilding`, `setap` en `setup`, `pleimat` en `playmat`, `dauntaim` en `downtime`, `worker pleisment` en `worker placement`, `kikstarter` en `Kickstarter` y `be ge ge` en `BGG`—respetando siempre las mayúsculas y minúsculas correctas.
@@ -135,8 +141,13 @@ No es obligatorio tener DaVinci Resolve abierto ni instalado para subtitular vid
 
 1. Selecciona **App Independiente** en el selector de modo de la barra superior (el sistema también activa este modo automáticamente si abres la app y DaVinci Resolve no está en ejecución).
 2. Arrastra cualquier archivo de audio o video local (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov` o `.mkv`) sobre la zona de carga en **1. Audio de origen**. Los videos se reproducen de inmediato en el **Monitor previo** con subtítulos sincronizados cuadro por cuadro y barra de desplazamiento de audio.
+
+   <img src="docs/images/autosubs-es-step1-local.png" width="348" alt="Paso 1. Audio de origen con la pestaña Archivo local y la zona para arrastrar vídeo o audio">
 3. Ajusta las opciones en **2. Motor Whisper** y **3. Español, dominio y reglas RAE**, y haz clic en **Transcribir en Español**.
 4. Exporta tus resultados desde la tarjeta **6. Exportar**. **.SRT Estándar** y **Render MP4** están a la vista; el resto de formatos y **Copiar guion** están en **Más formatos**:
+
+   <img src="docs/images/autosubs-es-step6-export.png" width="338" alt="Paso 6. Exportar con .SRT Estándar y Render MP4 a la vista y Más formatos desplegado: .SRT (01:00 TC), .VTT Web, .ASS Estilizado, .TXT Guion, .TXT + Tiempos, .FCPXML 1.9, .JSON Palabras y Copiar guion">
+
    - **Archivos de subtítulos**: Descarga `.SRT Estándar`, `.SRT (01:00 TC)`, `.VTT Web`, `.ASS Estilizado`, `.FCPXML 1.9` o `.JSON Palabras`.
    - **Guiones limpios y transcripciones**: Exporta `.TXT Guion` (texto continuo en párrafos limpios), `.TXT + Tiempos` (guion con marcas de tiempo para revisión) o copia todo el texto al portapapeles con **Copiar guion**.
    - **Video MP4 con subtítulos integrados**: Haz clic en **Render MP4** para codificar un video H.264 `.mp4`: con `libx264` en el procesador (0 MB de VRAM) en Mac Intel, o con `h264_videotoolbox` por hardware en Apple Silicon. Requiere `ffmpeg-full` (`brew install ffmpeg-full`).
@@ -170,24 +181,37 @@ Selecciona **DaVinci Resolve 20** en la barra superior cuando desees una integra
 2. En la barra de menús superior de DaVinci Resolve, haz clic en **Workspace** > **Scripts** > **1 - MTTN AutoSubs - Exportar Audio** (o pulsa **Exportar audio (Studio)** directamente en la interfaz de AutoSubs si tienes Resolve Studio).
 3. Cuando la consola de Resolve confirme la exportación del audio, regresa a MTTN AutoSubs Tool y presiona **Leer buzón**.
 
+<img src="docs/images/autosubs-es-step1-resolve.png" width="348" alt="Paso 1. Audio de origen en la pestaña Timeline de Resolve, con la instrucción del menú Scripts y los botones Exportar audio (Studio) y Leer buzón">
+
 ### 2. Transcribir y editar subtítulos en español
 
 1. En **3. Español, dominio y reglas RAE**, selecciona **Juegos de Mesa + Anglicismos (BGG)** (o **General / Documental** / **Tech y Edición Vídeo**) junto con el **Acento regional** que corresponda (`Español Neutro`, `España`, `México / LatAm` o `Río de la Plata`).
 2. Agrega nombres de juegos, editoriales o términos propios en **Glosario personalizado**, o pulsa **+ Términos BGG** para cargar un vocabulario lúdico inicial.
 3. Haz clic en **Transcribir en Español**, y revisa los subtítulos en el **Monitor previo** y en el editor central (`÷` para dividir, `+Unir`, `×` para eliminar, etiquetas de CPS e indicador de **Aplicar reglas RAE y glosario**).
+
+   <img src="docs/images/autosubs-es-cue-editor.png" width="782" alt="Editor de subtítulos con buscar y reemplazar, tiempos de entrada y salida, CPS y acciones Reproducir, Resolve, dividir, +Unir y eliminar en cada subtítulo">
+
 4. Ajusta los tiempos directamente en la **forma de onda**: arrastra un bloque morado para moverlo o sus bordes para cambiar inicio y fin (`Esc` cancela). Usa `+`/`−`, ⌘ + rueda o el pellizco del trackpad para hacer zoom, y la rueda para desplazarte cuando hay zoom.
+
+   <img src="docs/images/autosubs-es-monitor-waveform.png" width="782" alt="Monitor previo 16:9 con el subtítulo activo, controles de reproducción y zoom, y la forma de onda con los bloques de subtítulo arrastrables">
 
 ### 3. Tipografías personalizadas y paquetes animados
 
 Arrastra fuentes `.otf`, `.ttf`, `.ttc` o archivos comprimidos `.zip` en **4. Estilo y tipografía** para verlas en el **Monitor previo** e instalarlas en `~/Library/Fonts` para DaVinci Resolve:
 
+<img src="docs/images/autosubs-es-fonts-animation.png" width="338" alt="Paso 4 con el preset Anitype Animado (Flipbook): aviso de glifos faltantes, Fuentes propias y animación desplegado con Subir fuente, Instalar en macOS, Adaptar glifos ASCII y controles de flipbook y vibración">
+
 - Los paquetes con variantes numeradas (como el set de cinco fuentes de `Anitype Journal`) se agrupan automáticamente bajo una sola opción en **Packs animados (Flipbook)**.
-- Si una fuente carece de caracteres en español (`á`, `é`, `í`, `ó`, `ú`, `ü`, `ñ`, `¿`, `¡`), el sistema muestra una advertencia y ofrece el interruptor **Adaptar glifos ASCII** para que `Text+` muestre palabras completas en lugar de caracteres vacíos.
+- Si una fuente carece de caracteres en español (`á`, `é`, `í`, `ó`, `ú`, `ü`, `ñ`, `¿`, `¡`), el sistema muestra una advertencia y ofrece el interruptor **Adaptar glifos ASCII** para que `Text+` muestre palabras completas en lugar de caracteres vacíos. En el **Monitor previo** verás el resultado (por ejemplo, «reseñamos» pasa a «resenamos»), mientras el editor conserva el texto original:
+
+  <img src="docs/images/autosubs-es-anitype-monitor.png" width="782" alt="Monitor previo con Adaptar glifos ASCII activo: el subtítulo muestra «resenamos» sin eñe mientras la forma de onda conserva «reseñamos»">
 - Las pistas de subtítulos nativas de DaVinci Resolve (`ST`) no admiten plugins ni expresiones de Fusion; por ello, MTTN AutoSubs Tool conecta los estilos animados con `AutoSubs_ES_Anitype_Animado` en una pista de video estándar (`V`) o genera títulos básicos cortados mediante `FCPXML 1.9`.
 
 ### Colores, opacidad y estilos propios
 
 En **4. Estilo y tipografía > Colores y opacidad**, cada capa (texto, karaoke, contorno, sombra y caja) tiene su propio color y un control de opacidad de 0 a 100 %:
+
+<img src="docs/images/autosubs-es-style-colors.png" width="338" alt="Paso 4. Estilo y tipografía con presets, tipografía, tamaño y altura, y Colores y opacidad desplegado: color y opacidad de texto, karaoke, contorno, sombra y caja">
 
 - **Texto al 0 % con contorno visible** produce letras huecas (*outline*).
 - Una **caja al 50–80 %** deja ver el vídeo detrás sin perder legibilidad.
@@ -203,6 +227,8 @@ En **4. Estilo y tipografía > Colores y opacidad**, cada capa (texto, karaoke, 
 | SRT, VTT y pista nativa de subtítulos (`ST`) | No aplica: estos formatos no guardan estilo |
 
 ### 4. Insertar los subtítulos en DaVinci Resolve 20
+
+<img src="docs/images/autosubs-es-step5-resolve.png" width="338" alt="Paso 5. DaVinci Resolve 20 con Método en timeline (Pista Subtítulos Nativa, 0 MB VRAM), Nombre de pista y el botón Enviar a DaVinci Resolve 20">
 
 1. En **5. DaVinci Resolve 20**, elige el modo de inserción que prefieras:
    - **Pista Subtítulos Nativa (0 MB VRAM)**: Agrega una pista `.srt` nativa de DaVinci Resolve, ideal para reproducción fluida en 4K.

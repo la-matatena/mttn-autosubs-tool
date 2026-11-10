@@ -105,7 +105,7 @@ Use the switcher next to the **AutoSubs ES** title in the top bar:
 -   **App Independiente**: Highlights local media drag-and-drop with in-page HTML5 `<video>` and `<audio>` playback, uses all four Core i5 threads automatically when Resolve is closed, and makes **Render MP4** the primary action in **6. Exportar**, folds **5. DaVinci Resolve 20** to its title, (including plain-text transcripts and CPU `libx264` burned-in `.mp4` renders).
 -   **DaVinci Resolve 20**: Shows the Resolve audio bounce controls first, keeps `3` threads reserved when Resolve is open, and brings **5. DaVinci Resolve 20** into focus for direct timeline insertion.
 
-![MTTN AutoSubs standalone application mode showing board-game anglicism repairs and standalone TXT, SRT, ASS, FCPXML, JSON, and MP4 exports](images/autosubs-es-standalone-models.png)
+<img src="images/autosubs-es-mode-switch.png" width="500" alt="Top bar with the App Independiente and DaVinci Resolve 20 mode switcher">
 
 ## Export timeline audio or load local media
 
@@ -116,6 +116,8 @@ You can feed audio into AutoSubs ES directly from a local media file or from an 
 1.  In the top bar, click **App Independiente**, or open the **Archivo local** tab inside **1. Audio de origen**.
 2.  Drag a `.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov`, or `.mkv` file onto the upload dropzone, or click the dropzone to select a file from disk.
 
+<img src="images/autosubs-es-step1-local.png" width="348" alt="Step 1. Audio de origen with the Archivo local tab and the drag-and-drop zone">
+
 Video files render directly in **Monitor previo** with frame-accurate synchronized subtitles.
 
 ### Export audio in DaVinci Resolve 20 Free or Studio
@@ -124,6 +126,8 @@ Video files render directly in **Monitor previo** with frame-accurate synchroniz
 2.  In the Resolve menu bar, click **Workspace** > **Scripts** > **1 - AutoSubs ES - Exportar Audio**.
 3.  Wait until the DaVinci Resolve **Console** prints that the `timeline_audio.wav` bounce finished.
 4.  Return to AutoSubs ES and click **Leer buzón** if **Monitor previo** does not refresh automatically.
+
+<img src="images/autosubs-es-step1-resolve.png" width="348" alt="Step 1. Audio de origen on the Timeline de Resolve tab with the Exportar audio (Studio) and Leer buzón buttons">
 
 ### Export audio directly in DaVinci Resolve 20 Studio
 
@@ -136,23 +140,40 @@ Video files render directly in **Monitor previo** with frame-accurate synchroniz
 Configure CPU scheduling, Whisper model precision, board-game terminology, and Spanish linguistic rules before running transcription, then refine cues inside the studio editor.
 
 1.  In **2. Motor Whisper**, select your model from **Modelo local en español**. On a 32 GB RAM 2017 iMac, choose **Large-v3-Turbo Q8_0 (Recomendado 32 GB)** (`ggml-large-v3-turbo-q8_0.bin`) as your everyday default, or **Large-v3 Completo Q5_0 (Máxima precisión ES)** (`ggml-large-v3-q5_0.bin`) when you want maximum 32-layer accuracy on heavy English board-game terminology.
+    <img src="images/autosubs-es-step2-whisper.png" width="348" alt="Step 2. Motor Whisper with the Automático profile summary, the Ajustar… link, the model selector, and Transcribir en Español">
+
 2.  Click **Descargar** if your chosen model is not downloaded yet. Downloads support HTTP `Range` resume if interrupted.
 3.  Check the performance summary next to the profile pill (for example, `4 hilos · solo CPU · precisión`). To change the controls below, click **Ajustar…** in step 2 or the status button in the top bar to open **Rendimiento de esta Mac**:
+
+    <img src="images/autosubs-es-status-button.png" width="490" alt="Top-bar status button showing the CPU, threads, GPU, and Resolve status">
+
+    <img src="images/autosubs-es-machine-panel.png" width="640" alt="Rendimiento de esta Mac panel with detected hardware, performance profiles, threads, precision, default model, speed test, and portable preferences">
+
     -   **Núcleos i5**: Keep `4 hilos (Máximo CPU)` in standalone mode, or `3 hilos (Seguro con Resolve)` when DaVinci Resolve 20 is open so one physical i5 core stays responsive for playback and UI interactions.
     -   **Velocidad**: Keep `Precisión (beam=5)` for final dialogue and anglicisms, or choose `Rápido (beam=2)` for rough cuts.
     -   **Proteger Radeon Polaris 2 GB (`-ng` CPU AVX2)**: Keep selected so `whisper-cli` keeps 0 MB allocation on your AMD Radeon Polaris GPU.
     -   **Normalizar voz (filtro 80–7800 Hz FFmpeg)**: Keep selected when recordings contain room rumble or uneven microphone levels.
 4.  In **3. Español, dominio y reglas RAE**, choose **Temática y anglicismos** (`Juegos de Mesa + Anglicismos (BGG)` by default, `General / Documental`, or `Tech y Edición Vídeo`), pick your regional **Acento regional** (`Español Neutro`, `España (Peninsular)`, `México / LatAm`, or `Río de la Plata`), and select **Formato** (`YouTube 16:9 (42 car.)`, `Reels / Shorts 9:16`, `Impacto (1–2 pal.)`, or `Cine / Documental`).
+
+    <img src="images/autosubs-es-step3-spanish.png" width="348" alt="Step 3. Español, dominio y reglas RAE with the domain, dialect, format, glossary, and expanded Reglas de texto">
+
 5.  Optional: Enter game titles, publisher names, mechanics, or proper nouns separated by commas in **Glosario personalizado**, or click **+ Términos BGG** to append starter board-game terms (`BoardGameGeek`, `Meeple`, `Worker Placement`, `Deckbuilding`, `Eurogame`, `Kickstarter`, `Devir`, `Zacatrus`, `Maldito Games`).
 6.  Optional: Expand **Reglas de texto** to adjust **Máx car.**, **Líneas**, or **Pausa ms**, or to select **Reparar signos españoles (`¿` y `¡`)**, **Limpiar muletillas aisladas (eh, em, este...)**, or **Convertir a MAYÚSCULAS**.
 7.  Click **Transcribir en Español** and monitor progress in the progress bar. AutoSubs ES passes `--carry-initial-prompt` with `-mc 64` when supported by your `whisper-cli` build so vocabulary biasing persists across the full recording.
 8.  Inspect and refine the generated cues in **Monitor previo** and the cue editor:
+
+    <img src="images/autosubs-es-monitor-waveform.png" width="782" alt="Monitor previo with the active cue, playback and zoom controls, and the waveform with cue blocks">
+
+    <img src="images/autosubs-es-cue-editor.png" width="782" alt="Cue editor with search and replace, timings, CPS, and per-cue actions">
+
     -   Toggle **16:9** or **9:16** framing in **Monitor previo** to preview line breaks and karaoke highlighting.
     -   Click any point on the waveform canvas or cue timestamps to scrub playback.
     -   Edit subtitle text inline, click **Aplicar reglas RAE y glosario** after changing domain, glossary, **Máx car.**, **Líneas**, or **Pausa ms**, or fix recurring terms across all cues with **Reemplazar todo**.
     -   Choose a template chip (`Cine Netflix`, `Amarillo Clásico`, `Reels Impacto`, `Caja Editorial`, or `★ Anitype Animado (Flipbook)`) in **4. Estilo y tipografía** and fine-tune font family, size, vertical position (`Altura Y`), fill, karaoke, and outline colors, shadow, or background pill box.
 
 ### Set colors and opacity
+
+<img src="images/autosubs-es-style-colors.png" width="338" alt="Step 4. Estilo y tipografía with the expanded Colores y opacidad section">
 
 Open **4. Estilo y tipografía > Colores y opacidad** to give each layer (text, karaoke, outline, shadow, and box) its own color and opacity from 0 to 100 %. Set the text to 0 % with a visible outline for hollow lettering, and use the monitor background selector (black, gray, light, or checkerboard) to judge transparency. Opacity applies to the preview, `.ASS`, burned-in MP4, and `Text+` clips. `FCPXML 1.9` carries only the text opacity, which Resolve may ignore on import. SRT, VTT, and the native subtitle track carry no styling.
 
@@ -172,14 +193,16 @@ Multi-font stop-motion typefaces such as `Anitype Journal` ship five separate va
 4.  Confirm that **Tipografía** selects the grouped entry under **Packs animados (Flipbook)**, or click the **★ Anitype Animado (Flipbook)** preset chip.
 5.  Adjust **Animación de fuente** (`Flipbook multi-fuente + Vibración`, `Solo Flipbook multi-fuente (1..5)`, or `Solo Vibración orgánica (Boil)`), **Cambio c/N frames**, and **Vibración** while watching the live loop in **Monitor previo**.
 
-![MTTN AutoSubs custom font and animation section with the Anitype Animado flipbook preset, font upload, and ASCII glyph folding](images/autosubs-es-anitype-fonts.png)
+<img src="images/autosubs-es-fonts-animation.png" width="338" alt="Fuentes propias y animación section with the Anitype Animado flipbook preset, font upload, missing-glyph banner, Adaptar glifos ASCII, and animation controls">
 
 ### Handle Spanish accents in Basic Latin display fonts
 
 Decorative display fonts often cover Basic Latin characters only and omit Spanish glyphs (`á`, `é`, `í`, `ó`, `ú`, `ü`, `ñ`, `¿`, `¡`). Because Fusion `Text+` leaves missing glyphs blank instead of substituting system fonts, AutoSubs ES inspects OpenType `cmap` tables upon upload:
 
 -   When missing Spanish characters are detected, a banner lists the exact missing characters.
--   Select **Adaptar glifos ASCII** to keep accented Spanish text untouched in your cue editor and `.json` word data while folding output text non-destructively (`á` to `a`, `ñ` to `n`, removing `¿` and `¡`) when exporting or pushing to Resolve.
+-   Select **Adaptar glifos ASCII** to keep accented Spanish text untouched in your cue editor and `.json` word data while folding output text non-destructively (`á` to `a`, `ñ` to `n`, removing `¿` and `¡`) when exporting or pushing to Resolve. **Monitor previo** previews the folded text:
+
+    <img src="images/autosubs-es-anitype-monitor.png" width="782" alt="Monitor previo with Adaptar glifos ASCII on: the cue reads «resenamos» while the waveform keeps «reseñamos»">
 
 ### Standalone track plugin compared with AutoSubs ES
 
@@ -190,6 +213,8 @@ Running flipbook animation directly inside AutoSubs ES avoids both limits: **Cli
 ## Insert subtitles into DaVinci Resolve 20
 
 Select an insertion method in **5. DaVinci Resolve 20** that matches your editing workflow and 2 GB VRAM budget.
+
+<img src="images/autosubs-es-step5-resolve.png" width="338" alt="Step 5. DaVinci Resolve 20 with Método en timeline, Nombre de pista, and Enviar a DaVinci Resolve 20">
 
 | Mode in UI | Timeline track type | VRAM impact | Best use case |
 | :--- | :--- | :--- | :--- |
@@ -205,6 +230,8 @@ Select an insertion method in **5. DaVinci Resolve 20** that matches your editin
 ## Export standalone files and burned-in video
 
 Use **6. Exportar** to download subtitle files, clean Spanish transcripts, or an H.264 `.mp4` video with burned-in subtitles for YouTube, Vimeo, web players, or external NLE workflows. **.SRT Estándar** and **Render MP4** are always visible; expand **Más formatos** for the other formats and **Copiar guion**.
+
+<img src="images/autosubs-es-step6-export.png" width="338" alt="Step 6. Exportar with Más formatos expanded">
 
 | Button label | Output format | Key characteristics |
 | :--- | :--- | :--- |

@@ -1410,7 +1410,7 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
 
     zip_bytes = package_bundle.build_zip_bytes(root)
     meta = package_bundle.verify_zip_bytes(zip_bytes)
-    self.assertEqual(meta["file_count"], 39, meta["entries"])
+    self.assertEqual(meta["file_count"], 51, meta["entries"])
     self.assertNotIn("AutoSubs_ES/__init__.py", meta["entries"])
     self.assertIn("AutoSubs_ES/.gitignore", meta["entries"])
     self.assertIn("AutoSubs_ES/BUILD", meta["entries"])
@@ -1434,11 +1434,11 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
         "AutoSubs_ES/docs/images/autosubs-es-overview.png", meta["entries"]
     )
     self.assertIn(
-        "AutoSubs_ES/docs/images/autosubs-es-standalone-models.png",
+        "AutoSubs_ES/docs/images/autosubs-es-step6-export.png",
         meta["entries"],
     )
     self.assertIn(
-        "AutoSubs_ES/docs/images/autosubs-es-anitype-fonts.png", meta["entries"]
+        "AutoSubs_ES/docs/images/autosubs-es-fonts-animation.png", meta["entries"]
     )
 
 

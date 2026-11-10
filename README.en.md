@@ -24,13 +24,11 @@ MTTN AutoSubs Tool adapts the workflow seamlessly between DaVinci Resolve 20 tim
 
 *Three-column studio in **DaVinci Resolve 20** mode with `Large-v3-Turbo Q8_0` selected, **Juegos de Mesa + Anglicismos (BGG)** active, and live Spanish karaoke rendering in **Monitor previo**.*
 
-![MTTN AutoSubs standalone application mode showing board-game and anglicism cue cleanup plus standalone TXT, SRT, VTT, ASS, FCPXML, JSON, and burned-in MP4 export controls](docs/images/autosubs-es-standalone-models.png)
+The mode switcher sits next to the title in the top bar:
 
-***App Independiente** (Standalone) mode applying the **Juegos de Mesa + Anglicismos (BGG)** glossary and phonetic repair (`Eurogame`, `meeples`, `Deckbuilding`, `playmat`, `Worker Placement`, `Kickstarter`, `BGG`) alongside standalone `.TXT`, `.SRT`, `.VTT`, `.ASS`, `.FCPXML`, `.JSON`, and burned-in `.MP4` exports.*
+<img src="docs/images/autosubs-es-mode-switch.png" width="500" alt="MTTN AutoSubs top bar with the mode switcher: App Independiente and DaVinci Resolve 20 (active)">
 
-![MTTN AutoSubs "Fuentes propias y animación" section with the Anitype Animado flipbook preset: .otf/.ttf/.zip font upload, macOS install, ASCII glyph folding, and multi-font animation with jitter controls](docs/images/autosubs-es-anitype-fonts.png)
-
-***Anitype Journal** five-font flipbook animation controls paired with OpenType `cmap` Spanish glyph detection and non-destructive ASCII adaptation for `Text+` templates.*
+Each section below shows a close-up of the part of the interface it describes.
 
 ## Documentation
 
@@ -72,6 +70,10 @@ Force a profile with `AUTOSUBS_HW_PROFILE=intel_imac2017` or `AUTOSUBS_HW_PROFIL
 
 The status button in the top bar (⚙ with the CPU, GPU, and Resolve status) opens a panel with the detected hardware and the performance settings. They are saved **only on that Mac** (`~/Library/Application Support/AutoSubsES/settings.json`), so the iMac can stay in a safe profile while a MacBook runs at full speed:
 
+<img src="docs/images/autosubs-es-status-button.png" width="490" alt="Top-bar status button: Apple M4 Pro · 8 hilos · Metal · Resolve listo, next to Probar Demo ES, refresh, and the theme toggle">
+
+<img src="docs/images/autosubs-es-machine-panel.png" width="640" alt="Rendimiento de esta Mac panel with detected hardware, the Automático, Seguro, Máximo, and Personalizado profiles, threads, precision, default model, Probar velocidad, and portable preferences">
+
 - **Profile**: **Automático** (recommended: uses the whole Mac and frees cores while Resolve is open), **Seguro** (few threads and fast beam search so editing stays smooth), **Máximo**, or **Personalizado** (threads, GPU, and precision by hand). Step 2 shows a one-line summary of the active profile (for example, `8 hilos · GPU · precisión`) and an **Ajustar…** link that opens this panel.
 - Per-machine **default model** and **Restablecer a lo recomendado** (reset).
 - **Probar velocidad** (speed test): transcribes ~30 s of Spanish system-voice speech with the chosen model and reports how many times faster than real time it runs, plus a model recommendation. Reference: on a MacBook Pro M4 Pro, `turbo-q8` runs 6–20× faster than real time with Metal (depending on whether the model is already in memory) and about 4× CPU-only.
@@ -82,6 +84,8 @@ Dialect, domain, glossary, and format are also remembered between sessions.
 ## Spanish Whisper models for 32 GB RAM
 
 Your RAM removes bottlenecks for larger quantized GGML models. Download models inside **2. Motor Whisper** with automatic HTTP resume support:
+
+<img src="docs/images/autosubs-es-step2-whisper.png" width="348" alt="Step 2. Motor Whisper: Automático profile (8 hilos · GPU · precisión), Ajustar… link, installed Large-v3-Turbo Q8_0 model, and the Transcribir en Español button">
 
 | Model ID | Filename | Download size | Peak RAM | Approximate Spanish WER | Recommended role |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -94,6 +98,8 @@ Your RAM removes bottlenecks for larger quantized GGML models. Download models i
 ## Board-game vocabulary and anglicisms (`juegos_mesa`)
 
 Spanish board-game channels mix regional Spanish grammar with English mechanics, publisher names, and Hispanicized pronunciations. MTTN AutoSubs Tool pairs **Temática y anglicismos** (`Juegos de Mesa + Anglicismos (BGG)` by default) with any regional **Acento regional** (`Español Neutro`, `España (Peninsular)`, `México / LatAm`, or `Río de la Plata`):
+
+<img src="docs/images/autosubs-es-step3-spanish.png" width="348" alt="Step 3. Español, dominio y reglas RAE: Juegos de Mesa + Anglicismos (BGG) domain, dialect, format, glossary with + Términos BGG, and the expanded Reglas de texto section">
 
 - **Persistent Whisper conditioning**: `build_spanish_initial_prompt` seeds `whisper-cli --prompt` with domain terms (`BoardGameGeek`, `BGG`, `eurogame`, `ameritrash`, `meeples`, `deckbuilding`, `worker placement`, `set collection`, `draft`, `setup`, `playmat`, `downtime`, `kingmaking`, `alpha player`, `filler`, `gateway`, `Kickstarter`, `Gamefound`) plus your **Glosario personalizado** and keeps them active across the whole timeline when `whisper-cli` supports `--carry-initial-prompt`.
 - **Deterministic phonetic repair**: `BOARDGAME_PHONETIC_FIXES` corrects ~70 common Spanish Whisper phonetic mistakes after transcription—for example turning `eurogueim` into `eurogame`, `mipels` into `meeples`, `dec bilding` into `deckbuilding`, `setap` into `setup`, `pleimat` into `playmat`, `dauntaim` into `downtime`, `worker pleisment` into `worker placement`, `kikstarter` into `Kickstarter`, and `be ge ge` into `BGG`—while preserving case-insensitive custom glossary overrides from **+ Términos BGG**.
@@ -132,8 +138,13 @@ You do not need DaVinci Resolve open or installed to subtitle videos, interviews
 
 1. Switch the top bar to **App Independiente** (the studio also selects this mode automatically on standalone app launches or when DaVinci Resolve is not running).
 2. Drag any local audio or video file (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov`, or `.mkv`) onto the upload zone in **1. Audio de origen**. Video uploads stream directly inside **Monitor previo** with frame-accurate Spanish subtitles and audio scrubbing.
+
+   <img src="docs/images/autosubs-es-step1-local.png" width="348" alt="Step 1. Audio de origen with the Archivo local tab and the drag-and-drop zone for video or audio">
 3. Configure **2. Motor Whisper** (`Large-v3-Turbo Q8_0` or `Large-v3 Completo Q5_0`) and **3. Español, dominio y reglas RAE**, then click **Transcribir en Español**.
 4. Export from **6. Exportar**. **.SRT Estándar** and **Render MP4** are always visible; the other formats and **Copiar guion** are under **Más formatos**:
+
+   <img src="docs/images/autosubs-es-step6-export.png" width="338" alt="Step 6. Exportar with .SRT Estándar and Render MP4 visible and Más formatos expanded: .SRT (01:00 TC), .VTT Web, .ASS Estilizado, .TXT Guion, .TXT + Tiempos, .FCPXML 1.9, .JSON Palabras, and Copiar guion">
+
    - **Subtitle files**: Download `.SRT Estándar`, `.SRT (01:00 TC)`, `.VTT Web`, `.ASS Estilizado`, `.FCPXML 1.9`, or `.JSON Palabras`.
    - **Clean scripts and copy**: Export `.TXT Guion` (plain prose paragraphs), `.TXT + Tiempos` (timestamped review transcript), or copy the script to your clipboard with **Copiar guion**.
    - **Burned-in MP4 video**: Click **Render MP4** to encode an H.264 `.mp4` video: `libx264` on CPU (zero VRAM pressure) on Intel Macs, or hardware `h264_videotoolbox` on Apple Silicon. Requires `ffmpeg-full` (`brew install ffmpeg-full`).
@@ -167,24 +178,37 @@ Switch the top bar to **DaVinci Resolve 20** whenever you want round-trip timeli
 2. In the top menu bar, click **Workspace** > **Scripts** > **1 - MTTN AutoSubs - Exportar Audio** (or click **Exportar audio (Studio)** directly in Resolve Studio).
 3. Wait until the DaVinci Resolve Console reports that the audio bounce is complete, then return to MTTN AutoSubs Tool and click **Leer buzón**.
 
+<img src="docs/images/autosubs-es-step1-resolve.png" width="348" alt="Step 1. Audio de origen on the Timeline de Resolve tab with the Scripts menu hint and the Exportar audio (Studio) and Leer buzón buttons">
+
 ### Transcribe and edit Spanish subtitles
 
 1. In **3. Español, dominio y reglas RAE**, select **Juegos de Mesa + Anglicismos (BGG)** (or **General / Documental** / **Tech y Edición Vídeo**) alongside your regional Spanish **Acento regional** (`Español Neutro`, `España`, `México / LatAm`, or `Río de la Plata`).
 2. Add specific game titles, publisher names, or custom terms in **Glosario personalizado**, or click **+ Términos BGG** to prefill starter board-game vocabulary.
 3. Click **Transcribir en Español**, then inspect cues in **Monitor previo** and the center editor (`÷`, `+Unir`, `×`, CPS badges, and **Aplicar reglas RAE y glosario**).
+
+   <img src="docs/images/autosubs-es-cue-editor.png" width="782" alt="Cue editor with search and replace, in and out times, CPS, and per-cue play, Resolve, split, +Unir, and delete actions">
+
 4. Adjust timings directly on the **waveform**: drag a purple block to move it, or its edges to change start and end (`Esc` cancels). Zoom with `+`/`−`, ⌘ + scroll, or trackpad pinch, and scroll to pan while zoomed.
+
+   <img src="docs/images/autosubs-es-monitor-waveform.png" width="782" alt="16:9 Monitor previo with the active cue, playback and zoom controls, and the waveform with draggable cue blocks">
 
 ### Use custom fonts and animated packs
 
 Upload `.otf`, `.ttf`, `.ttc`, or `.zip` font archives in **4. Estilo y tipografía** to preview them in **Monitor previo** and install them into `~/Library/Fonts` for DaVinci Resolve 20:
 
+<img src="docs/images/autosubs-es-fonts-animation.png" width="338" alt="Step 4 with the Anitype Animado (Flipbook) preset: missing-glyph banner and the expanded Fuentes propias y animación section with font upload, macOS install, Adaptar glifos ASCII, and flipbook and jitter controls">
+
 - Numbered variant packs (such as the five-font `Anitype Journal` flipbook archive) group automatically into a single **Packs animados (Flipbook)** entry.
-- Fonts lacking Spanish glyphs (`á`, `é`, `í`, `ó`, `ú`, `ü`, `ñ`, `¿`, `¡`) trigger a glyph banner with an **Adaptar glifos ASCII** toggle so `Text+` renders complete words instead of blank spaces.
+- Fonts lacking Spanish glyphs (`á`, `é`, `í`, `ó`, `ú`, `ü`, `ñ`, `¿`, `¡`) trigger a glyph banner with an **Adaptar glifos ASCII** toggle so `Text+` renders complete words instead of blank spaces. **Monitor previo** shows the result (for example, «reseñamos» becomes «resenamos») while the editor keeps the original text:
+
+  <img src="docs/images/autosubs-es-anitype-monitor.png" width="782" alt="Monitor previo with Adaptar glifos ASCII on: the cue reads «resenamos» without the ñ while the waveform keeps «reseñamos»">
 - Native DaVinci Resolve subtitle tracks (`ST`) disallow Fusion plugins and expressions, so MTTN AutoSubs Tool pairs custom flipbook typography with `AutoSubs_ES_Anitype_Animado` on a Video (`V`) track or sliced `FCPXML 1.9` Basic Titles.
 
 ### Colors, opacity, and saved styles
 
 In **4. Estilo y tipografía > Colores y opacidad**, each layer (text, karaoke, outline, shadow, and box) has its own color and a 0–100 % opacity control:
+
+<img src="docs/images/autosubs-es-style-colors.png" width="338" alt="Step 4. Estilo y tipografía with presets, font, size and height, and the expanded Colores y opacidad section: color and opacity for text, karaoke, outline, shadow, and box">
 
 - **Text at 0 % with a visible outline** produces hollow lettering.
 - A **box at 50–80 %** lets the video show through while staying readable.
@@ -200,6 +224,8 @@ In **4. Estilo y tipografía > Colores y opacidad**, each layer (text, karaoke, 
 | SRT, VTT, and the native subtitle track (`ST`) | Not applicable: these formats carry no styling |
 
 ### Insert subtitles into DaVinci Resolve 20
+
+<img src="docs/images/autosubs-es-step5-resolve.png" width="338" alt="Step 5. DaVinci Resolve 20 with Método en timeline (Pista Subtítulos Nativa, 0 MB VRAM), Nombre de pista, and the Enviar a DaVinci Resolve 20 button">
 
 1. In **5. DaVinci Resolve 20**, select an insertion mode:
    - **Pista Subtítulos Nativa (0 MB VRAM)**: Adds a native `.srt` subtitle track for smooth 4K playback.
