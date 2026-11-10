@@ -416,6 +416,22 @@ class SpanishNlpTest(unittest.TestCase):
     self.assertEqual(words[0].start_ms, 100)
     self.assertGreater(words[3].end_ms, words[3].start_ms)
 
+  def test_parse_whisper_ojf_strips_timestamp_tokens(self) -> None:
+    ojf = {
+        "transcription": [{
+            "offsets": {"from": 0, "to": 1000},
+            "text": " Hola[_TT_25] mundo.[_TT_50]",
+            "tokens": [
+                {"text": "[_BEG_]", "offsets": {"from": 0, "to": 0}, "p": 0.9},
+                {"text": " Hola", "offsets": {"from": 0, "to": 400}, "p": 0.9},
+                {"text": "[_TT_25]", "offsets": {"from": 500, "to": 500}, "p": 0.9},
+                {"text": " mundo.", "offsets": {"from": 500, "to": 900}, "p": 0.9},
+                {"text": "[_TT_335]", "offsets": {"from": 1000, "to": 1000}, "p": 0.9},
+            ],
+        }]
+    }
+    texts = [w.text for w in spanish_nlp.parse_whisper_ojf(ojf)]
+    self.assertEqual(texts, ["Hola", "mundo."])
   def test_clean_spanish_words_glossary_muletillas_and_inverted_punct(
       self,
   ) -> None:

@@ -705,7 +705,10 @@ SPANISH_HALLUCINATION_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
-_SPECIAL_TOKEN_RE = re.compile(r"^\[_.*_\]$")
+# whisper.cpp control tokens: [_BEG_], [_SOT_], [_EOT_]... and timestamp
+# tokens [_TT_335] (these end in a digit, not "_]").
+_SPECIAL_TOKEN_RE = re.compile(r"^\[_[A-Z]+_\d*\]$")
+_INLINE_SPECIAL_TOKEN_RE = re.compile(r"\s*\[_[A-Z]+_\d*\]")
 _MULETILLA_RE = re.compile(r"^(?:eh+|em+|mm+|hm+|uh+|ah+)$", re.IGNORECASE)
 _CLAUSE_END_RE = re.compile(r"[.?!…]+[\"'»”’\)\]]*$")
 _SOFT_BREAK_RE = re.compile(r"[,;:—–]+[\"'»”’\)\]]*$")
@@ -833,7 +836,7 @@ def parse_whisper_ojf(ojf_data: dict[str, Any]) -> list[WordTiming]:
   last_end_ms = 0
 
   for seg in ojf_data.get("transcription", []):
-    seg_text = str(seg.get("text", "")).strip()
+    seg_text = _INLINE_SPECIAL_TOKEN_RE.sub("", str(seg.get("text", ""))).strip()
     if not seg_text:
       continue
 
@@ -857,7 +860,7 @@ def parse_whisper_ojf(ojf_data: dict[str, Any]) -> list[WordTiming]:
 
     merged: list[dict[str, Any]] = []
     for tok in raw_tokens:
-      raw_text = str(tok.get("text", ""))
+      raw_text = _INLINE_SPECIAL_TOKEN_RE.sub("", str(tok.get("text", "")))
       if not raw_text or _SPECIAL_TOKEN_RE.match(raw_text.strip()):
         continue
       if not raw_text.strip():
