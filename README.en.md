@@ -14,8 +14,6 @@
 
 The user interface follows clean macOS standards in both dark and light modes with neutral surfaces and high-contrast typography, reserving La Matatena's signature purple (`#8367c7`) strictly for active highlights, focus rings, and primary actions. It features an integrated **light and dark theme toggle** in the top bar that automatically respects and syncs with your macOS system preference.
 
-> **La Matatena Open Projects Convention:** All open tools under [`github.com/la-matatena`](https://github.com/la-matatena) follow the [**MTTN Standards**](https://github.com/la-matatena/.github/blob/main/CONVENTIONS.md) naming convention (**`MTTN` + `TwoWordNameInPascalCase` + `[Suffix]`**, e.g., **MTTN AutoSubs Tool**, **MTTN PaperCraft Studio**) and La Matatena's `#8367c7` / `#6a4fb3` brand palette.
-
 ## Interface preview
 
 MTTN AutoSubs Tool adapts the workflow seamlessly between DaVinci Resolve 20 timeline insertion and Standalone local video subtitling, featuring an intuitive numbered 6-step flow:

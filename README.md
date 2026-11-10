@@ -16,8 +16,6 @@ Está optimizado especialmente para equipos como la iMac 2017 Retina 4K (`Intel 
 
 La interfaz de usuario sigue los estándares neutros de macOS tanto en modo oscuro como claro (superficies zinc/carbón y plata, con tipografía limpia y de alto contraste), reservando el morado distintivo de La Matatena (`#8367c7`) únicamente para botones de acción clave, selecciones activas y resaltados interactivos. Incluye además un selector en la barra superior para alternar entre **tema claro y oscuro**, sincronizado automáticamente con la preferencia del sistema.
 
-> **Convención de Proyectos de La Matatena:** Todas las herramientas bajo [`github.com/la-matatena`](https://github.com/la-matatena) siguen la nomenclatura [**MTTN Standards**](https://github.com/la-matatena/.github/blob/main/CONVENTIONS.md) (**`MTTN` + `NombreDeDosPalabras` + `[Sufijo]`**, ej. **MTTN AutoSubs Tool**, **MTTN PaperCraft Studio**) y la paleta de identidad visual `#8367c7` / `#6a4fb3`.
-
 ## Vista previa de la interfaz
 
 MTTN AutoSubs Tool organiza el flujo de trabajo en **6 pasos numerados** y permite alternar con un solo clic entre el **Modo DaVinci Resolve 20** y el **Modo App Independiente**:
