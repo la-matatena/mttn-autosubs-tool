@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>MTTN AutoSubs Tool · 100% local Spanish subtitles for macOS and DaVinci Resolve</title>
+  <meta name="description" content="Generate accurate Spanish subtitles 100% locally on macOS with Whisper, as a standalone app or synced with DaVinci Resolve 20 Free and Studio.">
+  <meta name="theme-color" content="#15121e">
+  <link rel="icon" href="../icon.svg" type="image/svg+xml">
+  <link rel="alternate" hreflang="es" href="https://la-matatena.github.io/mttn-autosubs-tool/">
+  <link rel="alternate" hreflang="en" href="https://la-matatena.github.io/mttn-autosubs-tool/en/">
+  <meta property="og:title" content="MTTN AutoSubs Tool">
+  <meta property="og:description" content="100% local Spanish subtitles for macOS and DaVinci Resolve 20.">
+  <meta property="og:image" content="https://la-matatena.github.io/mttn-autosubs-tool/images/autosubs-es-overview.png">
+  <meta property="og:type" content="website">
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="topbar">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="../icon.svg" alt="" width="30" height="30">MTTN AutoSubs Tool</a>
+      <nav class="nav" aria-label="Main">
+        <a href="#features">Features</a>
+        <a href="#modes">Modes</a>
+        <a href="#install">Install</a>
+        <a href="#docs">Docs</a>
+        <a href="https://github.com/la-matatena/mttn-autosubs-tool">GitHub</a>
+        <a class="lang" href="../" hreflang="es" lang="es">Español</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="wrap">
+        <span class="eyebrow">v1.2 · Open source · MIT</span>
+        <h1>Spanish subtitles, 100% on your Mac.</h1>
+        <p class="lead">Transcribe, fix, and export accurate subtitles with Whisper without sending audio to the cloud or exhausting your VRAM. Use it as a standalone app or synced with the DaVinci Resolve 20 Free and Studio timeline.</p>
+        <div class="actions">
+          <a class="btn primary" href="https://github.com/la-matatena/mttn-autosubs-tool/releases/latest">Download the latest release</a>
+          <a class="btn" href="https://github.com/la-matatena/mttn-autosubs-tool">View on GitHub</a>
+        </div>
+        <ul class="chips" aria-label="Compatibility">
+          <li>macOS Intel &amp; Apple Silicon</li>
+          <li>DaVinci Resolve 20 Free &amp; Studio</li>
+          <li>Whisper Large-v3 · 8-bit GGML</li>
+          <li>Python 3.10+</li>
+        </ul>
+        <figure class="shot">
+          <img src="../images/autosubs-es-overview.png" width="1440" height="940" fetchpriority="high"
+               alt="MTTN AutoSubs studio in DaVinci Resolve 20 mode with the Large-v3-Turbo Q8_0 model, the 16:9 karaoke preview monitor, the waveform, and the Spanish cue editor">
+        </figure>
+      </div>
+    </section>
+
+    <section id="features">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Built for Spanish-speaking creators</h2>
+          <p>A numbered 6-step flow from audio to final subtitles, with RAE style rules and your niche vocabulary built in.</p>
+        </div>
+        <div class="grid three">
+          <article class="card"><span class="icon" aria-hidden="true">🔒</span><h3>Private and local</h3><p>All processing happens on your machine. No audio ever leaves your Mac.</p></article>
+          <article class="card"><span class="icon" aria-hidden="true">🎙️</span><h3>Tuned Whisper</h3><p>Large-v3-Turbo Q8_0 and full Large-v3 GGML models with context carried across segments.</p></article>
+          <article class="card"><span class="icon" aria-hidden="true">🎲</span><h3>Board games &amp; anglicisms</h3><p>Automatic phonetic repair of hobby terms (BGG), a custom glossary, and regional accents.</p></article>
+          <article class="card"><span class="icon" aria-hidden="true">📝</span><h3>RAE rules</h3><p>Inverted punctuation, line breaks that avoid weak endings, UTF-8 repair, and per-cue CPS checks.</p></article>
+          <article class="card"><span class="icon" aria-hidden="true">🎨</span><h3>Style &amp; karaoke</h3><p>Custom fonts, animated packs, and optional word-by-word highlighting in the preview, .ASS, and MP4.</p></article>
+          <article class="card"><span class="icon" aria-hidden="true">📦</span><h3>Export everything</h3><p>.SRT, .VTT, .ASS, FCPXML 1.9, word-level .JSON, .TXT scripts, and burned-in MP4 video.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="modes" class="alt">
+      <div class="wrap">
+        <div class="feature">
+          <div>
+            <h2>Two modes, one click</h2>
+            <p>Switch modes from the top bar and step <strong>1. Audio de origen</strong> adapts.</p>
+            <p><strong>DaVinci Resolve 20:</strong> export your timeline audio with a script, click <strong>Leer buzón</strong>, and when you're done push subtitles back as a native subtitle track or <code>Text+</code> clips.</p>
+            <p><strong>Standalone:</strong> drop in a local video or audio file and export files or an MP4, no Resolve required.</p>
+          </div>
+          <div class="stack">
+            <figure class="shot"><img src="../images/autosubs-es-mode-switch.png" width="999" height="116" loading="lazy" alt="Top bar with the mode switcher: App Independiente and DaVinci Resolve 20 (active)"></figure>
+            <div class="pair">
+              <figure class="shot"><img src="../images/autosubs-es-step1-resolve.png" width="696" height="414" loading="lazy" alt="Step 1 Audio de origen on the Timeline de Resolve tab with the Exportar audio (Studio) and Leer buzón buttons"></figure>
+              <figure class="shot"><img src="../images/autosubs-es-step1-local.png" width="696" height="400" loading="lazy" alt="Step 1 Audio de origen on the Archivo local tab with the drag-and-drop zone for video or audio"></figure>
+            </div>
+          </div>
+        </div>
+        <div class="feature flip">
+          <div>
+            <h2>Real Spanish, not translated</h2>
+            <p>In <strong>3. Español, dominio y reglas RAE</strong> you pick the topic, accent, and format of your subtitles.</p>
+            <ul>
+              <li>Topics like <strong>Juegos de Mesa + Anglicismos (BGG)</strong> repair terms such as <em>meeple</em> or <em>deckbuilding</em>.</li>
+              <li>Neutral, Spain, Mexico / LatAm, and Río de la Plata accents.</li>
+              <li>Custom glossary for titles, publishers, and names.</li>
+              <li>Text rules: characters per line, <code>¿</code> and <code>¡</code> repair, and filler-word cleanup.</li>
+            </ul>
+          </div>
+          <figure class="shot narrow"><img src="../images/autosubs-es-step3-spanish.png" width="696" height="946" loading="lazy" alt="Step 3 Spanish, domain, and RAE rules with the board games and anglicisms topic, regional accent, custom glossary, and text rules"></figure>
+        </div>
+        <div class="feature">
+          <div>
+            <h2>Frame-accurate editing</h2>
+            <p>Review each cue in the <strong>Monitor previo</strong> and adjust timings directly on the waveform.</p>
+            <ul>
+              <li>Drag blocks to move them, or their edges to change in and out points.</li>
+              <li>Zoom with <code>+</code>/<code>−</code>, ⌘ + scroll, or trackpad pinch.</li>
+              <li>In the editor: search and replace, split, merge, and delete cues with live CPS.</li>
+            </ul>
+          </div>
+          <div class="stack">
+            <figure class="shot"><img src="../images/autosubs-es-monitor-waveform.png" width="1564" height="1066" loading="lazy" alt="16:9 preview monitor with the active cue, playback and zoom controls, and the waveform with draggable cue blocks"></figure>
+            <figure class="shot"><img src="../images/autosubs-es-cue-editor.png" width="1564" height="744" loading="lazy" alt="Cue editor with search and replace, in and out times, CPS, and per-cue actions"></figure>
+          </div>
+        </div>
+        <div class="feature flip">
+          <div>
+            <h2>Export to any format</h2>
+            <p><strong>.SRT Estándar</strong> and <strong>Render MP4</strong> are always visible; everything else is under <strong>Más formatos</strong>.</p>
+            <ul>
+              <li>Subtitles: .SRT (also with 01:00 TC), .VTT, styled .ASS, FCPXML 1.9, and word-level .JSON.</li>
+              <li>Scripts: clean .TXT, timestamped .TXT, or copy to the clipboard.</li>
+              <li>H.264 MP4 with burned-in subtitles.</li>
+            </ul>
+          </div>
+          <figure class="shot narrow"><img src="../images/autosubs-es-step6-export.png" width="676" height="516" loading="lazy" alt="Step 6 Exportar with .SRT Estándar and Render MP4 visible and Más formatos expanded"></figure>
+        </div>
+        <div class="feature">
+          <div>
+            <h2>Tuned for your Mac</h2>
+            <p>The <strong>Rendimiento de esta Mac</strong> panel detects your machine and picks threads, GPU, and precision for you. It runs from the 2017 Intel iMac to Apple Silicon M1–M4.</p>
+            <ul>
+              <li><strong>Automatic</strong> profile: uses the whole Mac and yields cores while DaVinci Resolve is open.</li>
+              <li>Safe, Maximum, and Custom profiles.</li>
+              <li><strong>Speed test</strong> with 30 s of Spanish speech.</li>
+              <li>Portable preferences to carry your style from a MacBook to an iMac.</li>
+            </ul>
+          </div>
+          <figure class="shot"><img src="../images/autosubs-es-machine-panel.png" width="1280" height="1549" loading="lazy" alt="Rendimiento de esta Mac panel with detected hardware, Automatic, Safe, Maximum, and Custom profiles, speed test, and portable preferences"></figure>
+        </div>
+      </div>
+    </section>
+    <section id="install">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Get started in minutes</h2>
+          <p>Requires macOS, Python 3.10+, and Homebrew. DaVinci Resolve is optional.</p>
+        </div>
+        <ol class="steps">
+          <li>
+            <h3>Download</h3>
+            <p>Download <code>MTTN_AutoSubs_Tool.zip</code> from <a href="https://github.com/la-matatena/mttn-autosubs-tool/releases/latest">GitHub Releases</a> or clone the repository.</p>
+          </li>
+          <li>
+            <h3>Install</h3>
+            <p>The installer sets up <code>whisper-cpp</code> and <code>ffmpeg</code> through Homebrew, creates the macOS app, copies the Resolve scripts, and downloads the Spanish model.</p>
+            <pre><code>./install_imac.sh</code></pre>
+          </li>
+          <li>
+            <h3>Open the studio</h3>
+            <p>Launch <strong>MTTN AutoSubs Tool</strong> from Applications or transcribe from Terminal:</p>
+            <pre><code>python3 -B autosubs_server.py \
+  --cli video.mp4 --model turbo-q8 \
+  --output-srt video.srt</code></pre>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="docs" class="alt">
+      <div class="wrap">
+        <div class="section-head"><h2>Documentation</h2></div>
+        <div class="grid three">
+          <a class="card" href="https://github.com/la-matatena/mttn-autosubs-tool/blob/main/docs/user-guide.md"><h3>User guide</h3><p>Installation, standalone workflow, Resolve Free and Studio, styling, and timeline insertion.</p></a>
+          <a class="card" href="https://github.com/la-matatena/mttn-autosubs-tool/blob/main/docs/spanish-subtitling-reference.md"><h3>Spanish subtitling reference</h3><p>Domains, anglicisms, dialects, inverted punctuation, and RAE line wrapping.</p></a>
+          <a class="card" href="https://github.com/la-matatena/mttn-autosubs-tool/blob/main/docs/imac-2017-architecture.md"><h3>Architecture &amp; hardware</h3><p>CPU/VRAM governor, GGML model catalog, Lua IPC, and HTTP API.</p></a>
+          <a class="card" href="https://github.com/la-matatena/mttn-autosubs-tool/blob/main/docs/troubleshooting.md"><h3>Troubleshooting</h3><p>Gatekeeper, Homebrew binaries, manual SRT import, and 2 GB VRAM tips.</p></a>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta">
+      <div class="wrap">
+        <h2>Subtitle without leaving your Mac</h2>
+        <p>Free and open source under the MIT license. Made by La Matatena.</p>
+        <div class="actions">
+          <a class="btn primary" href="https://github.com/la-matatena/mttn-autosubs-tool/releases/latest">Download</a>
+          <a class="btn" href="https://la-matatena.github.io/mttn-papercraft-studio/en/">Meet MTTN PaperCraft Studio</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>© 2026 <a href="https://la-matatena.com">La Matatena</a> · MIT License</span>
+      <nav aria-label="Footer">
+        <a href="https://github.com/la-matatena/mttn-autosubs-tool">GitHub</a>
+        <a href="https://github.com/la-matatena/mttn-autosubs-tool/issues">Report an issue</a>
+        <a href="https://github.com/la-matatena">@la-matatena</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
