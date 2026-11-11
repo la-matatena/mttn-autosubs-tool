@@ -65,7 +65,7 @@ local payloadPath = homeDir .. "/Library/Application Support/AutoSubsES/bridge/o
 local payload, loadErr = loadLuaModule(payloadPath)
 if not payload then
   print("[AutoSubs ES] No se encontró push_payload.lua: " .. tostring(loadErr))
-  print("[AutoSubs ES] Pulsa 'Enviar a DaVinci Resolve 20' en la app AutoSubs ES primero.")
+  print("[AutoSubs ES] Pulsa 'Enviar a DaVinci Resolve 20' en MTTN AutoSubs Tool primero.")
   return
 end
 
@@ -160,7 +160,7 @@ end
 local templateClip = findTemplateClip(mediaPool:GetRootFolder(), payload.template_name or "")
 if not templateClip then
   print("[AutoSubs ES] No hay ninguna plantilla Text+ en tu Media Pool.")
-  print("[AutoSubs ES] Consejo: Arrastra 'Effects > Titles > AutoSubs ES > AutoSubs_ES_Cine_Netflix' (o Anitype_Animado) al Media Pool una vez (o Power Bins).")
+  print("[AutoSubs ES] Consejo: Arrastra 'Effects > Titles > MTTN AutoSubs > AutoSubs_ES_Cine_Netflix' (o Anitype_Animado) al Media Pool una vez (o Power Bins).")
   print("[AutoSubs ES] Respaldo automático: importando FCPXML con Basic Titles...")
   local ok = mediaPool:ImportTimelineFromFile(payload.fcpxml_path)
   if ok then

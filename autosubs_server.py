@@ -581,7 +581,7 @@ class AppState:
       if not src_path:
         raise FileNotFoundError(
             "No hay audio exportado desde Resolve todavía. Ejecuta en Resolve:"
-            " Workspace > Scripts > 1 - AutoSubs ES - Exportar Audio."
+            " Workspace > Scripts > 1 - MTTN AutoSubs - Exportar Audio."
         )
     elif payload.get("media_path"):
       candidate = Path(str(payload["media_path"])).expanduser().resolve()

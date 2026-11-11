@@ -1,12 +1,10 @@
-<!-- go/g3mark-in-g3doc -->
-
 # Spanish NLP, RAE line-wrapping, and formatting reference
 
 This reference documents how the `spanish_nlp.py` module transforms raw `whisper-cli` JSON tokens into readable Spanish subtitles that follow Real Academia Española (RAE) orthographic rules and Netflix and broadcast timing standards. Video editors and localization leads can use these details to tune domain packs, phonetic repairs, presets, custom glossaries, and dialect prompts.
 
 ## Timing and layout presets
 
-AutoSubs ES provides four built-in formatting profiles in `FORMAT_PRESETS`. Switching presets and clicking **Aplicar reglas RAE ahora** recalculates cue boundaries from stored `WordTiming` tokens immediately without re-running Whisper.
+MTTN AutoSubs Tool provides four built-in formatting profiles in `FORMAT_PRESETS`. Switching presets and clicking **Aplicar reglas RAE y glosario** recalculates cue boundaries from stored `WordTiming` tokens immediately without re-running Whisper.
 
 | Preset ID | UI label | Max chars per line | Max lines | Max words | Target / max CPS | Duration range (ms) | Pause split / gap bridge (ms) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |

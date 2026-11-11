@@ -1428,6 +1428,9 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
     meta = package_bundle.verify_zip_bytes(zip_bytes)
     self.assertEqual(meta["file_count"], 51, meta["entries"])
     self.assertNotIn("AutoSubs_ES/__init__.py", meta["entries"])
+    self.assertFalse(
+        any(e.startswith("AutoSubs_ES/site/") for e in meta["entries"])
+    )
     self.assertIn("AutoSubs_ES/.gitignore", meta["entries"])
     self.assertIn("AutoSubs_ES/BUILD", meta["entries"])
     self.assertIn("AutoSubs_ES/LICENSE", meta["entries"])

@@ -134,12 +134,12 @@ _ALLOWED_EXTENSIONS = (
 
 def _should_skip_entry(rel_parts: tuple[str, ...], filename: str) -> bool:
   if any(
-      part in ("__pycache__", ".git", ".citc", ".github")
+      part in ("__pycache__", ".git", ".citc", ".github", "site")
       or part.endswith(".runfiles")
       for part in rel_parts
   ):
     return True
-  if filename in (".DS_Store", "__init__.py"):
+  if filename in (".DS_Store", "__init__.py", "AGENTS.md"):
     return True
   if filename in ("BUILD", ".gitignore", "LICENSE"):
     return False
@@ -147,14 +147,14 @@ def _should_skip_entry(rel_parts: tuple[str, ...], filename: str) -> bool:
 
 
 def collect_bundle_files(source_root: Path | None = None) -> dict[str, bytes]:
-  """Collects sorted relative paths and file contents for AutoSubs_ES.zip."""
+  """Collects sorted relative paths and file contents for MTTN_AutoSubs_Tool.zip."""
   root = source_root or find_project_root()
   collected: dict[str, bytes] = {}
   for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
     dirnames[:] = sorted(
         d
         for d in dirnames
-        if d not in ("__pycache__", ".git", ".citc", ".github")
+        if d not in ("__pycache__", ".git", ".citc", ".github", "site")
     )
     current = Path(dirpath)
     for fname in sorted(filenames):

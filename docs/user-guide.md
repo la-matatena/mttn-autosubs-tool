@@ -1,26 +1,24 @@
-<!-- go/g3mark-in-g3doc -->
+# User guide for MTTN AutoSubs Tool on macOS and DaVinci Resolve 20
 
-# User guide for AutoSubs ES on macOS and DaVinci Resolve 20
+This guide helps Spanish-language creators install, configure, and operate MTTN AutoSubs Tool either as a standalone macOS application and CLI tool or alongside DaVinci Resolve 20 Free or DaVinci Resolve 20 Studio. By following these workflows, you generate time-coded Spanish subtitles locally on Intel `x86_64` or Apple Silicon Macs without sending media to external servers or overloading limited GPU video memory.
 
-This guide helps Spanish-language creators install, configure, and operate AutoSubs ES either as a standalone macOS application and CLI tool or alongside DaVinci Resolve 20 Free or DaVinci Resolve 20 Studio. By following these workflows, you generate time-coded Spanish subtitles locally on Intel `x86_64` or Apple Silicon Macs without sending media to external servers or overloading limited GPU video memory.
-
-AutoSubs ES runs locally on your Mac and incurs no cloud API or billing charges.
+MTTN AutoSubs Tool runs locally on your Mac and incurs no cloud API or billing charges.
 
 ## Before you begin
 
-Gather the following software and disk resources before installing AutoSubs ES:
+Gather the following software and disk resources before installing MTTN AutoSubs Tool:
 
 -   **Operating system**: macOS 13 or later (tested on macOS 15.8.1 on Intel `x86_64` and compatible with Apple Silicon).
 -   **Video editor (optional)**: DaVinci Resolve 20 Free or DaVinci Resolve 20 Studio for timeline audio extraction and `Text+` or `ST` subtitle push.
 -   **Python runtime**: Python 3.10 or later.
 -   **Package manager**: Homebrew installed at `/usr/local/bin/brew` (Intel Macs) or `/opt/homebrew/bin/brew` (Apple Silicon Macs).
--   **Free disk space**: Roughly 1.5 GB for the `whisper-cpp` binary, `ffmpeg`, and the `ggml-large-v3-turbo-q8_0.bin` Spanish model file (or 1.8 GB for `ggml-large-v3-q5_0.bin`).
+-   **Free disk space**: Roughly 1.5 GB for the `whisper-cpp` binary, `ffmpeg` / `ffmpeg-full`, and the `ggml-large-v3-turbo-q8_0.bin` Spanish model file (or 1.8 GB for `ggml-large-v3-q5_0.bin`).
 
-## Install AutoSubs ES on macOS
+## Install MTTN AutoSubs Tool on macOS
 
-The `install_imac.sh` script installs the `whisper-cpp` and `ffmpeg` packages through Homebrew, creates the standalone `~/Applications/AutoSubs ES.app` application bundle, copies the three DaVinci Resolve Lua bridge scripts, installs five Retina 4K Fusion `Text+` templates, and downloads the recommended Spanish Whisper model.
+The `install_imac.sh` script installs the `whisper-cpp`, `ffmpeg`, and `ffmpeg-full` packages through Homebrew (`ffmpeg-full` includes `libass` for MP4 subtitle burn-ins), creates the standalone `~/Applications/MTTN AutoSubs Tool.app` application bundle, copies the three DaVinci Resolve Lua bridge scripts, installs five Retina 4K Fusion `Text+` templates, and downloads the recommended Spanish Whisper model.
 
-1.  Extract the `AutoSubs_ES.zip` archive into a permanent folder on your Mac.
+1.  Extract the `MTTN_AutoSubs_Tool.zip` archive (or clone the repository) into a permanent folder on your Mac.
 
 2.  Open **Terminal** and change to the extracted directory:
 
@@ -30,7 +28,7 @@ The `install_imac.sh` script installs the `whisper-cpp` and `ffmpeg` packages th
 
     Replace the following:
 
-    -   `AUTOSUBS_DIR`: the directory path that contains the extracted AutoSubs ES files.
+    -   `AUTOSUBS_DIR`: the directory path that contains the extracted `AutoSubs_ES/` (or cloned `mttn-autosubs-tool/`) files.
 
 3.  Run the macOS installer script:
 
@@ -38,7 +36,7 @@ The `install_imac.sh` script installs the `whisper-cpp` and `ffmpeg` packages th
     ./install_imac.sh
     ```
 
-    Optional: Pass `--model=large-v3-q5` for maximum 32-layer Spanish accuracy, or pass `--skip-model` to download a different quantization later from the browser interface:
+    Optional: Pass `--model=large-v3-q5` for maximum 32-layer Spanish accuracy, or pass `--skip-model` to download a different quantization later from the interface:
 
     ```bash
     ./install_imac.sh --model=large-v3-q5
@@ -50,19 +48,19 @@ The installer places runtime assets, the standalone app bundle, and Resolve exte
 
 | Asset group | macOS destination path | Purpose |
 | :--- | :--- | :--- |
-| Standalone macOS app | `~/Applications/AutoSubs ES.app` | Launches AutoSubs ES in a dedicated chromeless Chrome or Edge window (`--app-window`) or browser tab without opening Terminal manually. |
-| Whisper models and cache | `~/Library/Application Support/AutoSubsES/` | Stores `.bin` GGML models, temporary 16 kHz mono WAV audio, burned-in MP4 renders, and the `bridge/inbox` and `bridge/outbox` directories. |
-| Resolve Lua scripts | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility/` | Registers the three **AutoSubs ES** actions under **Workspace** &gt; **Scripts**. |
-| Fusion `Text+` presets | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Templates/Edit/Titles/AutoSubs ES/` | Adds five `UseFrameFormatSettings = 1` title templates for Retina 4K, vertical, and animated flipbook timelines. |
+| Standalone macOS app | `~/Applications/MTTN AutoSubs Tool.app` | Launches MTTN AutoSubs Tool in its own native macOS `pywebview` window (or falls back to Chrome, Brave, or Safari at `http://127.0.0.1:55120`). |
+| Whisper models and cache | `~/Library/Application Support/AutoSubsES/` | Stores `.bin` GGML models, per-Mac settings, temporary 16 kHz mono WAV audio, burned-in MP4 renders, and the `bridge/inbox` and `bridge/outbox` directories. |
+| Resolve Lua scripts | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility/` | Registers the three **MTTN AutoSubs** actions under **Workspace** &gt; **Scripts**. |
+| Fusion `Text+` presets | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Templates/Edit/Titles/MTTN AutoSubs/` | Adds five `UseFrameFormatSettings = 1` title templates for Retina 4K, vertical, and animated flipbook timelines. |
 
 ![MTTN AutoSubs three-column workspace in DaVinci Resolve 20 mode showing Whisper model controls, karaoke monitor, and cue editor](images/autosubs-es-overview.png)
 
 ## Start the local studio or run the headless CLI
 
-Launch AutoSubs ES from Applications, Finder, or Terminal before starting your editing session:
+Launch MTTN AutoSubs Tool from Applications, Finder, or Terminal before starting your editing session:
 
--   In **Spotlight** or **Finder**, open `~/Applications/AutoSubs ES.app` or double-click `Iniciar AutoSubs ES.command`. Both launch Chrome or Edge in a chromeless standalone window when installed, or fall back to your default browser at `http://127.0.0.1:55120`.
--   In **Terminal**, change to your AutoSubs ES folder and start the Python server with `--app-window`:
+-   In **Spotlight** or **Finder**, open `~/Applications/MTTN AutoSubs Tool.app` or double-click `Iniciar AutoSubs ES.command`. Both launch a dedicated native macOS window when `pywebview` is installed (with a Dock icon and native "Save as…" dialogs), or fall back to Chrome, Brave, or Safari at `http://127.0.0.1:55120`.
+-   In **Terminal**, change to your project folder and start the Python server with `--desktop` (native window) or `--app-window` (chromeless browser window):
 
     ```bash
     python3 -B autosubs_server.py --app-window
@@ -100,16 +98,16 @@ To test the waveform scrubber, karaoke monitor, RAE line-wrapping rules, board-g
 
 ## Choose App Independiente or DaVinci Resolve 20 mode
 
-Use the switcher next to the **AutoSubs ES** title in the top bar:
+Use the switcher next to the **MTTN AutoSubs Tool** title in the top bar:
 
--   **App Independiente**: Highlights local media drag-and-drop with in-page HTML5 `<video>` and `<audio>` playback, uses all four Core i5 threads automatically when Resolve is closed, and makes **Render MP4** the primary action in **6. Exportar**, folds **5. DaVinci Resolve 20** to its title, (including plain-text transcripts and CPU `libx264` burned-in `.mp4` renders).
--   **DaVinci Resolve 20**: Shows the Resolve audio bounce controls first, keeps `3` threads reserved when Resolve is open, and brings **5. DaVinci Resolve 20** into focus for direct timeline insertion.
+-   **App Independiente**: Highlights local media drag-and-drop with in-page HTML5 `<video>` and `<audio>` playback, uses full hardware threads automatically when Resolve is closed, folds **5. DaVinci Resolve 20** to its title, and makes **Render MP4** a primary action in **6. Exportar** alongside plain-text transcripts and subtitle files.
+-   **DaVinci Resolve 20**: Shows the Resolve audio bounce controls first, keeps CPU cores reserved when Resolve is open, and brings **5. DaVinci Resolve 20** into focus for direct timeline insertion.
 
 <img src="images/autosubs-es-mode-switch.png" width="500" alt="Top bar with the App Independiente and DaVinci Resolve 20 mode switcher">
 
 ## Export timeline audio or load local media
 
-You can feed audio into AutoSubs ES directly from a local media file or from an active DaVinci Resolve 20 timeline.
+You can feed audio into MTTN AutoSubs Tool directly from a local media file or from an active DaVinci Resolve 20 timeline.
 
 ### Upload a local media file
 
@@ -123,9 +121,9 @@ Video files render directly in **Monitor previo** with frame-accurate synchroniz
 ### Export audio in DaVinci Resolve 20 Free or Studio
 
 1.  Open your project and target timeline in DaVinci Resolve 20.
-2.  In the Resolve menu bar, click **Workspace** > **Scripts** > **1 - AutoSubs ES - Exportar Audio**.
+2.  In the Resolve menu bar, click **Workspace** > **Scripts** > **1 - MTTN AutoSubs - Exportar Audio**.
 3.  Wait until the DaVinci Resolve **Console** prints that the `timeline_audio.wav` bounce finished.
-4.  Return to AutoSubs ES and click **Leer buzón** if **Monitor previo** does not refresh automatically.
+4.  Return to MTTN AutoSubs Tool and click **Leer buzón** if **Monitor previo** does not refresh automatically.
 
 <img src="images/autosubs-es-step1-resolve.png" width="348" alt="Step 1. Audio de origen on the Timeline de Resolve tab with the Exportar audio (Studio) and Leer buzón buttons">
 
@@ -204,15 +202,15 @@ Decorative display fonts often cover Basic Latin characters only and omit Spanis
 
     <img src="images/autosubs-es-anitype-monitor.png" width="782" alt="Monitor previo with Adaptar glifos ASCII on: the cue reads «resenamos» while the waveform keeps «reseñamos»">
 
-### Standalone track plugin compared with AutoSubs ES
+### Standalone track plugin compared with MTTN AutoSubs Tool
 
 Native DaVinci Resolve subtitle tracks (`ST`) support static track styling only and reject Fusion effects, OpenFX plugins, and frame expressions. Putting an Adjustment Clip on a higher video track also fails to target `ST` because subtitle tracks render above every video track, and any GPU blur or displacement filter added over 4K footage duplicates VRAM consumption on a 2 GB Radeon Polaris GPU.
 
-Running flipbook animation directly inside AutoSubs ES avoids both limits: **Clips Text+ GPU-Light** writes all five font names, hold-frame cadence, and boil settings directly into `AutoSubs_ES_Anitype_Animado`, while **FCPXML 1.9** slices Basic Titles across frame holds automatically. You can also drag `AutoSubs_ES_Anitype_Animado` from **Effects** > **Titles** > **AutoSubs ES** onto any Resolve video track manually for standalone animated titles.
+Running flipbook animation directly inside MTTN AutoSubs Tool avoids both limits: **Clips Text+ GPU-Light** writes all five font names, hold-frame cadence, and boil settings directly into `AutoSubs_ES_Anitype_Animado`, while **FCPXML 1.9** slices Basic Titles across frame holds automatically. You can also drag `AutoSubs_ES_Anitype_Animado` from **Effects** > **Titles** > **MTTN AutoSubs** onto any Resolve video track manually for standalone animated titles.
 
 ## Insert subtitles into DaVinci Resolve 20
 
-Select an insertion method in **5. DaVinci Resolve 20** that matches your editing workflow and 2 GB VRAM budget.
+Select an insertion method in **5. DaVinci Resolve 20** that matches your editing workflow and GPU VRAM budget.
 
 <img src="images/autosubs-es-step5-resolve.png" width="338" alt="Step 5. DaVinci Resolve 20 with Método en timeline, Nombre de pista, and Enviar a DaVinci Resolve 20">
 
@@ -222,10 +220,10 @@ Select an insertion method in **5. DaVinci Resolve 20** that matches your editin
 | `Clips Text+ GPU-Light (1 nodo)` | Video track (`V`) with `TextPlus` Fusion clips | Low (single active shader branch per frame at native timeline resolution) | Branded custom typography, five-font flipbook animation (`AutoSubs_ES_Anitype_Animado`), colored pill backgrounds, and Retina 4K or Reels graphics. |
 | `FCPXML 1.9 Universal` | Imported FCPXML 1.9 timeline with Basic Titles | Low | Fallback compatibility across Resolve versions or sliced multi-font flipbook animation without Media Pool templates. |
 
-1.  If you plan to use **Clips Text+ GPU-Light (1 nodo)**, open DaVinci Resolve 20 once, browse to **Effects** > **Titles** > **AutoSubs ES**, and drag the matching template (`AutoSubs_ES_Cine_Netflix`, `AutoSubs_ES_Amarillo_Clasico`, `AutoSubs_ES_Reels_Impacto`, `AutoSubs_ES_Caja_Editorial`, or `AutoSubs_ES_Anitype_Animado`) into your **Media Pool** or **Power Bins**.
-2.  In AutoSubs ES under **5. DaVinci Resolve 20**, choose **Método en timeline**, enter **Nombre de pista**, select **Plantilla Fusion (Media Pool)**, and click **Enviar a DaVinci Resolve 20**.
-3.  On DaVinci Resolve 20 Studio, AutoSubs ES inserts the subtitles directly into your active timeline. On DaVinci Resolve 20 Free, return to Resolve and click **Workspace** > **Scripts** > **2 - AutoSubs ES - Insertar Subtitulos**.
-4.  To jump the DaVinci Resolve playhead to a specific subtitle cue, click the Resolve jump action on a cue in the web editor, then run **Workspace** > **Scripts** > **3 - AutoSubs ES - Ir a Tiempo** inside Resolve Free (Resolve Studio jumps directly).
+1.  If you plan to use **Clips Text+ GPU-Light (1 nodo)**, open DaVinci Resolve 20 once, browse to **Effects** > **Titles** > **MTTN AutoSubs**, and drag the matching template (`AutoSubs_ES_Cine_Netflix`, `AutoSubs_ES_Amarillo_Clasico`, `AutoSubs_ES_Reels_Impacto`, `AutoSubs_ES_Caja_Editorial`, or `AutoSubs_ES_Anitype_Animado`) into your **Media Pool** or **Power Bins**.
+2.  In MTTN AutoSubs Tool under **5. DaVinci Resolve 20**, choose **Método en timeline**, enter **Nombre de pista**, select **Plantilla Fusion (Media Pool)**, and click **Enviar a DaVinci Resolve 20**.
+3.  On DaVinci Resolve 20 Studio, MTTN AutoSubs Tool inserts the subtitles directly into your active timeline. On DaVinci Resolve 20 Free, return to Resolve and click **Workspace** > **Scripts** > **2 - MTTN AutoSubs - Insertar Subtitulos**.
+4.  To jump the DaVinci Resolve playhead to a specific subtitle cue, click the Resolve jump action on a cue in the editor, then run **Workspace** > **Scripts** > **3 - MTTN AutoSubs - Ir a Tiempo** inside Resolve Free (Resolve Studio jumps directly).
 
 ## Export standalone files and burned-in video
 
@@ -238,11 +236,11 @@ Use **6. Exportar** to download subtitle files, clean Spanish transcripts, or an
 | `.SRT Estándar` | SubRip starting at `00:00:00,000` | Universal format for YouTube, social platforms, and external players. |
 | `.SRT (01:00 TC)` | SubRip shifted by timeline `start_frame` | Aligns with DaVinci Resolve's default `01:00:00:00` timeline start timecode for manual import. |
 | `.VTT Web` | WebVTT (`WEBVTT`) | HTML5 video and web player captions. |
-| `.ASS Karaoke` | Advanced SubStation Alpha v4.00+ | Encodes word-by-word `\kf` centisecond karaoke fill animations matching your UI style. |
+| `.ASS Estilizado` | Advanced SubStation Alpha v4.00+ | Encodes styled subtitles and optional word-by-word `\kf` karaoke fill animations matching your UI style. |
 | `.TXT Guion` | Plain UTF-8 text | Exports paragraph-formatted Spanish dialogue without timestamps for blog posts or show notes. |
 | `.TXT + Tiempos` | Timestamped UTF-8 text | Exports `[MM:SS] Texto` lines for rapid script review and timecode logging. |
 | `Copiar guion` | System clipboard text | Copies the clean Spanish transcript directly to your macOS clipboard. |
-| `Render MP4` | H.264 MP4 (`libx264`) | Burns styled `.ass` subtitles directly onto an uploaded `.mp4`, `.mov`, or `.mkv` video using CPU threads and zero Polaris GPU VRAM. |
+| `Render MP4` | H.264 MP4 (`libx264` or `h264_videotoolbox`) | Burns styled `.ass` subtitles onto an uploaded `.mp4`, `.mov`, or `.mkv` video using CPU `libx264` (zero Polaris VRAM) on Intel Macs or `h264_videotoolbox` on Apple Silicon (requires `ffmpeg-full`). |
 | `.FCPXML 1.9` | Final Cut Pro XML 1.9 | Imports Basic Title clips at exact frame-accurate rational frame rates (`23.976`, `24`, `25`, `29.97`, `30`, `50`, `59.94`, `60` fps). |
 | `.JSON Palabras` | Structured cue and word array | Preserves per-word `start_ms`, `end_ms`, confidence, CPS, and warnings for custom pipelines. |
 

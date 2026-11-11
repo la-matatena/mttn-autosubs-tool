@@ -1,12 +1,10 @@
-<!-- go/g3mark-in-g3doc -->
-
 # Architecture and 2017 Retina 4K iMac hardware tuning
 
-This architecture reference helps developers and technical video editors understand how AutoSubs ES schedules CPU, RAM, GPU VRAM, and DaVinci Resolve 20 IPC across Intel macOS workstations and DaVinci Resolve Free or Studio.
+This architecture reference helps developers and technical video editors understand how MTTN AutoSubs Tool schedules CPU, RAM, GPU VRAM, and DaVinci Resolve 20 IPC across Intel and Apple Silicon macOS workstations and DaVinci Resolve Free or Studio.
 
 ## System architecture
 
-AutoSubs ES runs as a zero-dependency Python standard library HTTP server (`autosubs_server.py`) that coordinates `ffmpeg` audio normalization, `whisper-cli` (`whisper-cpp`) CPU transcription, Spanish RAE formatting (`spanish_nlp.py`), subtitle serialization (`exporters.py`), and a non-blocking DaVinci Resolve 20 bridge (`resolve_bridge.py`).
+MTTN AutoSubs Tool runs as a zero-dependency Python standard library HTTP server (`autosubs_server.py`) that coordinates `ffmpeg` audio normalization, `whisper-cli` (`whisper-cpp`) transcription, Spanish RAE formatting (`spanish_nlp.py`), subtitle serialization (`exporters.py`), and a non-blocking DaVinci Resolve 20 bridge (`resolve_bridge.py`).
 
 ```mermaid
 flowchart TD
@@ -44,7 +42,7 @@ Each Python module owns a focused stage of the pipeline with no external pip dep
 | `exporters.py` | Serializes cues to SubRip `.srt`, NDF timeline `.srt_tc` (`export_srt_timeline_tc`), WebVTT `.vtt`, `.ass` word-level `\kf` karaoke, FCPXML 1.9 Basic Titles (including multi-font flipbook frame slicing), clean or timestamped `.txt` transcripts (`export_txt`), and sandbox-safe Lua payloads (`push_payload.lua` and `push_payload.table`), with non-destructive Spanish ASCII folding (`fold_spanish_to_ascii`). |
 | `font_manager.py` | Parses OpenType and TrueType `name` and `cmap` tables using Python standard library modules, audits Spanish glyph coverage (`áéíóúüñÁÉÍÓÚÜÑ¿¡`), groups numbered flipbook variants into packs, syncs uploaded `.otf`/`.ttf`/`.ttc`/`.zip` files to `~/Library/Fonts`, and serves browser `@font-face` binaries. |
 | `autosubs_server.py` | Serves static UI assets and uploaded fonts, enforces `Host`/`Origin` localhost CSRF guards, streams `/api/media` and `/api/exported-video` with chunked HTTP `206` byte-range support, receives raw binary media and font uploads, runs chromeless `--app-window` UI or headless `--cli` batch transcription, tracks background jobs (including `/api/export-video` CPU MP4 burn-in), and exposes REST endpoints. |
-| `package_bundle.py` | Assembles a deterministic, permission-preserving `AutoSubs_ES.zip` distribution archive with built-in structural validation. |
+| `package_bundle.py` | Assembles a deterministic, permission-preserving `MTTN_AutoSubs_Tool.zip` distribution archive with built-in structural validation. |
 
 ## Design decisions and hardware trade-offs
 

@@ -1,8 +1,6 @@
-<!-- go/g3mark-in-g3doc -->
+# Design document: MTTN AutoSubs Tool standalone studio and DaVinci Resolve 20 companion
 
-# Design document: AutoSubs ES standalone studio and DaVinci Resolve 20 companion
-
-This design document specifies the architecture, hardware resource controls, linguistic pipeline, animation engine, and security boundaries of AutoSubs ES for engineers and technical video editors who maintain or extend the tool. It explains how the codebase delivers local Spanish AI subtitling, board-game terminology repair, and animated flipbook typography both as a standalone macOS application and as a DaVinci Resolve 20 companion on constrained Intel desktop hardware.
+This design document specifies the architecture, hardware resource controls, linguistic pipeline, animation engine, and security boundaries of MTTN AutoSubs Tool for engineers and technical video editors who maintain or extend the tool. It explains how the codebase delivers local Spanish AI subtitling, board-game terminology repair, and animated flipbook typography both as a standalone macOS application and as a DaVinci Resolve 20 companion on Intel and Apple Silicon hardware.
 
 ## Context and problem statement
 
@@ -25,13 +23,13 @@ Creators editing long-form Spanish video—especially board-game reviews and ins
 
 ### Non-goals
 
--   **Multi-user network hosting or cloud SaaS deployment**: AutoSubs ES binds strictly to `127.0.0.1` for a single local creator and excludes multi-tenant authentication or external storage backends.
--   **Native C++ OpenFX subtitle rendering across `ST` tracks**: DaVinci Resolve prohibits OpenFX and Fusion modifiers on `ST` tracks, so subtitle rendering targets native `ST` captions, Fusion `Text+` clips, `FCPXML 1.9` Basic Titles, or standalone `libx264` MP4 outputs.
--   **Cross-platform Windows or Linux GUI packaging**: While the Python server runs on Linux during Blaze tests, macOS `~/Applications/AutoSubs ES.app`, `~/Library/Fonts`, and Resolve Fusion installers target `darwin`.
+-   **Multi-user network hosting or cloud SaaS deployment**: MTTN AutoSubs Tool binds strictly to `127.0.0.1` for a single local creator and excludes multi-tenant authentication or external storage backends.
+-   **Native C++ OpenFX subtitle rendering across `ST` tracks**: DaVinci Resolve prohibits OpenFX and Fusion modifiers on `ST` tracks, so subtitle rendering targets native `ST` captions, Fusion `Text+` clips, `FCPXML 1.9` Basic Titles, or standalone MP4 outputs.
+-   **Cross-platform Windows or Linux GUI packaging**: While the Python server and test suite run on Linux in CI, macOS `~/Applications/MTTN AutoSubs Tool.app`, `~/Library/Fonts`, and Resolve Fusion installers target `darwin`.
 
 ## System architecture and repository layout
 
-AutoSubs ES isolates transcription, hardware budgeting, Spanish linguistic normalization, subtitle serialization, font parsing, and DaVinci Resolve IPC into single-purpose Python modules orchestrated by the `autosubs_server.py` module.
+MTTN AutoSubs Tool isolates transcription, hardware budgeting, Spanish linguistic normalization, subtitle serialization, font parsing, and DaVinci Resolve IPC into single-purpose Python modules orchestrated by the `autosubs_server.py` module.
 
 ```mermaid
 flowchart TD
@@ -71,12 +69,12 @@ All source, documentation, test, build, and macOS distribution assets live in on
 | `exporters.py` | Serialization engine | Uniform `render_export` router for `.srt`, `.srt_tc`, `.vtt`, `.ass`, `.txt`, `.txt_tc`, `.fcpxml`, and `.json`, plus `ms_to_timeline_tc_ms` NDF timecode conversion and Lua payload writers. |
 | `resolve_bridge.py` | Resolve IPC and audio prep | `16 kHz` WAV extraction, chunked waveform peaks, Studio Python scripting integration, and file-mailbox sync with `Fusion.prefs` fallback. |
 | `font_manager.py` | Typography and glyph checks | Binary OpenType/TrueType `name` and `cmap` (`0`, `4`, `6`, `12`) parser, Spanish accent checks, flipbook variant grouping, and ZIP-slip-safe font installation. |
-| `package_bundle.py` | Distribution packager | Builds and verifies deterministic `AutoSubs_ES.zip` archives with POSIX execute bits and zero `__pycache__` residue. |
+| `package_bundle.py` | Distribution packager | Builds and verifies deterministic `MTTN_AutoSubs_Tool.zip` archives with POSIX execute bits and zero `__pycache__` residue. |
 | `autosubs_es_test.py` | Automated test suite | Offline unit and HTTP integration tests using synthetic `whisper-cli`/`ffmpeg` stubs and real TCP loopback servers. |
 | `ui/` | Studio web frontend | `index.html`, `styles.css`, and vanilla ES2022 `app.js` providing live karaoke preview, waveform scrubbing, inline cue editing, and font pack controls. |
-| `lua/` | Resolve Utility scripts | `1_AutoSubs_ES_Exportar_Audio.lua`, `2_AutoSubs_ES_Insertar_Subtitulos.lua`, and `3_AutoSubs_ES_Ir_A_Tiempo.lua` for Resolve 20 Free and Studio. |
-| `templates/` | Fusion `Text+` macros | Five Retina 4K templates (`Cine_Netflix`, `Amarillo_Clasico`, `Reels_Impacto`, `Caja_Editorial`, and `Anitype_Animado`). |
-| `install_imac.sh`, `Iniciar AutoSubs ES.command` | macOS installation and launch | Homebrew bootstrap, `AutoSubs ES.app` generator, Resolve asset installer, and Finder launcher. |
+| `lua/` | Resolve Utility scripts | `1_AutoSubs_ES_Exportar_Audio.lua`, `2_AutoSubs_ES_Insertar_Subtitulos.lua`, and `3_AutoSubs_ES_Ir_A_Tiempo.lua` (installed as `1 - MTTN AutoSubs - ...`) for Resolve 20 Free and Studio. |
+| `templates/` | Fusion `Text+` macros | Five Retina 4K templates (`Cine_Netflix`, `Amarillo_Clasico`, `Reels_Impacto`, `Caja_Editorial`, and `Anitype_Animado`) installed under `Effects > Titles > MTTN AutoSubs`. |
+| `install_imac.sh`, `Iniciar AutoSubs ES.command` | macOS installation and launch | Homebrew bootstrap, `MTTN AutoSubs Tool.app` generator, Resolve asset installer, and Finder launcher. |
 | `BUILD`, `pyproject.toml`, `.gitignore` | Build and repo metadata | Blaze Python build/test/bundle rules, PEP 621 zero-dependency manifest, and clean local VCS exclusions. |
 | `README.md`, `docs/` | Documentation suite | Gateway overview, three UI screenshots, `design-doc.md`, `user-guide.md`, `imac-2017-architecture.md`, `spanish-subtitling-reference.md`, and `troubleshooting.md`. |
 
@@ -147,7 +145,7 @@ Two intentional engineering shortcuts keep operational complexity minimal and ca
 
 ## Verification strategy
 
-Automated offline verification runs under Blaze (`blaze-for-agents test //experimental/users/joseluiszapata/autosubs_es:autosubs_es_test`) and standalone `python3 -B autosubs_es_test.py -v` without external `whisper-cli`, `ffmpeg`, or Resolve binaries:
+Automated offline verification runs via `python3 -B autosubs_es_test.py -v` in local checkouts and GitHub Actions CI without external `whisper-cli`, `ffmpeg`, or Resolve binaries:
 
 | Test suite | Verified behavior |
 | :--- | :--- |
