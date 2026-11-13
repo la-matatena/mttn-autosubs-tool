@@ -1815,9 +1815,15 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     parsed = urllib.parse.urlparse(self.path)
     path = parsed.path
 
-    # GET / | /index.html | /styles.css | /app.js -> static Studio UI files.
-    # Fixed allowlist: no other file under ui/ is reachable.
-    if path in ("/", "/index.html", "/styles.css", "/app.js"):
+    # GET / | /index.html | /styles.css | /app_helpers.js | /app.js -> static
+    # Studio UI files. Fixed allowlist: no other file under ui/ is reachable.
+    if path in (
+        "/",
+        "/index.html",
+        "/styles.css",
+        "/app_helpers.js",
+        "/app.js",
+    ):
       self._serve_static(path)
       return
 
