@@ -87,7 +87,22 @@ if [[ "${SKIP_MODEL}" == "false" ]]; then
     echo "✓ Modelo español recomendado ya instalado: ${TARGET_MODEL}"
   else
     echo "Descargando modelo español recomendado (${MODEL_FILE}, ${MODEL_SIZE})..."
-    curl -fL -C - "${MODEL_URL}" -o "${TARGET_MODEL}.part"
+    CURL_RC=0
+    curl -fL -C - "${MODEL_URL}" -o "${TARGET_MODEL}.part" || CURL_RC=$?
+    if [[ "${CURL_RC}" -ne 0 ]]; then
+      if [[ -f "${TARGET_MODEL}.part" && ( "${CURL_RC}" -eq 22 || "${CURL_RC}" -eq 33 ) ]]; then
+        REMOTE_SIZE="$(curl -fsIL "${MODEL_URL}" | awk 'tolower($1)=="content-length:"{len=$2} END{gsub(/\r/,"",len); print len+0}')"
+        LOCAL_SIZE="$(stat -f%z "${TARGET_MODEL}.part" 2>/dev/null || echo 0)"
+        if [[ "${REMOTE_SIZE}" -gt 0 && "${LOCAL_SIZE}" -eq "${REMOTE_SIZE}" ]]; then
+          echo "✓ Descarga parcial ya completa (${LOCAL_SIZE} bytes)."
+        else
+          rm -f "${TARGET_MODEL}.part"
+          curl -fL "${MODEL_URL}" -o "${TARGET_MODEL}.part"
+        fi
+      else
+        exit "${CURL_RC}"
+      fi
+    fi
     mv "${TARGET_MODEL}.part" "${TARGET_MODEL}"
     echo "✓ Modelo descargado correctamente."
   fi

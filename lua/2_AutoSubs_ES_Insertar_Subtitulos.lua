@@ -29,7 +29,7 @@ local function getHomeDir()
       if home then return home end
     end
   end
-  return "~"
+  return ""
 end
 
 local function loadLuaModule(path)
@@ -60,6 +60,10 @@ local function loadLuaModule(path)
 end
 
 local homeDir = getHomeDir()
+if homeDir == "" then
+  print("[AutoSubs ES] Error: No se pudo determinar el directorio HOME del usuario.")
+  return
+end
 local payloadPath = homeDir .. "/Library/Application Support/AutoSubsES/bridge/outbox/push_payload.lua"
 
 local payload, loadErr = loadLuaModule(payloadPath)

@@ -111,7 +111,7 @@ def align_words_to_lines(
   speaker = src[0].speaker if src else "Hablante 1"
 
   if src:
-    lo = src[0].start_ms
+    lo = min(w.start_ms for w in src)
     hi = max(w.end_ms for w in src)
     if lo < start_ms or hi > end_ms:
       scale = (end_ms - start_ms) / max(1, hi - lo)
@@ -127,10 +127,15 @@ def align_words_to_lines(
       ]
 
   if len(src) == len(tokens):
-    return [
+    result = [
         WordTiming(tok, w.start_ms, w.end_ms, w.prob, w.speaker)
         for tok, w in zip(tokens, src)
     ]
+    for i, w in enumerate(result):
+      floor_ms = result[i - 1].end_ms if i > 0 else start_ms
+      w.start_ms = max(floor_ms, min(w.start_ms, end_ms))
+      w.end_ms = max(w.start_ms, min(w.end_ms, end_ms))
+    return result
 
   out: list[WordTiming | None] = [None] * len(tokens)
   matcher = difflib.SequenceMatcher(
@@ -161,16 +166,21 @@ def align_words_to_lines(
     hi = right.start_ms if right else end_ms
     need = 60 * (k - j)
     if hi - lo < need:
-      # Borrow half of each neighbour so inserted words stay visible.
+      # Borrow half of each neighbour so inserted words stay visible,
+      # without ever expanding short neighbours or overlapping right.
       if left:
-        left.end_ms = max(left.start_ms + 20, (left.start_ms + left.end_ms) // 2)
+        left.end_ms = max(
+            left.start_ms,
+            min(left.end_ms, max(left.start_ms + 20, (left.start_ms + left.end_ms) // 2)),
+        )
         lo = left.end_ms
       if right:
         right.start_ms = min(
-            right.end_ms - 20, (right.start_ms + right.end_ms) // 2
+            right.end_ms,
+            max(right.start_ms, min(right.end_ms - 20, (right.start_ms + right.end_ms) // 2)),
         )
         hi = right.start_ms
-      hi = max(hi, lo + need)
+      hi = max(lo, hi)
     weights = [len(t) + 1 for t in tokens[j:k]]
     total = float(sum(weights))
     cursor = float(lo)
@@ -181,8 +191,9 @@ def align_words_to_lines(
     j = k
 
   result = [w for w in out if w is not None]
-  for w in result:
-    w.start_ms = max(start_ms, min(w.start_ms, end_ms))
+  for i, w in enumerate(result):
+    floor_ms = result[i - 1].end_ms if i > 0 else start_ms
+    w.start_ms = max(floor_ms, min(w.start_ms, end_ms))
     w.end_ms = max(w.start_ms, min(w.end_ms, end_ms))
   return result
 
@@ -920,9 +931,14 @@ def parse_whisper_ojf(ojf_data: dict[str, Any]) -> list[WordTiming]:
   return words
 
 
+_EDGE_PUNCT_RE = re.compile(
+    r"^([¿¡\"'«“‘(\[—–-]*)(.*?)([.,;:?!…\"'»”’)\]—–]*)$"
+)
+
+
 def _strip_edge_punct(token: str) -> tuple[str, str, str]:
   """Splits a token into (leading_punct, core_word, trailing_punct)."""
-  m = re.match(r"^([¿¡\"'«“‘(\[—–-]*)(.*?)([.,;:?!…\"'»”’)\]—–]*)$", token)
+  m = _EDGE_PUNCT_RE.match(token)
   if not m:
     return "", token, ""
   return m.group(1), m.group(2), m.group(3)
@@ -934,50 +950,58 @@ def _apply_phrase_map(
     preserve_sentence_cap: bool = False,
 ) -> list[WordTiming]:
   """Applies 1..N word case-insensitive phrase replacements on WordTimings."""
-  parsed_terms: list[tuple[list[str], str]] = []
+  if not words or not phrase_map:
+    return words
+
+  parsed_terms: list[tuple[list[str], list[str]]] = []
   for raw_key, raw_canon in phrase_map.items():
     key_parts = [p for p in raw_key.strip().split() if p]
     canon_parts = [p for p in raw_canon.strip().split() if p]
     if key_parts and canon_parts:
-      parsed_terms.append(
-          ([p.lower() for p in key_parts], " ".join(canon_parts))
-      )
+      parsed_terms.append(([p.lower() for p in key_parts], canon_parts))
   # Longest phrases first so multi-word names match before single words.
   parsed_terms.sort(key=lambda item: len(item[0]), reverse=True)
   if not parsed_terms:
     return words
 
+  by_first: dict[str, list[tuple[list[str], list[str]]]] = {}
+  for norm_parts, canon_parts in parsed_terms:
+    by_first.setdefault(norm_parts[0], []).append((norm_parts, canon_parts))
+
+  stripped: list[tuple[str, str, str, str]] = []
+  for w in words:
+    lead, core, trail = _strip_edge_punct(w.text)
+    stripped.append((lead, core, core.lower(), trail))
+
   out: list[WordTiming] = []
   i = 0
   n = len(words)
   while i < n:
+    lead0, first_core, first_lower, trail0 = stripped[i]
+    candidates = by_first.get(first_lower)
     matched = False
-    for norm_parts, canonical in parsed_terms:
-      k = len(norm_parts)
-      if i + k > n:
-        continue
-      window = words[i : i + k]
-      cores = []
-      lead0 = ""
-      trail_last = ""
-      first_core = ""
-      ok = True
-      for j, w in enumerate(window):
-        lead, core, trail = _strip_edge_punct(w.text)
-        if j == 0:
-          lead0 = lead
-          first_core = core
-        elif lead:
-          ok = False
-          break
-        if j == k - 1:
-          trail_last = trail
-        elif trail:
-          ok = False
-          break
-        cores.append(core.lower())
-      if ok and cores == norm_parts:
-        canon_parts = canonical.split()
+    if candidates:
+      for norm_parts, base_canon_parts in candidates:
+        k = len(norm_parts)
+        if i + k > n:
+          continue
+        if k > 1 and trail0:
+          continue
+        ok = True
+        for j in range(1, k):
+          lead_j, _, lower_j, trail_j = stripped[i + j]
+          if lead_j or lower_j != norm_parts[j]:
+            ok = False
+            break
+          if j < k - 1 and trail_j:
+            ok = False
+            break
+        if not ok:
+          continue
+
+        trail_last = stripped[i + k - 1][3]
+        window = words[i : i + k]
+        canon_parts = list(base_canon_parts)
         if (
             preserve_sentence_cap
             and first_core[:1].isupper()
@@ -1329,7 +1353,7 @@ def segment_and_wrap_spanish(
       if 0 < gap <= cfg.gap_bridge_ms:
         cue.end_ms = next_start
       elif cue.end_ms > next_start:
-        cue.end_ms = max(cue.start_ms + 40, next_start)
+        cue.end_ms = max(cue.start_ms, next_start)
 
     refresh_cue_metrics(cue, cfg)
 

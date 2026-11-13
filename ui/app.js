@@ -12,6 +12,7 @@
     activeCueIndex: -1,
     activeJobId: null,
     jobTimer: null,
+    jobHideTimer: null,
     saveTimer: null,
     aspect: "16:9",
     appMode: "resolve",
@@ -222,9 +223,21 @@
       headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
       ...opts,
     });
-    const data = await resp.json();
+    const raw = await resp.text();
+    let data = null;
+    if (raw) {
+      try {
+        data = JSON.parse(raw);
+      } catch (_) {
+        data = null;
+      }
+    }
     if (!resp.ok) {
-      throw new Error(data.error || `Error HTTP ${resp.status}`);
+      const msg = (data && data.error) || raw.trim().slice(0, 200) || `Error HTTP ${resp.status}`;
+      throw new Error(msg);
+    }
+    if (data === null) {
+      throw new Error(`Respuesta no válida del servidor (HTTP ${resp.status})`);
     }
     return data;
   }
@@ -272,8 +285,12 @@
       rTitle.textContent =
         state.appMode === "standalone" ? "5. DaVinci Resolve 20 (Opcional)" : "5. DaVinci Resolve 20";
     }
+    const cueList = $("cue-list");
+    if (cueList) {
+      cueList.classList.toggle("mode-resolve", state.appMode === "resolve");
+      cueList.classList.toggle("mode-standalone", state.appMode === "standalone");
+    }
     updateStyleTargetHint();
-    renderCueList();
   }
 
   function alphaOf(id) {
@@ -536,7 +553,29 @@
     el.classList.toggle("hidden", !msg);
   }
 
+  let cachedStyle = null;
+  let cachedStageH = 0;
+
+  function invalidateStyleCache() {
+    cachedStyle = null;
+  }
+
+  function invalidateStageSizeCache() {
+    cachedStageH = 0;
+  }
+
+  function getCachedStyle() {
+    if (!cachedStyle) cachedStyle = readStyleFromUI();
+    return cachedStyle;
+  }
+
+  function getCachedStageH() {
+    if (!cachedStageH) cachedStageH = $("preview-stage").clientHeight || 260;
+    return cachedStageH;
+  }
+
   function onStyleControlChanged() {
+    invalidateStyleCache();
     syncStyleControlStates();
     updateStyleReadouts();
     updatePresetStatus();
@@ -665,6 +704,7 @@
   }
 
   function syncFontSelection(autoConfigure = false, preferredStyle = "") {
+    invalidateStyleCache();
     const selVal = $("st-font").value;
     const pack = state.packByOptionValue[selVal] || null;
     state.selectedPack = pack;
@@ -780,6 +820,7 @@
   }
 
   function applyStylePreset(key) {
+    invalidateStyleCache();
     const p = getPreset(key);
     if (!p) return;
     const isCustom = key.startsWith("custom:");
@@ -926,6 +967,8 @@
 
     const previewMs = state.cues.length > 0 ? state.cues[0].start_ms + 120 : 0;
     state.activeCueIndex = state.cues.length > 0 ? 0 : -1;
+    invalidateStyleCache();
+    invalidateStageSizeCache();
     renderCueList();
     drawWaveform(previewMs);
     renderPreviewAtMs(previewMs);
@@ -1475,6 +1518,7 @@
         cue.start_ms = Math.max(0, Number(startIn.value || 0));
         cue.words = rescaleWords(cue.words, oldStart, cue.end_ms, cue.start_ms, cue.end_ms);
         updateCueRowTimes(idx);
+        invalidateWaveCache();
         drawWaveform(currentMs());
         scheduleSaveCues();
       });
@@ -1490,6 +1534,7 @@
         cue.end_ms = Math.max(cue.start_ms + 80, Number(endIn.value || cue.start_ms + 500));
         cue.words = rescaleWords(cue.words, cue.start_ms, oldEnd, cue.start_ms, cue.end_ms);
         updateCueRowTimes(idx);
+        invalidateWaveCache();
         drawWaveform(currentMs());
         scheduleSaveCues();
       });
@@ -1518,12 +1563,9 @@
       // Herramientas atenuadas hasta pasar el ratón o enfocar la fila (siguen en el orden de tabulación).
       const tools = document.createElement("span");
       tools.className = "cue-tools";
-      if (state.appMode === "resolve") {
-        const btnJump = makeMiniBtn("Resolve", "Mover cabezal en DaVinci Resolve", () => jumpResolve(cue.start_ms));
-        tools.append(btnPlayCue, btnJump, btnSplit, btnMerge, btnDel);
-      } else {
-        tools.append(btnPlayCue, btnSplit, btnMerge, btnDel);
-      }
+      const btnJump = makeMiniBtn("Resolve", "Mover cabezal en DaVinci Resolve", () => jumpResolve(cue.start_ms));
+      btnJump.classList.add("cue-btn-resolve");
+      tools.append(btnPlayCue, btnJump, btnSplit, btnMerge, btnDel);
       actions.appendChild(tools);
       head.append(times, actions);
 
@@ -1532,7 +1574,7 @@
       textarea.rows = Math.max(1, (cue.lines || []).length);
       textarea.value = cue.text || "";
       textarea.addEventListener("focus", () => {
-        state.activeCueIndex = idx;
+        setActiveCueIndex(idx);
         ensureMsVisible(cue.start_ms);
         drawWaveform(currentMs());
         renderPreviewAtMs(cue.start_ms + 10);
@@ -1541,6 +1583,7 @@
         cue.text = textarea.value;
         cue.lines = textarea.value.split("\n").map((s) => s.trim()).filter(Boolean);
         syncCueWordsAfterTextEdit(cue);
+        invalidateWaveCache();
         renderPreviewAtMs(cue.start_ms + 10);
         scheduleSaveCues();
       });
@@ -1602,6 +1645,7 @@
 
   async function saveCuesToServer() {
     clearTimeout(state.saveTimer);
+    state.editSeq += 1;
     const seq = state.editSeq;
     try {
       const data = await apiJson("/api/cues", {
@@ -1614,6 +1658,7 @@
         if (serverCues.length === state.cues.length) {
           // Actualiza en sitio: los textareas abiertos siguen apuntando a estos objetos.
           serverCues.forEach((c, i) => Object.assign(state.cues[i], c));
+          invalidateWaveCache();
         } else {
           state.cues = serverCues;
           renderCueList();
@@ -1676,9 +1721,8 @@
 
   function renderPreviewAtMs(ms) {
     const cap = $("preview-caption");
-    const st = readStyleFromUI();
+    const st = getCachedStyle();
     const pack = state.selectedPack;
-    const audio = $("audio-player");
 
     const active = state.cues.find((c) => ms >= c.start_ms && ms <= c.end_ms) ||
       (state.activeCueIndex >= 0 ? state.cues[state.activeCueIndex] : null);
@@ -1703,7 +1747,7 @@
 
     cap.style.fontFamily = resolvedFamily;
     cap.style.fontWeight = st.font_style.toLowerCase().includes("extra") ? "800" : st.font_style.toLowerCase().includes("bold") ? "700" : "500";
-    const stageH = $("preview-stage").clientHeight || 260;
+    const stageH = getCachedStageH();
     cap.style.fontSize = `${Math.max(12, Math.round(st.size * stageH * 1.15))}px`;
     cap.style.bottom = `${Math.round(st.pos_y * 100)}%`;
     cap.style.color = hexToRgba(st.fill_hex, st.fill_alpha);
@@ -1755,7 +1799,7 @@
       let wIdx = 0;
       (active.lines || [active.text]).forEach((line, lIdx) => {
         if (lIdx > 0) cap.appendChild(document.createElement("br"));
-        line.split(/\s+/).forEach((tok, tIdx) => {
+        line.trim().split(/\s+/).filter(Boolean).forEach((tok, tIdx) => {
           if (tIdx > 0) cap.appendChild(document.createTextNode(" "));
           const span = document.createElement("span");
           const wObj = active.words[wIdx];
@@ -1903,23 +1947,32 @@
     return `${m}:${secStr}`;
   }
 
-  function drawWaveform(playheadMs) {
-    const { canvas, w, h } = waveSize();
-    const dpr = window.devicePixelRatio || 1;
-    const pw = Math.round(w * dpr);
-    const ph = Math.round(h * dpr);
-    if (canvas.width !== pw || canvas.height !== ph) {
-      canvas.width = pw;
-      canvas.height = ph;
-    }
-    const ctx = canvas.getContext("2d");
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const waveCache = {
+    canvas: null,
+    pw: 0,
+    ph: 0,
+    dpr: 0,
+    isLight: null,
+    start: -1,
+    end: -1,
+    peaksRef: null,
+    durationMs: -1,
+    cuesRef: null,
+    cuesVersion: 0,
+    renderedVersion: -1,
+    activeCueIndex: -2,
+    dragIdx: -2,
+  };
 
-    const isLight = getCurrentScheme() === "light";
-    ctx.fillStyle = isLight ? "#f0f0f3" : "#141417";
-    ctx.fillRect(0, 0, w, h);
+  function invalidateWaveCache() {
+    waveCache.cuesVersion += 1;
+  }
 
-    const vr = viewRange();
+  function renderWaveformBackground(offCtx, w, h, dpr, vr, isLight) {
+    offCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    offCtx.fillStyle = isLight ? "#f0f0f3" : "#141417";
+    offCtx.fillRect(0, 0, w, h);
+
     const laneTop = h - WAVE_LANE_H;
     const waveTop = WAVE_RULER_H;
     const waveBottom = laneTop - 2;
@@ -1930,13 +1983,13 @@
     // Regla de tiempo
     const steps = [100, 250, 500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000];
     const step = steps.find((st) => (st / vr.span) * w >= 70) || 600000;
-    ctx.fillStyle = mutedText;
-    ctx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
-    ctx.textBaseline = "top";
+    offCtx.fillStyle = mutedText;
+    offCtx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
+    offCtx.textBaseline = "top";
     for (let t = Math.ceil(vr.start / step) * step; t <= vr.start + vr.span; t += step) {
       const x = Math.round(msToX(t, w, vr));
-      ctx.fillRect(x, 0, 1, 4);
-      ctx.fillText(formatTick(t, step), x + 3, 2);
+      offCtx.fillRect(x, 0, 1, 4);
+      offCtx.fillText(formatTick(t, step), x + 3, 2);
     }
 
     // Regiones de subtítulos sobre la onda
@@ -1944,8 +1997,8 @@
       const x1 = msToX(cue.start_ms, w, vr);
       const x2 = msToX(cue.end_ms, w, vr);
       if (x2 < 0 || x1 > w) return;
-      ctx.fillStyle = idx === state.activeCueIndex ? "rgba(131,103,199,0.16)" : "rgba(131,103,199,0.06)";
-      ctx.fillRect(x1, waveTop, Math.max(1, x2 - x1), waveBottom - waveTop);
+      offCtx.fillStyle = idx === state.activeCueIndex ? "rgba(131,103,199,0.16)" : "rgba(131,103,199,0.06)";
+      offCtx.fillRect(x1, waveTop, Math.max(1, x2 - x1), waveBottom - waveTop);
     });
 
     // Picos de audio (máximo por columna de píxel en la ventana visible)
@@ -1953,47 +2006,106 @@
     if (peaks.length > 0 && state.durationMs > 0) {
       const n = peaks.length;
       const perMs = n / state.durationMs;
-      ctx.fillStyle = isLight ? "#94949e" : "#555562";
+      offCtx.fillStyle = isLight ? "#94949e" : "#555562";
       for (let x = 0; x < w; x++) {
         const i0 = Math.max(0, Math.floor(xToMs(x, w, vr) * perMs));
         const i1 = Math.min(n, Math.max(i0 + 1, Math.floor(xToMs(x + 1, w, vr) * perMs)));
         let pk = 0;
         for (let i = i0; i < i1; i++) if (peaks[i] > pk) pk = peaks[i];
         const amp = Math.max(0.5, pk * waveHalf);
-        ctx.fillRect(x, waveMid - amp, 1, amp * 2);
+        offCtx.fillRect(x, waveMid - amp, 1, amp * 2);
       }
     }
 
     // Carril de bloques arrastrables
-    ctx.textBaseline = "middle";
+    offCtx.textBaseline = "middle";
     state.cues.forEach((cue, idx) => {
       const x1 = msToX(cue.start_ms, w, vr);
       const x2 = msToX(cue.end_ms, w, vr);
       if (x2 < 0 || x1 > w) return;
       const active = idx === state.activeCueIndex || (state.drag && state.drag.idx === idx);
       const bw = Math.max(2, x2 - x1 - 1);
-      ctx.fillStyle = active
+      offCtx.fillStyle = active
         ? "rgba(131,103,199,0.92)"
         : isLight ? "rgba(131,103,199,0.35)" : "rgba(131,103,199,0.32)";
-      ctx.beginPath();
-      if (ctx.roundRect) ctx.roundRect(x1 + 0.5, laneTop + 2, bw, WAVE_LANE_H - 4, 4);
-      else ctx.rect(x1 + 0.5, laneTop + 2, bw, WAVE_LANE_H - 4);
-      ctx.fill();
+      offCtx.beginPath();
+      if (offCtx.roundRect) offCtx.roundRect(x1 + 0.5, laneTop + 2, bw, WAVE_LANE_H - 4, 4);
+      else offCtx.rect(x1 + 0.5, laneTop + 2, bw, WAVE_LANE_H - 4);
+      offCtx.fill();
       if (active && bw > 10) {
-        ctx.fillStyle = "rgba(255,255,255,0.85)";
-        ctx.fillRect(x1 + 2, laneTop + 8, 2, WAVE_LANE_H - 16);
-        ctx.fillRect(x2 - 4, laneTop + 8, 2, WAVE_LANE_H - 16);
+        offCtx.fillStyle = "rgba(255,255,255,0.85)";
+        offCtx.fillRect(x1 + 2, laneTop + 8, 2, WAVE_LANE_H - 16);
+        offCtx.fillRect(x2 - 4, laneTop + 8, 2, WAVE_LANE_H - 16);
       }
       if (bw > 34) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(x1 + 6, laneTop, bw - 12, WAVE_LANE_H);
-        ctx.clip();
-        ctx.fillStyle = active ? "#ffffff" : isLight ? "#3f3f46" : "#d4d4d8";
-        ctx.fillText(`#${idx + 1} ${(cue.text || "").replace(/\n/g, " ")}`, x1 + 7, laneTop + WAVE_LANE_H / 2);
-        ctx.restore();
+        offCtx.save();
+        offCtx.beginPath();
+        offCtx.rect(x1 + 6, laneTop, bw - 12, WAVE_LANE_H);
+        offCtx.clip();
+        offCtx.fillStyle = active ? "#ffffff" : isLight ? "#3f3f46" : "#d4d4d8";
+        offCtx.fillText(`#${idx + 1} ${(cue.text || "").replace(/\n/g, " ")}`, x1 + 7, laneTop + WAVE_LANE_H / 2);
+        offCtx.restore();
       }
     });
+  }
+
+  function drawWaveform(playheadMs) {
+    const { canvas, w, h } = waveSize();
+    const dpr = window.devicePixelRatio || 1;
+    const pw = Math.round(w * dpr);
+    const ph = Math.round(h * dpr);
+    if (canvas.width !== pw || canvas.height !== ph) {
+      canvas.width = pw;
+      canvas.height = ph;
+    }
+    const ctx = canvas.getContext("2d");
+
+    const isLight = getCurrentScheme() === "light";
+    const vr = viewRange();
+    const viewEnd = vr.start + vr.span;
+    const peaks = state.peaks || [];
+    const dragIdx = state.drag && state.drag.kind === "cue" ? state.drag.idx : -1;
+
+    const dirty =
+      !waveCache.canvas ||
+      waveCache.pw !== pw ||
+      waveCache.ph !== ph ||
+      waveCache.dpr !== dpr ||
+      waveCache.isLight !== isLight ||
+      waveCache.start !== vr.start ||
+      waveCache.end !== viewEnd ||
+      waveCache.peaksRef !== peaks ||
+      waveCache.durationMs !== state.durationMs ||
+      waveCache.cuesRef !== state.cues ||
+      waveCache.renderedVersion !== waveCache.cuesVersion ||
+      waveCache.activeCueIndex !== state.activeCueIndex ||
+      waveCache.dragIdx !== dragIdx;
+
+    if (dirty) {
+      if (!waveCache.canvas) waveCache.canvas = document.createElement("canvas");
+      if (waveCache.canvas.width !== pw || waveCache.canvas.height !== ph) {
+        waveCache.canvas.width = pw;
+        waveCache.canvas.height = ph;
+      }
+      const offCtx = waveCache.canvas.getContext("2d");
+      renderWaveformBackground(offCtx, w, h, dpr, vr, isLight);
+      waveCache.pw = pw;
+      waveCache.ph = ph;
+      waveCache.dpr = dpr;
+      waveCache.isLight = isLight;
+      waveCache.start = vr.start;
+      waveCache.end = viewEnd;
+      waveCache.peaksRef = peaks;
+      waveCache.durationMs = state.durationMs;
+      waveCache.cuesRef = state.cues;
+      waveCache.renderedVersion = waveCache.cuesVersion;
+      waveCache.activeCueIndex = state.activeCueIndex;
+      waveCache.dragIdx = dragIdx;
+    }
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(waveCache.canvas, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Cabezal de reproducción
     const px = msToX(playheadMs, w, vr);
@@ -2042,9 +2154,25 @@
     renderPreviewAtMs(clamped);
   }
 
-  function selectCue(idx) {
+  function setActiveCueIndex(idx) {
+    const prevIdx = state.activeCueIndex;
+    if (idx === prevIdx) return;
+    const list = $("cue-list");
+    if (list) {
+      if (prevIdx >= 0) {
+        const prevEl = list.querySelector(`.cue-item[data-index="${prevIdx}"]`);
+        if (prevEl) prevEl.classList.remove("active");
+      }
+      if (idx >= 0) {
+        const nextEl = list.querySelector(`.cue-item[data-index="${idx}"]`);
+        if (nextEl) nextEl.classList.add("active");
+      }
+    }
     state.activeCueIndex = idx;
-    document.querySelectorAll(".cue-item").forEach((el, i) => el.classList.toggle("active", i === idx));
+  }
+
+  function selectCue(idx) {
+    setActiveCueIndex(idx);
     scrollCueIntoList(idx);
   }
 
@@ -2093,6 +2221,7 @@
     cue.end_ms = ne;
     cue.words = rescaleWords(d.orig.words, start, end, ns, ne);
     updateCueRowTimes(d.idx);
+    invalidateWaveCache();
     renderPreviewAtMs(d.mode === "end" ? ne - 20 : ns + 20);
     drawWaveform(currentMs());
   }
@@ -2106,6 +2235,7 @@
     cue.words = d.orig.words;
     state.drag = null;
     updateCueRowTimes(d.idx);
+    invalidateWaveCache();
     drawWaveform(currentMs());
     renderPreviewAtMs(currentMs());
   }
@@ -2218,7 +2348,13 @@
     $("btn-zoom-in").addEventListener("click", () => zoomAround(zoomCenter(), 0.5));
     $("btn-zoom-out").addEventListener("click", () => zoomAround(zoomCenter(), 2));
     $("btn-zoom-fit").addEventListener("click", () => setView(0, Infinity));
-    window.addEventListener("resize", () => drawWaveform(currentMs()));
+    window.addEventListener("resize", () => {
+      invalidateStageSizeCache();
+      drawWaveform(currentMs());
+    });
+    if (typeof ResizeObserver !== "undefined" && $("preview-stage")) {
+      new ResizeObserver(invalidateStageSizeCache).observe($("preview-stage"));
+    }
   }
 
   // Reproduce desde `ms`; con `stopAtMs` se pausa sola al llegar ahí
@@ -2267,6 +2403,8 @@
 
   function pollJob(jobId, onSuccess) {
     state.activeJobId = jobId;
+    clearTimeout(state.jobHideTimer);
+    state.jobHideTimer = null;
     $("job-box").classList.remove("hidden");
     $("btn-cancel-job").classList.remove("hidden");
 
@@ -2281,7 +2419,8 @@
         if (job.status === "done") {
           clearInterval(state.jobTimer);
           $("btn-cancel-job").classList.add("hidden");
-          setTimeout(() => $("job-box").classList.add("hidden"), 2000);
+          clearTimeout(state.jobHideTimer);
+          state.jobHideTimer = setTimeout(() => $("job-box").classList.add("hidden"), 2000);
           onSuccess(job);
         } else if (job.status === "error" || job.status === "cancelled") {
           clearInterval(state.jobTimer);
@@ -2371,8 +2510,11 @@
     $("btn-check-inbox").addEventListener("click", async () => {
       try {
         const notifyRes = await apiJson("/api/resolve/notify-export", { method: "POST", body: "{}" });
-        await refreshStatus();
-        if (notifyRes && notifyRes.session) applySession(notifyRes.session);
+        if (notifyRes && notifyRes.session) {
+          applySession(notifyRes.session);
+        } else {
+          await refreshStatus();
+        }
         showToast("Buzón de DaVinci Resolve 20 actualizado.");
       } catch (err) {
         showToast(err.message);
@@ -2445,7 +2587,11 @@
 
     $("btn-cancel-job").addEventListener("click", async () => {
       if (!state.activeJobId) return;
-      await apiJson(`/api/jobs/${state.activeJobId}/cancel`, { method: "POST", body: "{}" });
+      try {
+        await apiJson(`/api/jobs/${state.activeJobId}/cancel`, { method: "POST", body: "{}" });
+      } catch (err) {
+        showToast(err.message);
+      }
     });
 
     $("btn-resegment").addEventListener("click", async () => {
@@ -2506,10 +2652,7 @@
       $("time-readout").textContent = `${formatMsReadable(ms)} / ${formatMsReadable(tot)}`;
       const idx = state.cues.findIndex((c) => ms >= c.start_ms && ms <= c.end_ms);
       if (idx !== state.activeCueIndex) {
-        state.activeCueIndex = idx;
-        document.querySelectorAll(".cue-item").forEach((el, i) => {
-          el.classList.toggle("active", i === idx);
-        });
+        setActiveCueIndex(idx);
       }
       if (!m.paused && !state.drag) ensureMsVisible(ms);
       renderPreviewAtMs(ms);
@@ -2546,6 +2689,7 @@
       stage.classList.toggle("aspect-9-16", mode === "9:16");
       $("btn-aspect-16-9").classList.toggle("active", mode === "16:9");
       $("btn-aspect-9-16").classList.toggle("active", mode === "9:16");
+      invalidateStageSizeCache();
       renderPreviewAtMs((activeMedia().currentTime || 0) * 1000);
     }
     $("btn-aspect-16-9").addEventListener("click", () => setAspect("16:9"));
@@ -2611,6 +2755,7 @@
     $("font-input").addEventListener("change", (ev) => uploadFontFiles(ev.target.files));
     $("st-font").addEventListener("change", () => syncFontSelection(true));
     $("st-anim-mode").addEventListener("change", () => {
+      invalidateStyleCache();
       if ($("st-anim-mode").value !== "none") {
         $("push-mode").value = "textplus";
         $("template-field").classList.remove("hidden");
@@ -2621,6 +2766,7 @@
     });
     ["st-anim-hold", "st-anim-jitter"].forEach((id) => {
       $(id).addEventListener("input", () => {
+        invalidateStyleCache();
         syncAnimControlsVisibility();
         renderPreviewAtMs((activeMedia().currentTime || 0) * 1000);
       });
@@ -2667,6 +2813,7 @@
 
     // Karaoke global (apagado por defecto, se recuerda entre sesiones).
     const syncKaraoke = () => {
+      invalidateStyleCache();
       const on = $("st-karaoke").checked;
       syncStyleControlStates();
       updatePresetStatus();

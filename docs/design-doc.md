@@ -67,11 +67,11 @@ All source, documentation, test, build, and macOS distribution assets live in on
 | `hardware_imac2017.py` | Hardware profile and commands | `IMAC_2017_PROFILE`, `MODEL_CATALOG`, Homebrew binary lookup, `pgrep` Resolve detection, `--carry-initial-prompt` probing, and `whisper-cli` / `ffmpeg` command builders. |
 | `spanish_nlp.py` | Spanish NLP and segmentation | Whisper `-ojf` parser, UTF-8 BPE byte recovery, hallucination filter, `DOMAIN_PROFILES` (`juegos_mesa`), `BOARDGAME_PHONETIC_FIXES`, inverted `¿`/`¡` repair, and RAE line wrapper. |
 | `exporters.py` | Serialization engine | Uniform `render_export` router for `.srt`, `.srt_tc`, `.vtt`, `.ass`, `.txt`, `.txt_tc`, `.fcpxml`, and `.json`, plus `ms_to_timeline_tc_ms` NDF timecode conversion and Lua payload writers. |
-| `resolve_bridge.py` | Resolve IPC and audio prep | `16 kHz` WAV extraction, chunked waveform peaks, Studio Python scripting integration, and file-mailbox sync with `Fusion.prefs` fallback. |
+| `resolve_bridge.py` | Resolve IPC and audio prep | `16 kHz` WAV extraction, chunked 8/16/24/32-bit PCM waveform peaks, Studio Python scripting integration, and file-mailbox sync with `Fusion.prefs` fallback. |
 | `font_manager.py` | Typography and glyph checks | Binary OpenType/TrueType `name` and `cmap` (`0`, `4`, `6`, `12`) parser, Spanish accent checks, flipbook variant grouping, and ZIP-slip-safe font installation. |
 | `package_bundle.py` | Distribution packager | Builds and verifies deterministic `MTTN_AutoSubs_Tool.zip` archives with POSIX execute bits and zero `__pycache__` residue. |
 | `autosubs_es_test.py` | Automated test suite | Offline unit and HTTP integration tests using synthetic `whisper-cli`/`ffmpeg` stubs and real TCP loopback servers. |
-| `ui/` | Studio web frontend | `index.html`, `styles.css`, and vanilla ES2022 `app.js` providing live karaoke preview, waveform scrubbing, inline cue editing, and font pack controls. |
+| `ui/` | Studio web frontend | `index.html`, `styles.css`, and vanilla ES2022 `app.js` providing live karaoke preview, offscreen-cached waveform scrubbing, inline cue editing, and font pack controls. |
 | `lua/` | Resolve Utility scripts | `1_AutoSubs_ES_Exportar_Audio.lua`, `2_AutoSubs_ES_Insertar_Subtitulos.lua`, and `3_AutoSubs_ES_Ir_A_Tiempo.lua` (installed as `1 - MTTN AutoSubs - ...`) for Resolve 20 Free and Studio. |
 | `templates/` | Fusion `Text+` macros | Five Retina 4K templates (`Cine_Netflix`, `Amarillo_Clasico`, `Reels_Impacto`, `Caja_Editorial`, and `Anitype_Animado`) installed under `Effects > Titles > MTTN AutoSubs`. |
 | `install_imac.sh`, `Iniciar AutoSubs ES.command` | macOS installation and launch | Homebrew bootstrap, `MTTN AutoSubs Tool.app` generator, Resolve asset installer, and Finder launcher. |
@@ -136,7 +136,7 @@ AutoSubs ES exposes an unauthenticated local control plane to your browser, so a
 -   **Localhost DNS-rebinding and CSRF defense**: Every request passes `_check_request_origin(mutating)`. Any `Host` header outside `127.0.0.1`, `localhost`, or `[::1]` is rejected immediately. Every mutating request (`POST` or `PUT`) additionally rejects cross-site browser requests (`Sec-Fetch-Site: cross-site`) and verifies any `Origin` header (including `Origin: null` from sandboxed pages) against localhost, returning a `403 Forbidden` HTTP status code.
 -   **Filesystem confinement**: Uploaded filenames pass basename sanitization (`_safe_filename`), font ZIP archives reject `..`, `__MACOSX`, and dot-segments above a `64 MB` uncompressed cap (`MAX_UPLOAD_BYTES`), and `start_transcription` enforces `Path.is_relative_to(self.app_dir.resolve())` on any `media_path` override (while the UI omits client-supplied paths).
 -   **Bounded-memory HTTP `206` range streaming**: `/api/media`, `/api/exported-video`, and `/api/fonts/file/...` stream files through `_stream_file` in `131072`-byte chunks with proper `206 Partial Content` and `416 Range Not Satisfiable` responses instead of buffering entire MP4 renders in memory.
--   **Stale session isolation**: Uploading a local video or detecting a changed Resolve inbox WAV hash bumps `media_rev` and clears prior cues and word timings cleanly.
+-   **Stale session isolation**: Uploading a local video or detecting a changed Resolve inbox WAV hash bumps `media_rev` and `media_generation`, clearing prior cues/word timings and preventing in-flight transcription jobs from overwriting newer media.
 
 Two intentional engineering shortcuts keep operational complexity minimal and carry explicit code comments (`# shortcut:`):
 

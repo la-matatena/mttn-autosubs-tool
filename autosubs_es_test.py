@@ -13,6 +13,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+import wave
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -582,6 +583,35 @@ class SpanishNlpTest(unittest.TestCase):
     self.assertIn("BGG", cleaned)
     self.assertIn("Gloomhaven!", cleaned)
 
+  def test_align_words_never_overlaps(self) -> None:
+    # Short neighbours (<20ms) + multiple inserted words in a tight gap.
+    words = [
+        spanish_nlp.WordTiming("Hola", 100, 110),
+        spanish_nlp.WordTiming("mundo", 120, 130),
+    ]
+    aligned = spanish_nlp.align_words_to_lines(
+        words, ["Hola gran nuevo mundo"], 100, 130
+    )
+    self.assertEqual([w.text for w in aligned], ["Hola", "gran", "nuevo", "mundo"])
+    for w in aligned:
+      self.assertGreaterEqual(w.start_ms, 100)
+      self.assertLessEqual(w.end_ms, 130)
+      self.assertLessEqual(w.start_ms, w.end_ms)
+    for prev, cur in zip(aligned, aligned[1:]):
+      self.assertLessEqual(prev.end_ms, cur.start_ms)
+
+    # Unsorted/overlapping source words where src[0].start_ms != min(start_ms).
+    unsorted = [
+        spanish_nlp.WordTiming("uno", 200, 260),
+        spanish_nlp.WordTiming("dos", 50, 220),
+    ]
+    rescaled = spanish_nlp.align_words_to_lines(
+        unsorted, ["uno extra dos"], 100, 500
+    )
+    self.assertEqual([w.text for w in rescaled], ["uno", "extra", "dos"])
+    for prev, cur in zip(rescaled, rescaled[1:]):
+      self.assertLessEqual(prev.end_ms, cur.start_ms)
+
 
 class ExportersTest(unittest.TestCase):
 
@@ -676,10 +706,10 @@ class ExportersTest(unittest.TestCase):
         exporters.StyleConfig.from_dict({"font": "Arial"}).highlight_alpha, 1.0
     )
 
-    # Defaults keep the historical style line byte-identical.
+    # Defaults keep the expected style line with black drop shadow.
     ass_default = exporters.export_ass_karaoke(cues, exporters.StyleConfig())
     self.assertIn(
-        "&H00FFFFFF,&H00FFFFFF,&H00120D0B,&H59120D0B,", ass_default
+        "&H00FFFFFF,&H00FFFFFF,&H00120D0B,&H59000000,", ass_default
     )
 
     # 50 % fill and 0 % outline -> ASS alpha bytes (00 opaque, FF clear).
@@ -695,7 +725,7 @@ class ExportersTest(unittest.TestCase):
             box_enabled=True, box_hex="#112233", box_alpha=0.5
         ),
     )
-    self.assertIn("&H80332211,&H59332211,", ass_box)
+    self.assertIn("&H80332211,&H59000000,", ass_box)
     self.assertIn(",3,6,0,2,", ass_box)
 
     fcp_default = exporters.export_fcpxml(
@@ -804,6 +834,50 @@ class ExportersTest(unittest.TestCase):
         )
     ]
     self.assertEqual(norm, ["—¿Sabías", "“meeples”?"])
+
+  def test_ass_back_colour_black_and_timeline_start_frame_zero(self) -> None:
+    cues = self._sample_cues()
+    style = exporters.StyleConfig(
+        box_hex="#FF3366",
+        box_enabled=False,
+        shadow_enabled=True,
+        shadow_alpha=0.5,
+    )
+    ass = exporters.export_ass_karaoke(cues, style=style)
+    style_lines = [ln for ln in ass.splitlines() if ln.startswith("Style: AutoSubsES,")]
+    self.assertEqual(len(style_lines), 1)
+    # Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, ...
+    fields = style_lines[0].split(",")
+    self.assertEqual(fields[6], "&H80000000")
+
+    lua_zero = exporters.export_resolve_lua_payload(
+        cues=cues,
+        mode="subtitle_srt",
+        track_name="Subtítulos ES",
+        template_name="AutoSubs_ES_Cine_Netflix",
+        srt_path="/tmp/a.srt",
+        srt_timeline_tc_path="/tmp/b.srt",
+        fcpxml_path="/tmp/c.fcpxml",
+        fps=24.0,
+        timeline_start_frame=0,
+        style=style,
+    )
+    self.assertIn("timeline_start_frame = 0,", lua_zero)
+
+    fcpxml_zero = exporters.export_fcpxml(cues, start_frame=0, style=style)
+    self.assertIn('tcStart="0s"', fcpxml_zero)
+
+    with tempfile.TemporaryDirectory() as tmp:
+      bridge = resolve_bridge.ResolveBridge(Path(tmp))
+      bridge.inbox_dir.mkdir(parents=True, exist_ok=True)
+      (bridge.inbox_dir / "timeline_meta.json").write_text(
+          json.dumps({"start_frame": 86400, "fps": 24.0}), encoding="utf-8"
+      )
+      bridge.stage_or_push_to_resolve(cues, {"timeline_start_frame": 0})
+      pushed_lua = (bridge.outbox_dir / "push_payload.lua").read_text(
+          encoding="utf-8"
+      )
+      self.assertIn("timeline_start_frame = 0,", pushed_lua)
 
 
 class FontManagerAndAnitypeTest(unittest.TestCase):
@@ -944,6 +1018,65 @@ class FontManagerAndAnitypeTest(unittest.TestCase):
     self.assertIn("ascii_fold = true", lua_code)
     self.assertIn("font_variants = {", lua_code)
     self.assertIn("Ano nuevo\\nen Espana!", lua_code)
+
+  def test_group_font_packs_variant_count_and_atomic_zip_install(self) -> None:
+    faces = [
+        font_manager.FontFaceInfo(
+            font_id="f1",
+            family="MiFuente",
+            subfamily="Regular",
+            full_name="MiFuente Regular",
+            postscript_name="MiFuente-Regular",
+            css_family="MiFuente",
+            path="/tmp/MiFuente-Regular.ttf",
+            filename="MiFuente-Regular.ttf",
+            ext=".ttf",
+            source="uploaded",
+            supports_spanish=True,
+            missing_spanish_chars=[],
+            base_family="MiFuente",
+            pack_key="mifuente",
+            frame_index=None,
+        ),
+        font_manager.FontFaceInfo(
+            font_id="f2",
+            family="MiFuente",
+            subfamily="Bold",
+            full_name="MiFuente Bold",
+            postscript_name="MiFuente-Bold",
+            css_family="MiFuente",
+            path="/tmp/MiFuente-Bold.ttf",
+            filename="MiFuente-Bold.ttf",
+            ext=".ttf",
+            source="uploaded",
+            supports_spanish=True,
+            missing_spanish_chars=[],
+            base_family="MiFuente",
+            pack_key="mifuente",
+            frame_index=None,
+        ),
+    ]
+    packs = font_manager.group_font_packs(faces)
+    self.assertEqual(len(packs), 1)
+    self.assertFalse(packs[0].is_animated_pack)
+    self.assertEqual(packs[0].variant_count, 2)
+
+    # Invalid entry mid-ZIP must not leave partial installs on disk.
+    buf = io.BytesIO()
+    good_ttf = _make_test_sfnt(
+        b"\x00\x01\x00\x00", "ValidFont", "Regular", [(0x0020, 0x00FF)]
+    )
+    with zipfile.ZipFile(buf, "w") as zf:
+      zf.writestr("ValidFont.ttf", good_ttf)
+      zf.writestr("CorruptFont.ttf", b"not-a-font-file")
+    with tempfile.TemporaryDirectory() as tmp:
+      app_dir = Path(tmp) / "app_fonts"
+      mac_dir = Path(tmp) / "mac_fonts"
+      mgr = font_manager.FontManager(app_dir, mac_dir)
+      with self.assertRaises(ValueError):
+        mgr.install_upload("mixed_pack.zip", buf.getvalue(), install_to_macos=True)
+      self.assertEqual(list(mgr.app_fonts_dir.glob("*")), [])
+      self.assertFalse(mac_dir.exists() and any(mac_dir.iterdir()))
 
 
 class BridgeAndServerIntegrationTest(unittest.TestCase):
@@ -1459,6 +1592,24 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
     self.assertIn(
         "AutoSubs_ES/docs/images/autosubs-es-fonts-animation.png", meta["entries"]
     )
+
+  def test_extract_waveform_peaks_covers_tail_frames(self) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+      wav_path = Path(tmp) / "tail_test.wav"
+      total_frames = 1005
+      buckets = 16
+      # 1005 // 16 = 62 frames per bucket -> 992 frames in first 16*62,
+      # leaving 13 tail frames that must still be included in the last peak.
+      samples = [0] * 992 + [16384] * (total_frames - 992)
+      with wave.open(str(wav_path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(16000)
+        wf.writeframes(struct.pack(f"<{len(samples)}h", *samples))
+
+      res = resolve_bridge.extract_waveform_peaks(str(wav_path), num_buckets=buckets)
+      self.assertEqual(len(res["peaks"]), buckets)
+      self.assertGreater(res["peaks"][-1], 0.4)
 
 
 if __name__ == "__main__":
