@@ -33,6 +33,7 @@ from functools import partial
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
 import mimetypes
 import os
 from pathlib import Path
@@ -48,6 +49,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import wave
 import webbrowser
 
 # Prefer the monorepo (Blaze) package path; fall back to flat sibling imports
@@ -120,6 +122,58 @@ _BROWSER_VIDEO_EXTENSIONS = frozenset({".mp4", ".mov", ".webm", ".m4v"})
 _ALLOWED_LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 # Upper bound on jobs kept in RAM; finished jobs beyond it are pruned.
 _MAX_RETAINED_JOBS = 100
+# Largest body accepted by POST /api/upload (8 GiB). Uploads are streamed to
+# disk, so RAM is not the concern; the cap stops a runaway or hostile client
+# from filling the user's disk while still fitting long high-bitrate masters
+# (e.g. ~1-2 h of 4K H.264 at 10-20 Mbit/s, or a long WAV/MOV export).
+_MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024
+# Job statuses that mean "still in flight" (used by the dedupe checks).
+_ACTIVE_JOB_STATUSES = ("queued", "running")
+# Errors `resolve_bridge.extract_waveform_peaks` raises on WAVs the stdlib
+# `wave` module cannot decode (32-bit float, truncated or corrupt headers).
+_PEAK_ERRORS = (wave.Error, EOFError, ValueError)
+
+
+def _safe_waveform_peaks(wav_path: Path | str) -> dict[str, Any]:
+  """Extracts waveform peaks, degrading to an empty waveform on bad WAVs.
+
+  User media must still activate (and be transcribable through ffmpeg) even
+  when the waveform preview cannot be computed, so decoding errors are
+  swallowed here instead of failing the HTTP request or job.
+
+  Args:
+    wav_path: WAV file to analyze.
+
+  Returns:
+    The `extract_waveform_peaks` result, or `{"peaks": [], "duration_ms": 0}`
+    if the file is not a WAV the stdlib can decode.
+  """
+  try:
+    return resolve_bridge.extract_waveform_peaks(str(wav_path))
+  except _PEAK_ERRORS:
+    return {"peaks": [], "duration_ms": 0}
+
+
+def _file_rev(path: Path | None) -> str | None:
+  """Returns the "<name>:<mtime_ns>:<size>" revision tag of a file.
+
+  Used as the session `media_rev` (UI cache-buster and the optimistic
+  concurrency token of PUT /api/cues). Does file I/O, so call it without
+  holding `AppState.lock`.
+
+  Args:
+    path: File to stat, or None.
+
+  Returns:
+    The revision string, or None if `path` is None or not a readable file.
+  """
+  if path is None or not path.is_file():
+    return None
+  try:
+    st = path.stat()
+  except OSError:  # Deleted/replaced between the two calls.
+    return None
+  return f"{path.name}:{st.st_mtime_ns}:{st.st_size}"
 
 
 def _terminate_process(proc: subprocess.Popen[Any]) -> None:
@@ -177,6 +231,9 @@ class AppState:
   Attributes:
     app_dir: Per-user data root (`~/Library/Application Support/...`).
     cache_dir: Uploads, 16 kHz working WAVs, temp whisper/ASS/MP4 outputs.
+    uploads_dir: `cache_dir/uploads`, where POST /api/upload stores media.
+      Kept separate so a client-chosen name can never overwrite internal
+      cache files (`working_*_16k.wav`, the demo WAV, burn-in MP4s).
     models_dir: Downloaded whisper.cpp GGML models.
     bridge: `resolve_bridge.ResolveBridge` (inbox WAV, timeline metadata,
       pushing cues to DaVinci Resolve). Not guarded by `lock`.
@@ -195,6 +252,10 @@ class AppState:
       stage boundaries and inside read loops. Guarded by `lock`.
     _active_downloads: model_id -> job_id of the in-flight download, used to
       dedupe repeated download clicks. Guarded by `lock`.
+    _active_transcription: job_id of the in-flight transcription (or None),
+      so a double-click on "Transcribir" joins the running job instead of
+      starting a second whisper-cli. Guarded by `lock`.
+    _active_benchmark: Same dedupe slot for the speed benchmark.
     media_path: Active source media (uploaded file, inbox WAV, or demo WAV).
     wav_path: 16 kHz mono WAV used for the waveform/preview; None when the
       upload is a non-WAV file that has not been transcribed yet.
@@ -223,8 +284,10 @@ class AppState:
     """
     self.app_dir = app_dir or hardware_imac2017.get_app_data_dir(create=True)
     self.cache_dir = self.app_dir / "cache"
+    self.uploads_dir = self.cache_dir / "uploads"
     self.models_dir = self.app_dir / "models"
     self.cache_dir.mkdir(parents=True, exist_ok=True)
+    self.uploads_dir.mkdir(parents=True, exist_ok=True)
     self.models_dir.mkdir(parents=True, exist_ok=True)
 
     self.bridge = resolve_bridge.ResolveBridge(app_data_dir=self.app_dir)
@@ -237,6 +300,8 @@ class AppState:
     self.active_procs: dict[str, subprocess.Popen[Any]] = {}
     self.cancel_flags: dict[str, bool] = {}
     self._active_downloads: dict[str, str] = {}
+    self._active_transcription: str | None = None
+    self._active_benchmark: str | None = None
 
     self.media_path: Path | None = None
     self.wav_path: Path | None = None
@@ -254,7 +319,10 @@ class AppState:
   def session_snapshot(self, include_peaks: bool = True) -> dict[str, Any]:
     """Returns a JSON-serializable copy of the current session for the UI.
 
-    Acquires `self.lock`; callers must not already hold it.
+    Acquires `self.lock`; callers must not already hold it. The lock only
+    guards copying the in-memory fields; the `stat`/`is_file` calls for
+    `media_rev` and the exported video run after it is released, so a slow
+    disk never blocks other request threads.
 
     Args:
       include_peaks: Whether to include the waveform peaks list. PUT
@@ -267,42 +335,88 @@ class AppState:
       element reloads only when the underlying file actually changes.
     """
     with self.lock:
-      is_video = bool(
-          self.media_path
-          and self.media_path.suffix.lower() in _BROWSER_VIDEO_EXTENSIONS
+      media_path = self.media_path
+      wav_path = self.wav_path
+      exported_video_path = self.exported_video_path
+      media_name = self.media_name
+      duration_ms = self.duration_ms
+      peaks = list(self.peaks) if include_peaks else None
+      word_count = len(self.words)
+      cues = [c.to_dict() for c in self.cues]
+      format_config = self.format_config.to_dict()
+      demo_mode = self.demo_mode
+    # File I/O below runs without the lock (see docstring).
+    is_video = bool(
+        media_path and media_path.suffix.lower() in _BROWSER_VIDEO_EXTENSIONS
+    )
+    can_burnin = bool(
+        media_path and media_path.suffix.lower() in _VIDEO_EXTENSIONS
+    )
+    has_exported_video = bool(
+        exported_video_path and exported_video_path.is_file()
+    )
+    media_rev = _file_rev(media_path or wav_path)
+    return {
+        "has_media": wav_path is not None or media_path is not None,
+        "media_name": media_name,
+        "media_rev": media_rev,
+        "media_url": "/api/media" if (wav_path or media_path) else None,
+        "is_video": is_video,
+        "can_burnin_video": can_burnin,
+        "exported_video_url": (
+            "/api/exported-video" if has_exported_video else None
+        ),
+        "duration_ms": duration_ms,
+        "peaks": peaks,
+        "word_count": word_count,
+        "cue_count": len(cues),
+        "cues": cues,
+        "format_config": format_config,
+        "demo_mode": demo_mode,
+    }
+
+  def _discard_replaced_media(
+      self, *old_paths: Path | None, keep: tuple[Path | None, ...] = ()
+  ) -> None:
+    """Deletes cache files of media that was just replaced.
+
+    Prevents the cache from growing with every upload. Only two kinds of
+    files are ever deleted, and only if they live inside the cache dir:
+    previous uploads (`uploads_dir/*`) and transcription working WAVs
+    (`cache_dir/working_*_16k.wav`). The Resolve inbox WAV, the demo WAV,
+    burn-in outputs and any file outside the cache are never touched, nor is
+    a file that is still the active media/WAV (e.g. a concurrent request
+    re-activated it). Must be called without holding `self.lock`.
+
+    Args:
+      *old_paths: Paths that were active before the swap (None is ignored).
+      keep: Paths that must survive (typically the new media/WAV).
+    """
+    with self.lock:
+      in_use = [self.media_path, self.wav_path]
+    protected = set()
+    for p in (*keep, *in_use):
+      if p is not None:
+        protected.add(p.resolve())
+    cache_root = self.cache_dir.resolve()
+    uploads_root = self.uploads_dir.resolve()
+    for old in old_paths:
+      if old is None:
+        continue
+      resolved = old.resolve()
+      if resolved in protected:
+        continue
+      is_upload = resolved.parent == uploads_root
+      is_working_wav = (
+          resolved.parent == cache_root
+          and resolved.name.startswith("working_")
+          and resolved.name.endswith("_16k.wav")
       )
-      can_burnin = bool(
-          self.media_path
-          and self.media_path.suffix.lower() in _VIDEO_EXTENSIONS
-      )
-      has_exported_video = bool(
-          self.exported_video_path and self.exported_video_path.is_file()
-      )
-      active_file = self.media_path or self.wav_path
-      media_rev: str | None = None
-      if active_file and active_file.is_file():
-        st = active_file.stat()
-        media_rev = f"{active_file.name}:{st.st_mtime_ns}:{st.st_size}"
-      return {
-          "has_media": self.wav_path is not None or self.media_path is not None,
-          "media_name": self.media_name,
-          "media_rev": media_rev,
-          "media_url": (
-              "/api/media" if (self.wav_path or self.media_path) else None
-          ),
-          "is_video": is_video,
-          "can_burnin_video": can_burnin,
-          "exported_video_url": (
-              "/api/exported-video" if has_exported_video else None
-          ),
-          "duration_ms": self.duration_ms,
-          "peaks": list(self.peaks) if include_peaks else None,
-          "word_count": len(self.words),
-          "cue_count": len(self.cues),
-          "cues": [c.to_dict() for c in self.cues],
-          "format_config": self.format_config.to_dict(),
-          "demo_mode": self.demo_mode,
-      }
+      if is_upload or is_working_wav:
+        try:
+          resolved.unlink(missing_ok=True)
+        except OSError:
+          pass  # Best effort: a leftover cache file is harmless.
 
   def load_demo(
       self, format_raw: dict[str, Any] | None = None
@@ -398,6 +512,7 @@ class AppState:
     cues = spanish_nlp.segment_and_wrap_spanish(words, cfg)
 
     with self.lock:
+      old_media, old_wav = self.media_path, self.wav_path
       self.media_path = demo_wav
       self.wav_path = demo_wav
       self.exported_video_path = None
@@ -410,7 +525,57 @@ class AppState:
       self._last_inbox_sig = None
       self.media_generation += 1
       self.demo_mode = True
+    self._discard_replaced_media(old_media, old_wav, keep=(demo_wav,))
     return self.session_snapshot()
+
+  def _new_job_locked(self, kind: str, detail: str = "") -> str:
+    """Registers a new running job; caller must already hold `self.lock`.
+
+    Split out of `create_job()` so dedupe checks (transcription, benchmark)
+    can look for an active job and insert a new one atomically.
+
+    Args:
+      kind: Job type shown to the UI ("transcribe", "benchmark", "burnin").
+      detail: Initial Spanish stage text; defaults to "Iniciando...".
+
+    Returns:
+      The new 10-hex-char job id.
+    """
+    job_id = uuid.uuid4().hex[:10]
+    self.jobs[job_id] = {
+        "job_id": job_id,
+        "kind": kind,
+        "status": "running",
+        "progress": 0,
+        "stage": detail or "Iniciando...",
+        "error": None,
+        "started_at": time.time(),
+        "finished_at": None,
+        "result": None,
+    }
+    self.cancel_flags[job_id] = False
+    if len(self.jobs) > _MAX_RETAINED_JOBS:
+      # Dicts keep insertion order, so this drops the oldest finished jobs
+      # first. Running jobs are never pruned.
+      stale_ids = [
+          jid for jid, j in self.jobs.items() if j.get("status") != "running"
+      ]
+      for old_id in stale_ids[: max(0, len(self.jobs) - _MAX_RETAINED_JOBS)]:
+        self.jobs.pop(old_id, None)
+        self.cancel_flags.pop(old_id, None)
+    return job_id
+
+  def _active_job_locked(self, job_id: str | None) -> str | None:
+    """Returns `job_id` if that job is still queued/running, else None.
+
+    Caller must hold `self.lock`. Used by the dedupe slots
+    (`_active_transcription`, `_active_benchmark`).
+    """
+    if job_id:
+      job = self.jobs.get(job_id)
+      if job and job.get("status") in _ACTIVE_JOB_STATUSES:
+        return job_id
+    return None
 
   def create_job(self, kind: str, detail: str = "") -> str:
     """Registers a new running job and prunes old finished jobs.
@@ -422,30 +587,8 @@ class AppState:
     Returns:
       The new 10-hex-char job id.
     """
-    job_id = uuid.uuid4().hex[:10]
     with self.lock:
-      self.jobs[job_id] = {
-          "job_id": job_id,
-          "kind": kind,
-          "status": "running",
-          "progress": 0,
-          "stage": detail or "Iniciando...",
-          "error": None,
-          "started_at": time.time(),
-          "finished_at": None,
-          "result": None,
-      }
-      self.cancel_flags[job_id] = False
-      if len(self.jobs) > _MAX_RETAINED_JOBS:
-        # Dicts keep insertion order, so this drops the oldest finished jobs
-        # first. Running jobs are never pruned.
-        stale_ids = [
-            jid for jid, j in self.jobs.items() if j.get("status") != "running"
-        ]
-        for old_id in stale_ids[: max(0, len(self.jobs) - _MAX_RETAINED_JOBS)]:
-          self.jobs.pop(old_id, None)
-          self.cancel_flags.pop(old_id, None)
-    return job_id
+      return self._new_job_locked(kind, detail)
 
   def update_job(self, job_id: str, **updates: Any) -> None:
     """Merges `updates` into a job dict under the lock (no-op if pruned).
@@ -458,30 +601,36 @@ class AppState:
       if job_id in self.jobs:
         self.jobs[job_id].update(updates)
 
-  def cancel_job(self, job_id: str) -> bool:
-    """Flags a job as cancelled and kills its child process, if any.
+  def cancel_job(self, job_id: str) -> str | None:
+    """Flags a queued/running job as cancelled and kills its child process.
 
     The job is marked "cancelled" immediately; the worker thread notices
     `cancel_flags[job_id]` at its next check and returns without writing a
-    result. The child is terminated outside the lock.
+    result. The child is terminated outside the lock. Jobs that already
+    finished (done/error/cancelled) are left untouched, so a late click on
+    "Cancelar" can never turn a finished transcription into "cancelled".
 
     Args:
       job_id: Job to cancel.
 
     Returns:
-      False if the job id is unknown, True otherwise.
+      None if the job id is unknown, otherwise the job's status after the
+      call ("cancelled", or its unchanged final status).
     """
     with self.lock:
-      if job_id not in self.jobs:
-        return False
+      job = self.jobs.get(job_id)
+      if job is None:
+        return None
+      if job.get("status") not in _ACTIVE_JOB_STATUSES:
+        return str(job.get("status"))
       self.cancel_flags[job_id] = True
       proc = self.active_procs.get(job_id)
-      self.jobs[job_id]["status"] = "cancelled"
-      self.jobs[job_id]["stage"] = "Cancelado por el usuario"
-      self.jobs[job_id]["finished_at"] = time.time()
+      job["status"] = "cancelled"
+      job["stage"] = "Cancelado por el usuario"
+      job["finished_at"] = time.time()
     if proc is not None and proc.poll() is None:
       _terminate_process(proc)
-    return True
+    return "cancelled"
 
   def settings_payload(
       self, resolve_running: bool | None = None
@@ -578,14 +727,16 @@ class AppState:
     timing is not skewed) -> cancellation check -> compute real-time factor
     (audio seconds / wall seconds), store it via
     `settings.record_benchmark()` and finish at 100. Temp WAV/JSON files are
-    always removed. Does not touch the active session.
+    always removed. Does not touch the active session. If a benchmark is
+    already queued/running, its job id is returned instead of starting a
+    second one.
 
     Args:
       payload: Optional overrides `model_id`, `threads`, `force_no_gpu`;
         missing keys fall back to the effective settings.
 
     Returns:
-      The job id to poll.
+      The job id to poll (the in-flight one when deduplicated).
 
     Raises:
       ValueError: Unknown model id.
@@ -610,7 +761,16 @@ class AppState:
       )
     threads = int(payload.get("threads") or effective["threads"])
     force_no_gpu = bool(payload.get("force_no_gpu", effective["force_no_gpu"]))
-    job_id = self.create_job("benchmark", "Preparando audio de prueba...")
+    with self.lock:
+      # Dedupe: a second click while a benchmark runs joins it, so two
+      # whisper-cli runs never compete for the CPU and skew the timing.
+      existing_job_id = self._active_job_locked(self._active_benchmark)
+      if existing_job_id:
+        return existing_job_id
+      job_id = self._new_job_locked(
+          "benchmark", "Preparando audio de prueba..."
+      )
+      self._active_benchmark = job_id
 
     def _worker() -> None:
       """Runs the benchmark stages and writes the job result/error."""
@@ -685,6 +845,10 @@ class AppState:
       finally:
         bench_wav.unlink(missing_ok=True)
         Path(f"{out_prefix}.json").unlink(missing_ok=True)
+        # Release the dedupe slot only if it still points at this job.
+        with self.lock:
+          if self._active_benchmark == job_id:
+            self._active_benchmark = None
 
     threading.Thread(target=_worker, daemon=True).start()
     return job_id
@@ -886,12 +1050,19 @@ class AppState:
 
     State written on success: media_path, wav_path, exported_video_path
     (cleared), media_name, duration_ms, peaks, words, cues, format_config,
-    demo_mode. Skipped (job still reports done) if `media_generation`
-    changed since the job started, i.e. the user loaded other media.
+    demo_mode, and `_last_inbox_sig` when the source is the Resolve inbox
+    (so a later "Leer buzón"/notify-export of the same WAV keeps the cues).
+    Skipped if `media_generation` changed since the job started, i.e. the
+    user loaded other media; the job still reports done but its result
+    carries `"stale": true`.
+
+    Only one transcription runs at a time: if one is already queued/running
+    its job id is returned (a double-click must not start two whisper-cli
+    processes).
 
     Temp files: the whisper JSON is always deleted; the new working WAV is
     kept only if it became the session WAV, in which case the previous
-    `working_*_16k.wav` in the cache dir is deleted.
+    `working_*_16k.wav` (and a replaced upload) in the cache dir is deleted.
 
     Args:
       payload: UI request; optional keys `source`, `media_path`, `model_id`,
@@ -899,7 +1070,7 @@ class AppState:
         `force_no_gpu`.
 
     Returns:
-      The job id to poll.
+      The job id to poll (the in-flight one when deduplicated).
 
     Raises:
       ValueError: Unknown model id.
@@ -960,6 +1131,13 @@ class AppState:
 
     if not src_path.is_file():
       raise FileNotFoundError(f"No existe el archivo: {src_path}")
+    inbox_sig: tuple[str, int, int] | None = None
+    if source == "inbox":
+      # Same (path, mtime_ns, size) signature notify-export computes. Taken
+      # before ffmpeg reads the file, so if Resolve re-exports mid-job the
+      # next notify-export still sees a change and reloads.
+      st = src_path.stat()
+      inbox_sig = (str(src_path), st.st_mtime_ns, st.st_size)
 
     cfg = spanish_nlp.SpanishFormatConfig.from_dict(
         payload.get("format_config") or self.format_config.to_dict()
@@ -971,9 +1149,17 @@ class AppState:
     accel_label = "CPU, GPU libre" if force_no_gpu else "GPU Metal"
 
     with self.lock:
+      # Dedupe check and job creation share one critical section so two
+      # concurrent requests cannot both start a job.
+      existing_job_id = self._active_job_locked(self._active_transcription)
+      if existing_job_id:
+        return existing_job_id
       # Snapshot used later to detect that the media changed mid-job.
       expected_generation = self.media_generation
-    job_id = self.create_job("transcribe", "Preparando audio 16 kHz mono...")
+      job_id = self._new_job_locked(
+          "transcribe", "Preparando audio 16 kHz mono..."
+      )
+      self._active_transcription = job_id
 
     def _worker() -> None:
       """Runs ffmpeg -> whisper-cli -> Spanish NLP and swaps in the result."""
@@ -982,6 +1168,7 @@ class AppState:
       ojf_json = Path(f"{out_prefix}.json")
       completed_ok = False
       old_wav: Path | None = None
+      old_media: Path | None = None
       try:
         resolve_bridge.prepare_wav_16k(
             str(src_path),
@@ -992,7 +1179,7 @@ class AppState:
         with self.lock:
           if self.cancel_flags.get(job_id):
             return
-        wave_info = resolve_bridge.extract_waveform_peaks(str(working_wav))
+        wave_info = _safe_waveform_peaks(working_wav)
         self.update_job(
             job_id,
             progress=15,
@@ -1045,6 +1232,8 @@ class AppState:
               )
 
         rc = proc.wait()
+        if proc.stdout:
+          proc.stdout.close()  # Release the pipe fd once the child exited.
         with self.lock:
           self.active_procs.pop(job_id, None)
           if self.cancel_flags.get(job_id):
@@ -1072,6 +1261,7 @@ class AppState:
             stale = True
           else:
             old_wav = self.wav_path
+            old_media = self.media_path
             self.media_path = src_path
             self.wav_path = working_wav
             self.exported_video_path = None
@@ -1082,16 +1272,30 @@ class AppState:
             self.cues = cues
             self.format_config = cfg
             self.demo_mode = False
+            if inbox_sig is not None:
+              # Mark this inbox WAV as already loaded; otherwise the next
+              # notify-export ("Leer buzón") would see an unknown signature
+              # and wipe the cues just produced.
+              self._last_inbox_sig = inbox_sig
         if not stale:
           completed_ok = True
 
+        result = self.session_snapshot()
+        # Lets the UI tell a discarded result (media changed mid-job) from a
+        # real one; the snapshot then describes the *new* media.
+        result["stale"] = stale
         self.update_job(
             job_id,
             status="done",
             progress=100,
-            stage=f"¡Listo! {len(cues)} subtítulos generados en español.",
+            stage=(
+                "Transcripción descartada: el audio activo cambió durante"
+                " el proceso."
+                if stale
+                else f"¡Listo! {len(cues)} subtítulos generados en español."
+            ),
             finished_at=time.time(),
-            result=self.session_snapshot(),
+            result=result,
         )
       except Exception as exc:  # pylint: disable=broad-except
         self.update_job(
@@ -1105,16 +1309,16 @@ class AppState:
         ojf_json.unlink(missing_ok=True)
         if not completed_ok:
           working_wav.unlink(missing_ok=True)
-        elif (
-            # Only delete the previous WAV if it is one of our own temp
-            # working files (never a user upload or the Resolve inbox WAV).
-            old_wav is not None
-            and old_wav != working_wav
-            and old_wav.parent == self.cache_dir
-            and old_wav.name.startswith("working_")
-            and old_wav.name.endswith("_16k.wav")
-        ):
-          old_wav.unlink(missing_ok=True)
+        else:
+          # Only our own temp working WAVs and replaced uploads are deleted
+          # (never the Resolve inbox WAV or files outside the cache dir).
+          self._discard_replaced_media(
+              old_wav, old_media, keep=(working_wav, src_path)
+          )
+        # Release the dedupe slot only if it still points at this job.
+        with self.lock:
+          if self._active_transcription == job_id:
+            self._active_transcription = None
 
     threading.Thread(target=_worker, daemon=True).start()
     return job_id
@@ -1234,6 +1438,8 @@ class AppState:
               if self.cancel_flags.get(job_id):
                 break
         rc = proc.wait()
+        if proc.stdout:
+          proc.stdout.close()  # Release the pipe fd once the child exited.
         with self.lock:
           self.active_procs.pop(job_id, None)
           if self.cancel_flags.get(job_id):
@@ -1272,23 +1478,29 @@ class AppState:
 
 
 def _safe_filename(raw_name: str) -> str:
-  """Sanitizes a client-supplied filename for use inside the cache dir.
+  """Sanitizes a filename for use inside the cache dir.
 
-  Security: URL-decodes, keeps only the basename (dropping any directory
-  components such as "../"), and replaces every character outside ASCII
-  alphanumerics, ".", "_", "-" and Latin-1/Latin Extended-A letters
-  (U+00C0..U+017F, so Spanish accents survive) with "_".
+  Security: keeps only the basename (dropping any directory components such
+  as "../"), and replaces every character outside ASCII alphanumerics, ".",
+  "_", "-" and Latin-1/Latin Extended-A letters (U+00C0..U+017F, so Spanish
+  accents survive) with "_". The bare names "." and ".." are rejected.
+
+  The input is NOT URL-decoded here: callers that receive a percent-encoded
+  name (the X-Filename upload header) decode it exactly once themselves, so
+  a literal "%41" in a real filename is never decoded a second time.
 
   Args:
-    raw_name: Possibly URL-encoded filename (e.g. the X-Filename header).
+    raw_name: Already-decoded filename (e.g. the decoded X-Filename header
+      or the active media name).
 
   Returns:
     A safe basename; "media_upload.bin" if nothing usable remains.
   """
-  decoded = urllib.parse.unquote(raw_name or "media.wav")
-  base = Path(decoded).name
+  base = Path(raw_name or "media.wav").name
   cleaned = re.sub(r"[^A-Za-z0-9._\-\u00C0-\u017F]", "_", base)
-  return cleaned or "media_upload.bin"
+  if cleaned in ("", ".", ".."):
+    return "media_upload.bin"
+  return cleaned
 
 
 # --- HTTP request handler ---
@@ -1404,15 +1616,27 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       The parsed object; {} when the body is empty or not a JSON object.
 
     Raises:
-      json.JSONDecodeError: Body is not valid JSON.
+      ValueError: Invalid Content-Length, non-UTF-8 body or invalid JSON.
+        The message is Spanish and safe to return to the UI as a 400.
     """
-    length = int(self.headers.get("Content-Length") or 0)
+    try:
+      length = int(self.headers.get("Content-Length") or 0)
+    except ValueError:
+      # The body length is unknown, so it cannot be skipped: drop keep-alive
+      # instead of parsing leftover bytes as the next request.
+      self.close_connection = True
+      raise ValueError("Content-Length inválido") from None
     if length <= 0:
       return {}
     raw = self.rfile.read(length)
     if not raw:
       return {}
-    parsed = json.loads(raw.decode("utf-8"))
+    try:
+      parsed = json.loads(raw.decode("utf-8"))
+    except UnicodeDecodeError:
+      raise ValueError("JSON inválido: el cuerpo no es UTF-8") from None
+    except json.JSONDecodeError as exc:
+      raise ValueError(f"JSON inválido: {exc}") from None
     return parsed if isinstance(parsed, dict) else {}
 
   # --- Static files and media streaming ---
@@ -1468,8 +1692,10 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     without downloading it all (WebKit requires 206 support to scrub
     video). Supported forms: "bytes=start-", "bytes=start-end" (end clamped
     to EOF) and the suffix form "bytes=-N" (last N bytes). Only the first
-    range of a multi-range header is honored. Unparseable or
-    unsatisfiable ranges fall back to a full 200 response rather than 416.
+    range of a multi-range header is honored. Per RFC 7233, a syntactically
+    valid but unsatisfiable range (start at/after EOF, or "bytes=-0") gets
+    416 with `Content-Range: bytes */<total>`; unparseable ranges (including
+    end < start) are ignored and the full file is sent with 200.
     The body is sent in 128 KiB chunks so memory use stays flat.
 
     Args:
@@ -1486,22 +1712,37 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     status = HTTPStatus.OK
     if total > 0 and range_hdr and range_hdr.startswith("bytes="):
       spec = range_hdr.replace("bytes=", "", 1).split(",")[0].strip()
-      parts = spec.split("-")
-      try:
-        if parts[0]:
-          start = int(parts[0])
-          if len(parts) > 1 and parts[1]:
-            end = min(total - 1, int(parts[1]))
-        elif len(parts) > 1 and parts[1]:
-          suffix = int(parts[1])
-          start = max(0, total - suffix)
-          end = total - 1
-        if 0 <= start <= end < total:
-          status = HTTPStatus.PARTIAL_CONTENT
+      m_range = re.fullmatch(r"(\d*)-(\d*)", spec)
+      if m_range and (m_range.group(1) or m_range.group(2)):
+        first, last = m_range.groups()
+        if first:
+          req_start = int(first)
+          req_end = int(last) if last else None
+          if req_end is not None and req_end < req_start:
+            pass  # Invalid syntax (RFC 7233 2.1): ignore, send 200.
+          elif req_start >= total:
+            status = HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE
+          else:
+            start = req_start
+            end = total - 1 if req_end is None else min(total - 1, req_end)
+            status = HTTPStatus.PARTIAL_CONTENT
+        elif int(last) == 0:
+          status = HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE
         else:
-          start, end = 0, total - 1
-      except ValueError:
-        start, end = 0, total - 1
+          start, end = max(0, total - int(last)), total - 1
+          status = HTTPStatus.PARTIAL_CONTENT
+
+    if status == HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE:
+      try:
+        self.send_response(status)
+        self.send_header("Content-Range", f"bytes */{total}")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", cache_control)
+        self.end_headers()
+      except (BrokenPipeError, ConnectionResetError):
+        pass
+      return
 
     length = 0 if total == 0 else (end - start + 1)
     try:
@@ -1698,15 +1939,18 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     path = parsed.path
 
     # POST /api/upload
-    #   Body: raw media bytes; headers X-Filename (URL-encoded) and
-    #   Content-Length (required).
+    #   Body: raw media bytes; headers X-Filename (URL-encoded, decoded
+    #   exactly once) and Content-Length (required, <= _MAX_UPLOAD_BYTES).
     #   Response: {ok, media_path, filename, size_bytes, duration_ms,
-    #   session}; 400 on bad/empty/incomplete upload.
-    #   Side effects: writes <cache_dir>/<sanitized name> (overwriting a
-    #   same-named file), replaces the active media, clears words/cues and
-    #   the exported video, bumps media_generation (invalidating running
-    #   transcriptions). Peaks are computed only for .wav uploads; other
-    #   formats get them after transcription.
+    #   session}; 400 on bad/empty/incomplete upload, 413 if too large.
+    #   Side effects: writes <cache_dir>/uploads/<sanitized name> (atomic
+    #   replace of a same-named upload; internal cache files can never be
+    #   hit), replaces the active media, deletes the previous upload and
+    #   its working WAV, clears words/cues and the exported video, bumps
+    #   media_generation (invalidating running transcriptions). Peaks are
+    #   computed only for .wav uploads (empty if the stdlib cannot decode
+    #   the WAV, e.g. 32-bit float); other formats get them after
+    #   transcription.
     if path == "/api/upload":
       raw_name = urllib.parse.unquote(
           self.headers.get("X-Filename", "media.wav")
@@ -1715,6 +1959,7 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       try:
         length = int(self.headers.get("Content-Length") or 0)
       except ValueError:
+        self.close_connection = True
         self._send_json(
             HTTPStatus.BAD_REQUEST,
             {"error": "Content-Length inválido"},
@@ -1726,18 +1971,37 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
             {"error": "Archivo vacío o sin Content-Length"},
         )
         return
-      dest = self.state.cache_dir / safe_name
+      if length > _MAX_UPLOAD_BYTES:
+        # Body is left unread, so drop keep-alive to avoid parsing it as
+        # the next request.
+        self.close_connection = True
+        self._send_json(
+            HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+            {"error": "El archivo supera el límite máximo de 8 GB."},
+        )
+        return
+      uploads_dir = self.state.uploads_dir
+      uploads_dir.mkdir(parents=True, exist_ok=True)
+      dest = uploads_dir / safe_name
+      # Write to a unique temp file and rename into place, so an aborted
+      # upload never destroys a same-named file that a running job may be
+      # reading, and the active media is only swapped when complete.
+      tmp_dest = uploads_dir / f".upload_{uuid.uuid4().hex[:10]}.part"
       remaining = length
-      # Stream to disk in 1 MiB chunks so large videos never sit in RAM.
-      with open(dest, "wb") as fp:
-        while remaining > 0:
-          chunk = self.rfile.read(min(1048576, remaining))
-          if not chunk:
-            break
-          fp.write(chunk)
-          remaining -= len(chunk)
+      try:
+        # Stream to disk in 1 MiB chunks so large videos never sit in RAM.
+        with open(tmp_dest, "wb") as fp:
+          while remaining > 0:
+            chunk = self.rfile.read(min(1048576, remaining))
+            if not chunk:
+              break
+            fp.write(chunk)
+            remaining -= len(chunk)
+        if remaining == 0:
+          os.replace(tmp_dest, dest)
+      finally:
+        tmp_dest.unlink(missing_ok=True)
       if remaining != 0:
-        dest.unlink(missing_ok=True)
         self._send_json(
             HTTPStatus.BAD_REQUEST,
             {"error": "Subida incompleta antes de terminar la transferencia"},
@@ -1746,9 +2010,11 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
 
       wave_info = {"peaks": [], "duration_ms": 0}
       if dest.suffix.lower() == ".wav":
-        wave_info = resolve_bridge.extract_waveform_peaks(str(dest))
+        wave_info = _safe_waveform_peaks(dest)
 
       with self.state.lock:
+        old_media = self.state.media_path
+        old_wav = self.state.wav_path
         self.state.media_path = dest
         self.state.wav_path = dest if dest.suffix.lower() == ".wav" else None
         self.state.exported_video_path = None
@@ -1760,6 +2026,7 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
         self.state._last_inbox_sig = None
         self.state.media_generation += 1
         self.state.demo_mode = False
+      self.state._discard_replaced_media(old_media, old_wav, keep=(dest,))
 
       self._send_json(
           HTTPStatus.OK,
@@ -1787,7 +2054,14 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       decoded_name = urllib.parse.unquote(raw_name)
       install_hdr = (self.headers.get("X-Install-Macos", "1") or "1").strip()
       install_to_macos = install_hdr.lower() not in ("0", "false", "no")
-      length = int(self.headers.get("Content-Length") or 0)
+      try:
+        length = int(self.headers.get("Content-Length") or 0)
+      except ValueError:
+        self.close_connection = True
+        self._send_json(
+            HTTPStatus.BAD_REQUEST, {"error": "Content-Length inválido"}
+        )
+        return
       if length <= 0:
         self._send_json(
             HTTPStatus.BAD_REQUEST,
@@ -1818,10 +2092,8 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     # All routes below take a JSON object body.
     try:
       body = self._read_json_body()
-    except json.JSONDecodeError as exc:
-      self._send_json(
-          HTTPStatus.BAD_REQUEST, {"error": f"JSON inválido: {exc}"}
-      )
+    except ValueError as exc:
+      self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
       return
 
     # POST /api/models/download
@@ -1900,31 +2172,50 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       return
 
     # POST /api/jobs/<job_id>/cancel
-    #   Body: ignored. Response: {ok} (false if the job id is unknown).
-    #   Side effects: marks the job cancelled and kills its child process.
+    #   Body: ignored. Response: {ok, status} (ok false / status null if the
+    #   job id is unknown; status is the job's state after the call).
+    #   Side effects: marks a queued/running job cancelled and kills its
+    #   child process; finished jobs are left unchanged.
     if path.startswith("/api/jobs/") and path.endswith("/cancel"):
       # "/api/jobs/<id>/cancel".split("/") -> ["", "api", "jobs", id, ...]
       parts = path.split("/")
       job_id = parts[3] if len(parts) >= 5 else ""
-      ok = self.state.cancel_job(job_id)
-      self._send_json(HTTPStatus.OK, {"ok": ok})
+      job_status = self.state.cancel_job(job_id)
+      self._send_json(
+          HTTPStatus.OK, {"ok": job_status is not None, "status": job_status}
+      )
       return
 
     # POST /api/demo
-    #   Body: {format_config?}. Response: {ok, session}.
+    #   Body: {format_config?}. Response: {ok, session}; 400 on a malformed
+    #   format_config.
     #   Side effects: replaces the active media with the demo session.
     if path == "/api/demo":
-      snap = self.state.load_demo(body.get("format_config"))
+      try:
+        snap = self.state.load_demo(body.get("format_config"))
+      except (ValueError, TypeError, AttributeError) as exc:
+        self._send_json(
+            HTTPStatus.BAD_REQUEST, {"error": f"format_config inválido: {exc}"}
+        )
+        return
       self._send_json(HTTPStatus.OK, {"ok": True, "session": snap})
       return
 
     # POST /api/resegment
     #   Body: {format_config}. Response: {ok, session}; 400 if there are no
-    #   transcribed words.
+    #   transcribed words or format_config is malformed.
     #   Side effects: rebuilds cues from `words` with the new config,
     #   discarding manual cue edits.
     if path == "/api/resegment":
-      cfg = spanish_nlp.SpanishFormatConfig.from_dict(body.get("format_config"))
+      try:
+        cfg = spanish_nlp.SpanishFormatConfig.from_dict(
+            body.get("format_config")
+        )
+      except (ValueError, TypeError, AttributeError) as exc:
+        self._send_json(
+            HTTPStatus.BAD_REQUEST, {"error": f"format_config inválido: {exc}"}
+        )
+        return
       with self.state.lock:
         if not self.state.words:
           self._send_json(
@@ -1947,20 +2238,36 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     #   last Resolve timeline metadata (defaults 24 fps, frame 86400 =
     #   01:00:00:00 at 24 fps, 1920x1080).
     #   Response: {ok, filename, mime_type, content} (file text; the UI
-    #   saves it); 400 on unknown format. No server-side state change.
+    #   saves it); 400 on unknown format or non-numeric/invalid fps, start
+    #   frame or style values. No server-side state change.
     if path == "/api/export":
       fmt = str(body.get("format", "srt")).lower()
-      style = exporters.StyleConfig.from_dict(body.get("style"))
       meta = self.state.bridge.read_timeline_meta()
-      fps = float(body.get("fps") or meta.get("fps") or 24.0)
-      raw_start_frame = body.get("timeline_start_frame")
-      if raw_start_frame is None:
-        raw_start_frame = meta.get("start_frame")
-      start_frame = int(
-          raw_start_frame if raw_start_frame is not None else 86400
-      )
-      width = int(meta.get("width") or 1920)
-      height = int(meta.get("height") or 1080)
+      try:
+        style = exporters.StyleConfig.from_dict(body.get("style"))
+        fps = float(body.get("fps") or meta.get("fps") or 24.0)
+        # JSON allows NaN/Infinity and negatives; none is a usable rate.
+        if not math.isfinite(fps) or fps <= 0:
+          raise ValueError(fps)
+        raw_start_frame = body.get("timeline_start_frame")
+        if raw_start_frame is None:
+          raw_start_frame = meta.get("start_frame")
+        start_frame = int(
+            raw_start_frame if raw_start_frame is not None else 86400
+        )
+        width = int(meta.get("width") or 1920)
+        height = int(meta.get("height") or 1080)
+      except (ValueError, TypeError, OverflowError, AttributeError):
+        self._send_json(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "error": (
+                    "Parámetros de exportación inválidos (fps,"
+                    " timeline_start_frame o estilo)."
+                )
+            },
+        )
+        return
       tl_name = str(meta.get("timeline_name") or "AutoSubs ES")
 
       with self.state.lock:
@@ -2013,8 +2320,10 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     #   {ok, bridge, session}.
     #   Side effects: if the inbox WAV's (path, mtime, size) signature
     #   differs from `_last_inbox_sig`, loads it as the active media, clears
-    #   words/cues/exported video and bumps media_generation. Unchanged
-    #   signatures are a no-op so repeated calls keep the user's edits.
+    #   words/cues/exported video, deletes a replaced upload/working WAV and
+    #   bumps media_generation. Unchanged signatures are a no-op so repeated
+    #   calls keep the user's edits. A WAV whose peaks cannot be decoded
+    #   (e.g. 32-bit float) still activates, with an empty waveform.
     if path == "/api/resolve/notify-export":
       inbox_wav = self.state.bridge.get_inbox_audio_path()
       if inbox_wav and inbox_wav.is_file():
@@ -2024,8 +2333,10 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
           changed = sig != self.state._last_inbox_sig
         if changed:
           # Peaks are computed outside the lock (file I/O).
-          wave_info = resolve_bridge.extract_waveform_peaks(str(inbox_wav))
+          wave_info = _safe_waveform_peaks(inbox_wav)
           with self.state.lock:
+            old_media = self.state.media_path
+            old_wav = self.state.wav_path
             self.state._last_inbox_sig = sig
             self.state.media_path = inbox_wav
             self.state.wav_path = inbox_wav
@@ -2037,6 +2348,9 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
             self.state.words = []
             self.state.cues = []
             self.state.media_generation += 1
+          self.state._discard_replaced_media(
+              old_media, old_wav, keep=(inbox_wav,)
+          )
       self._send_json(
           HTTPStatus.OK,
           {
@@ -2067,11 +2381,19 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       return
 
     # POST /api/resolve/jump
-    #   Body: {ms} (media time in milliseconds). Response: bridge result.
+    #   Body: {ms} (media time in milliseconds). Response: bridge result;
+    #   400 if ms is not a number.
     #   Side effects: moves the Resolve playhead (Studio API) or writes
     #   outbox/jump_tc.lua with the target timecode for the Lua script.
     if path == "/api/resolve/jump":
-      res = self.state.bridge.jump_playhead(int(body.get("ms", 0)))
+      try:
+        ms = int(body.get("ms", 0))
+      except (ValueError, TypeError, OverflowError):
+        self._send_json(
+            HTTPStatus.BAD_REQUEST, {"error": "'ms' debe ser un número"}
+        )
+        return
+      res = self.state.bridge.jump_playhead(ms)
       self._send_json(HTTPStatus.OK, res)
       return
 
@@ -2092,10 +2414,8 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       return
     try:
       body = self._read_json_body()
-    except json.JSONDecodeError as exc:
-      self._send_json(
-          HTTPStatus.BAD_REQUEST, {"error": f"JSON inválido: {exc}"}
-      )
+    except ValueError as exc:
+      self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
       return
 
     # PUT /api/settings
@@ -2112,9 +2432,15 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       return
 
     # PUT /api/cues
-    #   Body: {cues: [SubtitleCue dict, ...]} — the full edited cue list from
-    #   the cue editor (autosave).
-    #   Response: {ok, session} without peaks; 400 if `cues` is not a list.
+    #   Body: {cues: [SubtitleCue dict, ...], media_rev?} — the full edited
+    #   cue list from the cue editor (autosave). `media_rev` (optional, the
+    #   session value the edits were made against) enables an optimistic
+    #   concurrency check: if the active media changed meanwhile (e.g. the
+    #   Resolve Lua script's notify-export loaded a new inbox WAV), the
+    #   edits belong to the old audio and must not be applied.
+    #   Response: {ok, session} without peaks; 400 if `cues` is not a list
+    #   of valid cue objects; 409 {error, session} on a media_rev mismatch
+    #   (cues unchanged). Without `media_rev` no check is made.
     #   Side effects: replaces `state.cues` (words are untouched, so
     #   /api/resegment can still rebuild from the original transcription).
     raw_cues = body.get("cues", [])
@@ -2124,10 +2450,22 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       )
       return
 
+    check_rev = "media_rev" in body
     with self.state.lock:
       cfg = self.state.format_config
+      active_file = self.state.media_path or self.state.wav_path
+      generation = self.state.media_generation
+    # Stat outside the lock; the generation/path recheck below catches a
+    # media swap that happens in between.
+    if check_rev and body.get("media_rev") != _file_rev(active_file):
+      self._send_media_conflict()
+      return
+
+    try:
       updated: list[spanish_nlp.SubtitleCue] = []
       for idx, item in enumerate(raw_cues, start=1):
+        if not isinstance(item, dict):
+          raise TypeError("cada subtítulo debe ser un objeto")
         cue = spanish_nlp.SubtitleCue.from_dict(item)
         # Renumber 1..N and push overlapping cues forward so cues never
         # overlap; keep at least 80 ms on screen and re-spread word timings.
@@ -2140,12 +2478,45 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
           )
         spanish_nlp.refresh_cue_metrics(cue, cfg)
         updated.append(cue)
-      self.state.cues = updated
+    except (ValueError, TypeError, AttributeError, OverflowError) as exc:
+      # AttributeError: e.g. a `words` item that is not an object.
+      self._send_json(
+          HTTPStatus.BAD_REQUEST, {"error": f"Subtítulos inválidos: {exc}"}
+      )
+      return
+
+    with self.state.lock:
+      conflict = check_rev and (
+          self.state.media_generation != generation
+          or (self.state.media_path or self.state.wav_path) != active_file
+      )
+      if not conflict:
+        self.state.cues = updated
+    if conflict:
+      self._send_media_conflict()
+      return
 
     self._send_json(
         HTTPStatus.OK,
         {
             "ok": True,
+            "session": self.state.session_snapshot(include_peaks=False),
+        },
+    )
+
+  def _send_media_conflict(self) -> None:
+    """Sends the 409 reply of PUT /api/cues for a stale `media_rev`.
+
+    The body carries the current session (without peaks) so the UI can
+    reload the cues of the new media instead of retrying blindly.
+    """
+    self._send_json(
+        HTTPStatus.CONFLICT,
+        {
+            "error": (
+                "El audio activo cambió (por ejemplo, desde Resolve); los"
+                " cambios en los subtítulos no se aplicaron."
+            ),
             "session": self.state.session_snapshot(include_peaks=False),
         },
     )

@@ -9,6 +9,7 @@ ffmpeg, or GGML model downloads are required.
 
 from __future__ import annotations
 
+import http.client
 import io
 import json
 import os
@@ -17,6 +18,8 @@ import re
 import struct
 import tempfile
 import threading
+import time
+from typing import Any
 import unittest
 import urllib.error
 import urllib.request
@@ -1623,6 +1626,427 @@ EOF
     self.assertEqual(st_up, 200)
     up_json = json.loads(up_bytes.decode("utf-8"))
     self.assertEqual(up_json["filename"], "vídeo_final__es_.wav")
+
+  # --- Robustness regression tests (server bug-fix round) ---
+
+  def _raw_request(
+      self,
+      method: str,
+      path: str,
+      headers: dict[str, str],
+      body: bytes = b"",
+  ) -> tuple[int, dict[str, Any]]:
+    """Sends a request with verbatim headers (e.g. a bogus Content-Length).
+
+    urllib always computes Content-Length itself, so http.client is used to
+    exercise malformed headers.
+
+    Args:
+      method: HTTP method.
+      path: URL path.
+      headers: Headers sent exactly as given.
+      body: Raw body bytes sent after the headers.
+
+    Returns:
+      Tuple of (status code, parsed JSON body or {}).
+    """
+    conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+    try:
+      conn.putrequest(method, path)
+      for key, value in headers.items():
+        conn.putheader(key, value)
+      conn.endheaders()
+      if body:
+        conn.send(body)
+      resp = conn.getresponse()
+      raw = resp.read()
+      return resp.status, (json.loads(raw.decode("utf-8")) if raw else {})
+    finally:
+      conn.close()
+
+  def _expect_http_error(
+      self, path: str, method: str, body: bytes | dict | None, code: int
+  ) -> dict[str, Any]:
+    """Asserts that a request fails with `code` and returns its JSON body."""
+    with self.assertRaises(urllib.error.HTTPError) as ctx:
+      self._request(path, method=method, body=body)
+    try:
+      self.assertEqual(ctx.exception.code, code)
+      raw = ctx.exception.read()
+      return json.loads(raw.decode("utf-8")) if raw else {}
+    finally:
+      ctx.exception.close()
+
+  def _install_fake_whisper(self, sleep_s: float) -> Path:
+    """Creates a stub whisper-cli that sleeps, then writes a tiny OJF JSON.
+
+    Also writes a dummy turbo-q8 model so validation passes.
+
+    Args:
+      sleep_s: Seconds the stub sleeps, keeping its job in "running".
+
+    Returns:
+      Path to the executable stub.
+    """
+    fake_bin_dir = self.tmp_path / "bin"
+    fake_bin_dir.mkdir(exist_ok=True)
+    fake_whisper = fake_bin_dir / "whisper-cli"
+    fake_whisper.write_text(
+        f"""#!/bin/sh
+out_prefix=""
+prev=""
+for arg in "$@"; do
+  if [ "$arg" = "--help" ]; then
+    exit 0
+  fi
+  if [ "$prev" = "-of" ]; then
+    out_prefix="$arg"
+  fi
+  prev="$arg"
+done
+sleep {sleep_s}
+cat << 'EOF' > "${{out_prefix}}.json"
+{{"transcription": [{{
+  "offsets": {{"from": 0, "to": 1500}},
+  "text": " Hola a todos.",
+  "tokens": [
+    {{"text": " Hola", "offsets": {{"from": 100, "to": 500}}, "p": 0.95}},
+    {{"text": " a", "offsets": {{"from": 520, "to": 700}}, "p": 0.95}},
+    {{"text": " todos.", "offsets": {{"from": 720, "to": 1300}}, "p": 0.95}}
+  ]
+}}]}}
+EOF
+""",
+        encoding="utf-8",
+    )
+    fake_whisper.chmod(0o755)
+    models_dir = self.tmp_path / "app/models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    (models_dir / "ggml-large-v3-turbo-q8_0.bin").write_bytes(
+        b"0" * (2 * 1024 * 1024)
+    )
+    return fake_whisper
+
+  def _wait_job(self, job_id: str, timeout_s: float = 20.0) -> dict[str, Any]:
+    """Polls GET /api/jobs/<id> until the job leaves "running"."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+      _, _, raw = self._request(f"/api/jobs/{job_id}")
+      job = json.loads(raw.decode("utf-8"))
+      if job["status"] != "running":
+        return job
+      time.sleep(0.05)
+    self.fail(f"Job {job_id} did not finish in {timeout_s} s")
+
+  def _wait_transcription_slot_free(self) -> None:
+    """Waits until the transcription worker's finally block has run."""
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+      with self.state.lock:
+        if self.state._active_transcription is None:
+          return
+      time.sleep(0.02)
+    self.fail("Transcription dedupe slot was never released")
+
+  def test_upload_and_notify_survive_undecodable_wav_peaks(self) -> None:
+    """A WAV the wave module rejects (32-bit float) still activates."""
+    def _raise_wave_error(path: str, num_buckets: int | None = None):
+      """Simulates extract_waveform_peaks on a 32-bit float WAV."""
+      raise wave.Error("unknown format: 3")
+
+    inbox_wav = self.state.bridge.inbox_dir / "timeline_export.wav"
+    inbox_wav.parent.mkdir(parents=True, exist_ok=True)
+    resolve_bridge.generate_demo_wav(str(inbox_wav), duration_ms=500)
+    sample_wav = self.tmp_path / "float32.wav"
+    resolve_bridge.generate_demo_wav(str(sample_wav), duration_ms=500)
+    orig_extract = resolve_bridge.extract_waveform_peaks
+    resolve_bridge.extract_waveform_peaks = _raise_wave_error
+    try:
+      st_up, _, up_bytes = self._request(
+          "/api/upload",
+          method="POST",
+          body=sample_wav.read_bytes(),
+          headers={"X-Filename": "float32.wav"},
+      )
+      self.assertEqual(st_up, 200)
+      up_json = json.loads(up_bytes.decode("utf-8"))
+      self.assertEqual(up_json["duration_ms"], 0)
+      self.assertTrue(up_json["session"]["has_media"])
+      self.assertEqual(up_json["session"]["media_name"], "float32.wav")
+      self.assertEqual(up_json["session"]["peaks"], [])
+
+      st_n, _, n_bytes = self._request(
+          "/api/resolve/notify-export", method="POST", body={}
+      )
+      self.assertEqual(st_n, 200)
+      n_sess = json.loads(n_bytes.decode("utf-8"))["session"]
+      self.assertTrue(n_sess["has_media"])
+      self.assertEqual(n_sess["media_name"], "timeline_export.wav")
+      self.assertEqual(n_sess["peaks"], [])
+    finally:
+      resolve_bridge.extract_waveform_peaks = orig_extract
+
+  def test_upload_storage_cleanup_size_cap_and_single_decode(self) -> None:
+    """Uploads go to uploads/, replace old ones, are capped, decoded once."""
+    self._request("/api/demo", method="POST", body={})
+    cache_dir = self.tmp_path / "app/cache"
+    demo_wav = cache_dir / "demo_autosubs_es.wav"
+    demo_bytes = demo_wav.read_bytes()
+    inbox_wav = self.state.bridge.inbox_dir / "timeline_export.wav"
+    inbox_wav.parent.mkdir(parents=True, exist_ok=True)
+    resolve_bridge.generate_demo_wav(str(inbox_wav), duration_ms=400)
+    sample_wav = self.tmp_path / "clip.wav"
+    resolve_bridge.generate_demo_wav(str(sample_wav), duration_ms=500)
+    wav_bytes = sample_wav.read_bytes()
+
+    # A name equal to an internal cache file must not overwrite it.
+    _, _, b1 = self._request(
+        "/api/upload",
+        method="POST",
+        body=wav_bytes,
+        headers={"X-Filename": "demo_autosubs_es.wav"},
+    )
+    j1 = json.loads(b1.decode("utf-8"))
+    self.assertEqual(j1["filename"], "demo_autosubs_es.wav")
+    first_upload = Path(j1["media_path"])
+    self.assertEqual(first_upload.parent, cache_dir / "uploads")
+    self.assertEqual(demo_wav.read_bytes(), demo_bytes)
+
+    # "%2541" decodes once to "%41" (sanitized to "_41"), never to "A".
+    _, _, b2 = self._request(
+        "/api/upload",
+        method="POST",
+        body=wav_bytes,
+        headers={"X-Filename": "100%2541.wav"},
+    )
+    j2 = json.loads(b2.decode("utf-8"))
+    self.assertEqual(j2["filename"], "100_41.wav")
+    self.assertFalse(first_upload.exists())
+    self.assertTrue(Path(j2["media_path"]).is_file())
+    self.assertTrue(inbox_wav.is_file())
+    self.assertTrue(demo_wav.is_file())
+    self.assertEqual(
+        [p.name for p in (cache_dir / "uploads").iterdir()], ["100_41.wav"]
+    )
+
+    # ".." must not resolve to a directory outside uploads/.
+    _, _, b3 = self._request(
+        "/api/upload",
+        method="POST",
+        body=wav_bytes,
+        headers={"X-Filename": "%2E%2E"},
+    )
+    self.assertEqual(
+        json.loads(b3.decode("utf-8"))["filename"], "media_upload.bin"
+    )
+
+    orig_max = autosubs_server._MAX_UPLOAD_BYTES
+    autosubs_server._MAX_UPLOAD_BYTES = 16
+    try:
+      err = self._expect_http_error("/api/upload", "POST", wav_bytes, 413)
+      self.assertIn("límite", err["error"])
+    finally:
+      autosubs_server._MAX_UPLOAD_BYTES = orig_max
+
+  def test_malformed_requests_return_400(self) -> None:
+    """Bad Content-Length, non-UTF-8 JSON and bad numbers give JSON 400s."""
+    self._request("/api/demo", method="POST", body={})
+    for path in ("/api/demo", "/api/fonts/upload", "/api/upload"):
+      status, payload = self._raw_request(
+          "POST", path, {"Content-Length": "abc"}
+      )
+      self.assertEqual(status, 400, path)
+      self.assertIn("Content-Length", payload["error"])
+    status, payload = self._raw_request(
+        "POST",
+        "/api/demo",
+        {"Content-Length": "2", "Content-Type": "application/json"},
+        body=b"\xff\xfe",
+    )
+    self.assertEqual(status, 400)
+    self.assertIn("UTF-8", payload["error"])
+
+    for body in (
+        {"format": "srt", "fps": "abc"},
+        {"format": "srt", "fps": float("inf")},
+        {"format": "srt", "timeline_start_frame": "x"},
+    ):
+      self._expect_http_error("/api/export", "POST", body, 400)
+    for body in ({"ms": "abc"}, {"ms": None}):
+      self._expect_http_error("/api/resolve/jump", "POST", body, 400)
+    with self.state.lock:
+      cues_before = list(self.state.cues)
+    for body in (
+        {"cues": [1]},
+        {"cues": [{"start_ms": "x"}]},
+        {"cues": [{"start_ms": 0, "words": ["nope"]}]},
+    ):
+      self._expect_http_error("/api/cues", "PUT", body, 400)
+    with self.state.lock:
+      self.assertEqual(self.state.cues, cues_before)
+
+  def test_cancel_only_affects_active_jobs(self) -> None:
+    """Cancelling a finished job keeps its status; running jobs cancel."""
+    done_id = self.state.create_job("burnin")
+    self.state.update_job(done_id, status="done", result={"x": 1})
+    _, _, raw = self._request(
+        f"/api/jobs/{done_id}/cancel", method="POST", body={}
+    )
+    self.assertEqual(json.loads(raw), {"ok": True, "status": "done"})
+    with self.state.lock:
+      self.assertEqual(self.state.jobs[done_id]["status"], "done")
+      self.assertEqual(self.state.jobs[done_id]["result"], {"x": 1})
+
+    run_id = self.state.create_job("burnin")
+    _, _, raw = self._request(
+        f"/api/jobs/{run_id}/cancel", method="POST", body={}
+    )
+    self.assertEqual(json.loads(raw), {"ok": True, "status": "cancelled"})
+    _, _, raw = self._request("/api/jobs/nope/cancel", method="POST", body={})
+    self.assertEqual(json.loads(raw), {"ok": False, "status": None})
+
+  def test_transcription_and_benchmark_are_deduplicated(self) -> None:
+    """A second Transcribir/benchmark click joins the in-flight job."""
+    fake_whisper = self._install_fake_whisper(sleep_s=1)
+    inbox_wav = self.state.bridge.inbox_dir / "timeline_export.wav"
+    inbox_wav.parent.mkdir(parents=True, exist_ok=True)
+    resolve_bridge.generate_demo_wav(str(inbox_wav), duration_ms=1500)
+    self.state._make_benchmark_wav = (  # Skip macOS `say` (slow).
+        lambda out_wav, ffmpeg_bin: (
+            resolve_bridge.generate_demo_wav(str(out_wav), duration_ms=500),
+            0.5,
+        )[1]
+    )
+    orig_find = hardware_imac2017.find_binary
+    hardware_imac2017.find_binary = lambda cands: (
+        str(fake_whisper)
+        if "whisper-cli" in cands
+        else None if "ffmpeg" in cands else orig_find(cands)
+    )
+    try:
+      body = {"source": "inbox", "model_id": "turbo-q8"}
+      _, _, r1 = self._request("/api/transcribe", method="POST", body=body)
+      _, _, r2 = self._request("/api/transcribe", method="POST", body=body)
+      id1 = json.loads(r1)["job_id"]
+      self.assertEqual(json.loads(r2)["job_id"], id1)
+      self.assertEqual(self._wait_job(id1)["status"], "done")
+      self._wait_transcription_slot_free()
+
+      bench = {"model_id": "turbo-q8"}
+      _, _, b1 = self._request("/api/benchmark", method="POST", body=bench)
+      _, _, b2 = self._request("/api/benchmark", method="POST", body=bench)
+      bench_id = json.loads(b1)["job_id"]
+      self.assertEqual(json.loads(b2)["job_id"], bench_id)
+      self.assertEqual(self._wait_job(bench_id)["status"], "done")
+    finally:
+      hardware_imac2017.find_binary = orig_find
+
+  def test_inbox_transcription_survives_notify_and_stale_is_flagged(
+      self,
+  ) -> None:
+    """notify-export keeps inbox cues; a superseded job reports stale."""
+    fake_whisper = self._install_fake_whisper(sleep_s=0.5)
+    inbox_wav = self.state.bridge.inbox_dir / "timeline_export.wav"
+    inbox_wav.parent.mkdir(parents=True, exist_ok=True)
+    resolve_bridge.generate_demo_wav(str(inbox_wav), duration_ms=1500)
+    orig_find = hardware_imac2017.find_binary
+    hardware_imac2017.find_binary = lambda cands: (
+        str(fake_whisper)
+        if "whisper-cli" in cands
+        else None if "ffmpeg" in cands else orig_find(cands)
+    )
+    body = {"source": "inbox", "model_id": "turbo-q8"}
+    try:
+      _, _, r1 = self._request("/api/transcribe", method="POST", body=body)
+      job = self._wait_job(json.loads(r1)["job_id"])
+      self.assertEqual(job["status"], "done")
+      self.assertFalse(job["result"]["stale"])
+      self.assertGreater(job["result"]["cue_count"], 0)
+      self._wait_transcription_slot_free()
+
+      _, _, n_bytes = self._request(
+          "/api/resolve/notify-export", method="POST", body={}
+      )
+      n_sess = json.loads(n_bytes.decode("utf-8"))["session"]
+      self.assertEqual(n_sess["cue_count"], job["result"]["cue_count"])
+
+      # Media replaced while the job runs -> result discarded and flagged.
+      _, _, r2 = self._request("/api/transcribe", method="POST", body=body)
+      sample_wav = self.tmp_path / "otra.wav"
+      resolve_bridge.generate_demo_wav(str(sample_wav), duration_ms=400)
+      self._request(
+          "/api/upload",
+          method="POST",
+          body=sample_wav.read_bytes(),
+          headers={"X-Filename": "otra.wav"},
+      )
+      stale_job = self._wait_job(json.loads(r2)["job_id"])
+      self.assertEqual(stale_job["status"], "done")
+      self.assertTrue(stale_job["result"]["stale"])
+      self.assertEqual(stale_job["result"]["media_name"], "otra.wav")
+      self._wait_transcription_slot_free()
+      with self.state.lock:
+        self.assertEqual(self.state.cues, [])
+      # The superseded working WAVs were cleaned out of the cache.
+      self.assertEqual(
+          list((self.tmp_path / "app/cache").glob("working_*_16k.wav")), []
+      )
+      self.assertTrue(inbox_wav.is_file())
+    finally:
+      hardware_imac2017.find_binary = orig_find
+
+  def test_put_cues_rejects_stale_media_rev(self) -> None:
+    """PUT /api/cues with an outdated media_rev returns 409, cues intact."""
+    _, _, demo_bytes = self._request("/api/demo", method="POST", body={})
+    sess = json.loads(demo_bytes.decode("utf-8"))["session"]
+    cues = sess["cues"]
+    cues[0]["text"] = "Editado"
+    cues[0]["lines"] = ["Editado"]
+
+    _, _, ok_bytes = self._request(
+        "/api/cues",
+        method="PUT",
+        body={"cues": cues, "media_rev": sess["media_rev"]},
+    )
+    ok_sess = json.loads(ok_bytes.decode("utf-8"))["session"]
+    self.assertEqual(ok_sess["cues"][0]["text"], "Editado")
+
+    cues[0]["text"] = "No debe aplicarse"
+    cues[0]["lines"] = ["No debe aplicarse"]
+    err = self._expect_http_error(
+        "/api/cues", "PUT", {"cues": cues, "media_rev": "otro:1:2"}, 409
+    )
+    self.assertIn("error", err)
+    self.assertEqual(err["session"]["cues"][0]["text"], "Editado")
+    self.assertIsNone(err["session"]["peaks"])
+
+    # Backward compatible: no media_rev -> no check.
+    _, _, legacy = self._request("/api/cues", method="PUT", body={"cues": cues})
+    self.assertEqual(
+        json.loads(legacy)["session"]["cues"][0]["text"], "No debe aplicarse"
+    )
+
+  def test_unsatisfiable_range_returns_416(self) -> None:
+    """Valid-but-unsatisfiable ranges get 416; invalid syntax gets 200."""
+    self._request("/api/demo", method="POST", body={})
+    total = (self.tmp_path / "app/cache/demo_autosubs_es.wav").stat().st_size
+    for rng in (f"bytes={total}-", "bytes=-0"):
+      with self.assertRaises(urllib.error.HTTPError) as ctx:
+        self._request("/api/media", headers={"Range": rng})
+      self.assertEqual(ctx.exception.code, 416, rng)
+      self.assertEqual(
+          ctx.exception.headers.get("Content-Range"), f"bytes */{total}"
+      )
+      ctx.exception.close()
+    for rng in ("bytes=5-2", "bytes=abc"):
+      st, _, data = self._request("/api/media", headers={"Range": rng})
+      self.assertEqual(st, 200, rng)
+      self.assertEqual(len(data), total)
+    st, hdrs, data = self._request(
+        "/api/media", headers={"Range": f"bytes={total - 10}-{total + 50}"}
+    )
+    self.assertEqual(st, 206)
+    self.assertEqual(len(data), 10)
 
 
 class ResolveTemplatesAndBundleTest(unittest.TestCase):
