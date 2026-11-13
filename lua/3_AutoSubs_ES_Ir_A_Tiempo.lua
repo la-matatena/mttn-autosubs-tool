@@ -35,6 +35,9 @@ end
 if not fusion and Fusion then
   fusion = Fusion()
 end
+if not fusion and bmd and bmd.scriptapp then
+  fusion = bmd.scriptapp("Fusion")
+end
 
 --- Returns the current user's home directory.
 -- Prefers $HOME; if Resolve's sandbox hides os.getenv, derives it from the
@@ -66,30 +69,61 @@ end
 -- @return table|nil The loaded table, or nil on failure.
 -- @return string|nil Error message when every strategy fails.
 local function loadLuaModule(path)
+  local lastErr = nil
+
+  --- Runs a compiled chunk and accepts its result only if it is a table.
+  -- pcall keeps a corrupt payload from aborting the script, so the next
+  -- strategy still gets a chance.
+  -- @param fn function Compiled chunk.
+  -- @return table|nil The returned table, or nil (lastErr is updated).
+  local function runChunk(fn)
+    local ok, result = pcall(fn)
+    if ok and type(result) == "table" then return result end
+    lastErr = ok and "el archivo no devolvió una tabla" or tostring(result)
+    return nil
+  end
+
   if loadfile then
     local fn, err = loadfile(path)
-    if fn then return fn() end
+    if fn then
+      local tbl = runChunk(fn)
+      if tbl then return tbl end
+    else
+      lastErr = err
+    end
   end
   if io and io.open then
     local f = io.open(path, "r")
     if f then
       local src = f:read("*a")
       f:close()
-      local loader = load or loadstring
-      if loader then
-        local fn, err = loader(src)
-        if fn then return fn() end
+      -- loadstring first: in plain Lua 5.1 `load` only accepts a reader
+      -- function and throws on a string; Lua 5.2+ only has `load`.
+      local loader = loadstring or load
+      if loader and src then
+        local okLoad, fn, err = pcall(loader, src)
+        if not okLoad then fn, err = nil, fn end
+        if fn then
+          local tbl = runChunk(fn)
+          if tbl then return tbl end
+        else
+          lastErr = err
+        end
       end
     end
   end
   if bmd and bmd.readfile then
     local tblPath = path:gsub("%.lua$", ".table")
-    local tbl = bmd.readfile(tblPath) or bmd.readfile(path)
-    if type(tbl) == "table" then
+    local ok, tbl = pcall(function()
+      return bmd.readfile(tblPath) or bmd.readfile(path)
+    end)
+    if ok and type(tbl) == "table" then
       return tbl
     end
   end
-  return nil, "No se pudo cargar " .. path
+  local msg = "No se pudo cargar " .. path
+  if lastErr then msg = msg .. " (" .. tostring(lastErr) .. ")" end
+  return nil, msg
 end
 
 local homeDir = getHomeDir()
@@ -104,11 +138,34 @@ if not data or not data.timecode then
   return
 end
 
--- Exits silently when Resolve is unreachable or no timeline is open.
-if not resolve then return end
-local project = resolve:GetProjectManager():GetCurrentProject()
-local timeline = project and project:GetCurrentTimeline()
-if timeline then
-  timeline:SetCurrentTimecode(data.timecode)
-  print("[AutoSubs ES] Cabezal movido a " .. tostring(data.timecode))
+-- Exits with a clear message when Resolve, the project, or the timeline is
+-- missing, instead of doing nothing.
+if not resolve then
+  print("[AutoSubs ES] Error: No se pudo conectar con DaVinci Resolve 20.")
+  return
+end
+local projectManager = resolve:GetProjectManager()
+local project = projectManager and projectManager:GetCurrentProject()
+if not project then
+  print("[AutoSubs ES] Error: Abre un proyecto en DaVinci Resolve 20 antes de mover el cabezal.")
+  return
+end
+local timeline = project:GetCurrentTimeline()
+if not timeline then
+  print("[AutoSubs ES] Error: Abre un timeline activo en DaVinci Resolve 20 antes de mover el cabezal.")
+  return
+end
+
+local timecode = tostring(data.timecode)
+-- SetCurrentTimecode returns false (it does not throw) when the timecode is
+-- outside the timeline or the current page has no playhead (e.g. Media or
+-- Fusion), so the result must be checked before reporting success.
+local ok, moved = pcall(function()
+  return timeline:SetCurrentTimecode(timecode)
+end)
+if ok and moved then
+  print("[AutoSubs ES] Cabezal movido a " .. timecode)
+else
+  print("[AutoSubs ES] Error: no se pudo mover el cabezal a " .. timecode .. ".")
+  print("[AutoSubs ES] Comprueba que el tiempo esté dentro del timeline y que estés en la página Cut, Edit o Fairlight.")
 end

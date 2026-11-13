@@ -1810,6 +1810,90 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
       self.assertEqual(recorded.get("Opacity3"), 0.65)
       self.assertNotIn("Alpha3", recorded)
 
+  def _read_repo_text(self, rel_path: str) -> str:
+    """Returns a repo file's UTF-8 text.
+
+    Args:
+      rel_path: Path relative to the project root.
+
+    Returns:
+      The file contents.
+    """
+    root = package_bundle.find_project_root()
+    return (root / rel_path).read_text(encoding="utf-8")
+
+  def test_export_audio_lua_uses_wall_clock_and_restores_render(self) -> None:
+    """Script 1 times out on wall time and restores render settings."""
+    src = self._read_repo_text("lua/1_AutoSubs_ES_Exportar_Audio.lua")
+    # Wall-clock timeout instead of counting loop iterations.
+    self.assertIn("os.difftime(os.time(), t0)", src)
+    self.assertNotIn("elapsed = elapsed + 0.2", src)
+    self.assertIn("bmd.wait(seconds)", src)
+    # Previous render settings are captured and restored on every path.
+    self.assertIn("GetCurrentRenderFormatAndCodec", src)
+    self.assertIn("SaveAsNewRenderPreset", src)
+    self.assertIn("LoadRenderPreset", src)
+    self.assertIn("DeleteRenderPreset", src)
+    run_idx = src.index("pcall(runAudioRender)")
+    restore_idx = src.index("restoreRenderSettings()", run_idx)
+    # Restore happens right after the protected render, before any return.
+    self.assertNotIn("return", src[run_idx:restore_idx])
+
+  def test_insert_lua_matches_cues_by_frame_and_cleans_tracks(self) -> None:
+    """Script 2 pairs clips by start frame and removes failed tracks."""
+    src = self._read_repo_text("lua/2_AutoSubs_ES_Insertar_Subtitulos.lua")
+    # Cue/clip pairing is positional (start frame), never by list index.
+    self.assertIn("item:GetStart()", src)
+    self.assertIn("MATCH_TOLERANCE_FRAMES", src)
+    self.assertNotIn("local cue = cues[i]", src)
+    self.assertIn("no coinciden con ningún subtítulo", src)
+    # Tracks are added only after import and deleted if the append fails.
+    self.assertNotIn('timeline:AddTrack("subtitle")\n', src)
+    self.assertIn("DeleteTrack", src)
+    srt_block = src[src.index('if mode == "subtitle_srt"'):]
+    self.assertLess(
+        srt_block.index("ImportMedia"), srt_block.index("addNamedTrack(")
+    )
+    self.assertIn('removeAddedTrack("subtitle", subCount)', src)
+    self.assertIn('removeAddedTrack("video", trackIdx)', src)
+    # Exact template name anywhere in the tree beats an earlier fallback.
+    self.assertIn("return visit(folder) or substringMatch or fallback", src)
+
+  def test_lua_loaders_survive_corrupt_payloads(self) -> None:
+    """loadLuaModule pcall-protects chunks and is Lua 5.1-safe."""
+    for rel in (
+        "lua/2_AutoSubs_ES_Insertar_Subtitulos.lua",
+        "lua/3_AutoSubs_ES_Ir_A_Tiempo.lua",
+    ):
+      src = self._read_repo_text(rel)
+      self.assertIn("pcall(fn)", src, rel)
+      self.assertNotIn("return fn()", src, rel)
+      # Plain Lua 5.1 `load` rejects strings, so loadstring must win.
+      self.assertIn("loadstring or load", src, rel)
+      self.assertNotIn("load or loadstring", src, rel)
+
+  def test_jump_lua_reports_failures(self) -> None:
+    """Script 3 checks SetCurrentTimecode and reports missing Resolve."""
+    src = self._read_repo_text("lua/3_AutoSubs_ES_Ir_A_Tiempo.lua")
+    self.assertIn('bmd.scriptapp("Fusion")', src)
+    self.assertNotIn("if not resolve then return end", src)
+    self.assertIn("No se pudo conectar con DaVinci Resolve 20", src)
+    self.assertIn("if ok and moved then", src)
+    self.assertIn("no se pudo mover el cabezal", src)
+
+  def test_installer_optional_steps_are_non_fatal(self) -> None:
+    """venv and Homebrew failures warn instead of aborting under set -e."""
+    src = self._read_repo_text("install_imac.sh")
+    self.assertIn('if ! "${HOST_PYTHON}" -m venv "${VENV_DIR}"; then', src)
+    self.assertIn('if ! "${BREW_BIN}" install "${pkg}"; then', src)
+    # No bare (fatal) invocations of the optional steps remain.
+    self.assertIsNone(
+        re.search(r'^\s*"\$\{HOST_PYTHON\}" -m venv', src, re.MULTILINE)
+    )
+    self.assertIsNone(
+        re.search(r'^\s*"\$\{BREW_BIN\}" install', src, re.MULTILINE)
+    )
+
 
 if __name__ == "__main__":
   unittest.main()

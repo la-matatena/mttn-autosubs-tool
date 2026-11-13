@@ -80,34 +80,66 @@ end
 --      bmd.readfile only parses a bare `{ ... }` table literal and returns
 --      nil for a module that starts with `return`, which is why
 --      resolve_bridge.py writes both .lua and .table versions.
+-- Running a chunk is pcall-protected and must yield a table, so a corrupt or
+-- half-written payload falls through to the next strategy instead of
+-- aborting the script.
 -- @param path string Absolute path to the ".lua" module.
 -- @return table|nil The loaded table, or nil on failure.
 -- @return string|nil Error message when every strategy fails.
 local function loadLuaModule(path)
+  local lastErr = nil
+
+  --- Runs a compiled chunk and accepts its result only if it is a table.
+  -- @param fn function Compiled chunk.
+  -- @return table|nil The returned table, or nil (lastErr is updated).
+  local function runChunk(fn)
+    local ok, result = pcall(fn)
+    if ok and type(result) == "table" then return result end
+    lastErr = ok and "el archivo no devolvió una tabla" or tostring(result)
+    return nil
+  end
+
   if loadfile then
     local fn, err = loadfile(path)
-    if fn then return fn() end
+    if fn then
+      local tbl = runChunk(fn)
+      if tbl then return tbl end
+    else
+      lastErr = err
+    end
   end
   if io and io.open then
     local f = io.open(path, "r")
     if f then
       local src = f:read("*a")
       f:close()
-      local loader = load or loadstring
-      if loader then
-        local fn, err = loader(src)
-        if fn then return fn() end
+      -- loadstring first: in plain Lua 5.1 `load` only accepts a reader
+      -- function and throws on a string; Lua 5.2+ only has `load`.
+      local loader = loadstring or load
+      if loader and src then
+        local okLoad, fn, err = pcall(loader, src)
+        if not okLoad then fn, err = nil, fn end
+        if fn then
+          local tbl = runChunk(fn)
+          if tbl then return tbl end
+        else
+          lastErr = err
+        end
       end
     end
   end
   if bmd and bmd.readfile then
     local tblPath = path:gsub("%.lua$", ".table")
-    local tbl = bmd.readfile(tblPath) or bmd.readfile(path)
-    if type(tbl) == "table" then
+    local ok, tbl = pcall(function()
+      return bmd.readfile(tblPath) or bmd.readfile(path)
+    end)
+    if ok and type(tbl) == "table" then
       return tbl
     end
   end
-  return nil, "No se pudo cargar " .. path
+  local msg = "No se pudo cargar " .. path
+  if lastErr then msg = msg .. " (" .. tostring(lastErr) .. ")" end
+  return nil, msg
 end
 
 local homeDir = getHomeDir()
@@ -147,52 +179,106 @@ if #cues == 0 then
   return
 end
 
---- Finds the Text+ template clip to use for every cue, searching depth-first.
--- An exact name match, or a case-insensitive substring match of
--- `targetName`, wins immediately. Otherwise the first clip whose name
--- contains "autosubs" or "text+" is kept as a fallback. Note that a
--- subfolder's result (including its own fallback) is returned before the
--- current folder's fallback.
--- @param folder Folder|nil Media Pool folder to search; nil returns nil.
+--- Finds the Text+ template clip to use for every cue.
+-- Walks the whole Media Pool tree depth-first (a folder's clips, then its
+-- subfolders) in a single pass and ranks candidates so that a better match
+-- anywhere in the tree beats a weaker one found earlier:
+--   1. Exact name match with `targetName` (returned immediately).
+--   2. First case-insensitive substring match of `targetName`.
+--   3. First clip whose name contains "autosubs" or "text+".
+-- @param folder Folder|nil Media Pool root folder to search; nil returns nil.
 -- @param targetName string Preferred template name ("" accepts any match).
 -- @return MediaPoolItem|nil Matching template clip, or nil if none exists.
 local function findTemplateClip(folder, targetName)
-  if not folder then return nil end
+  targetName = targetName or ""
+  local lowerTarget = string.lower(targetName)
+  local substringMatch = nil
   local fallback = nil
-  local clips = folder:GetClipList() or {}
-  for _, clip in ipairs(clips) do
-    local name = clip:GetClipProperty("Clip Name") or clip:GetName() or ""
-    local lname = string.lower(name)
-    if name == targetName or (targetName ~= "" and string.find(lname, string.lower(targetName), 1, true)) then
-      return clip
+
+  --- Recursively scans one folder; returns an exact match or nil.
+  -- @param f Folder|nil Folder to scan.
+  -- @return MediaPoolItem|nil Exact-name match, if any.
+  local function visit(f)
+    if not f then return nil end
+    local clips = f:GetClipList() or {}
+    for _, clip in ipairs(clips) do
+      local name = clip:GetClipProperty("Clip Name") or clip:GetName() or ""
+      if targetName ~= "" and name == targetName then
+        return clip
+      end
+      local lname = string.lower(name)
+      if not substringMatch and lowerTarget ~= "" and string.find(lname, lowerTarget, 1, true) then
+        substringMatch = clip
+      end
+      if not fallback and (string.find(lname, "autosubs", 1, true) or string.find(lname, "text+", 1, true)) then
+        fallback = clip
+      end
     end
-    if not fallback and (string.find(lname, "autosubs", 1, true) or string.find(lname, "text+", 1, true)) then
-      fallback = clip
+    local subs = f:GetSubFolderList() or {}
+    for _, sub in ipairs(subs) do
+      local found = visit(sub)
+      if found then return found end
     end
+    return nil
   end
-  local subs = folder:GetSubFolderList() or {}
-  for _, sub in ipairs(subs) do
-    local found = findTemplateClip(sub, targetName)
-    if found then return found end
+
+  return visit(folder) or substringMatch or fallback
+end
+
+--- Adds a new track and gives it a name.
+-- Verifies that the track count actually grew so a refused AddTrack never
+-- makes the script write into (or later delete) one of the user's tracks.
+-- @param trackType string "video", "audio", or "subtitle".
+-- @param name string Track name to set (ignored on builds without
+--   SetTrackName).
+-- @return number|nil Index of the new track, or nil if it was not added.
+local function addNamedTrack(trackType, name)
+  local before = timeline:GetTrackCount(trackType) or 0
+  local okAdd = pcall(function() timeline:AddTrack(trackType) end)
+  local after = timeline:GetTrackCount(trackType) or 0
+  if not okAdd or after ~= before + 1 then
+    return nil
   end
-  return fallback
+  -- SetTrackName is missing on some builds; the track keeps its default name.
+  pcall(function()
+    timeline:SetTrackName(trackType, after, name)
+  end)
+  return after
+end
+
+--- Deletes a track this script just added, so a failed insert leaves the
+-- timeline as it was. Only removes it while it is still empty.
+-- @param trackType string "video", "audio", or "subtitle".
+-- @param index number Track index returned by addNamedTrack().
+local function removeAddedTrack(trackType, index)
+  if not index then return end
+  local items = timeline:GetItemListInTrack(trackType, index) or {}
+  if #items > 0 then return end
+  local ok, deleted = pcall(function()
+    return timeline:DeleteTrack(trackType, index)
+  end)
+  if not ok or not deleted then
+    print(string.format("[AutoSubs ES] Aviso: no se pudo eliminar la pista vacía %s %d; bórrala manualmente.", trackType, index))
+  end
 end
 
 -- Mode subtitle_srt: native subtitle (ST) track. ST tracks cannot host Fusion
 -- effects, so styling is limited to Resolve's track-level caption settings.
 if mode == "subtitle_srt" then
-  timeline:AddTrack("subtitle")
-  local subCount = timeline:GetTrackCount("subtitle") or 1
-  -- SetTrackName is missing on some builds; the track keeps its default name.
-  pcall(function()
-    timeline:SetTrackName("subtitle", subCount, trackName)
-  end)
-
   -- srt_path holds zero-based times, so the clip is placed at the timeline
   -- start (recordFrame, absolute frames) rather than at 00:00:00:00.
+  -- The track is added only after the import succeeds, and removed again if
+  -- the append fails, so a failed run never leaves an empty ST track behind.
   local srtPath = payload.srt_path
   local imported = mediaPool:ImportMedia({ srtPath })
+  local subCount = nil
   if imported and #imported > 0 then
+    subCount = addNamedTrack("subtitle", trackName)
+    if not subCount then
+      print("[AutoSubs ES] Error: Resolve no permitió crear una pista de subtítulos nueva.")
+    end
+  end
+  if subCount then
     local startFrame = timeline:GetStartFrame() or payload.timeline_start_frame or 86400
     local appended = mediaPool:AppendToTimeline({
       {
@@ -212,6 +298,7 @@ if mode == "subtitle_srt" then
         return
       end
     end
+    removeAddedTrack("subtitle", subCount)
   end
   -- Manual fallback: the *_resolve_tc.srt variant uses absolute timeline
   -- timecodes, which is what File > Import > Subtitle expects.
@@ -249,33 +336,80 @@ if not templateClip then
   return
 end
 
-timeline:AddTrack("video")
-local trackIdx = timeline:GetTrackCount("video") or 1
-pcall(function()
-  timeline:SetTrackName("video", trackIdx, trackName)
-end)
+local trackIdx = addNamedTrack("video", trackName)
+if not trackIdx then
+  print("[AutoSubs ES] Error: Resolve no permitió crear una pista de vídeo nueva para los clips Text+.")
+  return
+end
 
 local tlStart = timeline:GetStartFrame() or payload.timeline_start_frame or 86400
 -- One clipInfo per cue. Frames are timeline frames: recordFrame is absolute
 -- (timeline start + cue offset); startFrame/endFrame trim the template and
 -- endFrame is inclusive, hence duration_frames - 1.
+-- cuesByFrame maps each expected record frame to the cue indices placed
+-- there, so appended items can be paired with their cue by position.
 local clipInfos = {}
-for _, cue in ipairs(cues) do
+local cuesByFrame = {}
+for i, cue in ipairs(cues) do
   local dur = math.max(1, (cue.duration_frames or 24) - 1)
+  local recordFrame = math.floor(tlStart + (cue.start_frame_offset or 0) + 0.5)
   table.insert(clipInfos, {
     mediaPoolItem = templateClip,
     startFrame = 0,
     endFrame = dur,
-    recordFrame = tlStart + (cue.start_frame_offset or 0),
+    recordFrame = recordFrame,
     trackIndex = trackIdx,
   })
+  local bucket = cuesByFrame[recordFrame]
+  if not bucket then
+    bucket = {}
+    cuesByFrame[recordFrame] = bucket
+  end
+  table.insert(bucket, i)
 end
 
 local appended = mediaPool:AppendToTimeline(clipInfos)
 -- Same quirk as above: a refused append can come back as {} rather than nil.
 if not appended or #appended == 0 then
+  removeAddedTrack("video", trackIdx)
   print("[AutoSubs ES] Error: AppendToTimeline no pudo añadir los clips Text+.")
   return
+end
+
+-- Max distance, in timeline frames, between an item's start and its cue's
+-- recordFrame. Covers rounding by Resolve; real cues on one track never start
+-- this close to each other, and the exact frame is always tried first.
+local MATCH_TOLERANCE_FRAMES = 1
+local cueClaimed = {}
+
+--- Finds the cue an appended Text+ item belongs to, by timeline position.
+-- Resolve can skip clips it refuses (e.g. overlaps) or return items in a
+-- different order, so pairing appended[i] with cues[i] could put one cue's
+-- text on another cue's clip. Each cue can be claimed only once.
+-- @param item TimelineItem Appended item.
+-- @return number|nil Index into `cues`, or nil when no cue starts within
+--   MATCH_TOLERANCE_FRAMES of the item's start frame.
+local function matchCueForItem(item)
+  if not item or not item.GetStart then return nil end
+  local ok, start = pcall(function() return item:GetStart() end)
+  start = ok and tonumber(start) or nil
+  if not start then return nil end
+  start = math.floor(start + 0.5)
+  for delta = 0, MATCH_TOLERANCE_FRAMES do
+    local frames = (delta == 0) and { start } or { start - delta, start + delta }
+    for _, frame in ipairs(frames) do
+      local bucket = cuesByFrame[frame]
+      if bucket then
+        for _, idx in ipairs(bucket) do
+          if not cueClaimed[idx] then
+            cueClaimed[idx] = true
+            return idx
+          end
+        end
+      end
+    end
+  end
+  return nil
 end
 
 -- Flipbook animation settings. Older payloads may lack font_variants, so a
@@ -294,10 +428,16 @@ if animMode == "boil" or animMode == "font_cycle_boil" then
 end
 
 local updated = 0
--- Assumes appended[i] corresponds to cues[i] (Resolve returns items in
--- clipInfos order). Each Text+ title clip owns one Fusion comp.
-for i, item in ipairs(appended) do
-  local cue = cues[i]
+local unmatchedItems = 0
+-- Items are paired with cues by timeline start frame (matchCueForItem), not
+-- by index; an item without a matching cue is left unstyled rather than
+-- risking another cue's text. Each Text+ title clip owns one Fusion comp.
+for _, item in ipairs(appended) do
+  local cueIdx = matchCueForItem(item)
+  local cue = cueIdx and cues[cueIdx] or nil
+  if not cue then
+    unmatchedItems = unmatchedItems + 1
+  end
   if cue and item and item.GetFusionCompCount and item:GetFusionCompCount() > 0 then
     local comp = item:GetFusionCompByIndex(1)
     if comp then
@@ -382,6 +522,17 @@ for i, item in ipairs(appended) do
       end
     end
   end
+end
+
+local unmatchedCues = 0
+for i = 1, #cues do
+  if not cueClaimed[i] then unmatchedCues = unmatchedCues + 1 end
+end
+if unmatchedItems > 0 then
+  print(string.format("[AutoSubs ES] Aviso: %d clips Text+ no coinciden con ningún subtítulo por posición y se dejaron sin texto; revísalos en la pista V%d.", unmatchedItems, trackIdx))
+end
+if unmatchedCues > 0 then
+  print(string.format("[AutoSubs ES] Aviso: %d subtítulos no se insertaron (Resolve no colocó su clip en el frame esperado).", unmatchedCues))
 end
 
 print(string.format("[AutoSubs ES] ¡Listo! %d clips Text+ insertados en pista V%d (%s).", updated, trackIdx, trackName))

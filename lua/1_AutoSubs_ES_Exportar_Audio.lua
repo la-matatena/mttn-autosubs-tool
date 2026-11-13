@@ -164,63 +164,168 @@ end
 
 print("[AutoSubs ES] Exportando mezcla de audio del timeline: " .. timelineName)
 
--- Audio-only render job. Note: this changes the project's current render
--- settings (format, codec, target dir) and does not restore them afterwards.
-local formatOk = project:SetCurrentRenderFormatAndCodec("wav", "LinearPCM")
-if not formatOk then
-  print("[AutoSubs ES] Aviso: usando formato WAV por defecto.")
+-- Render settings snapshot --
+-- The audio job below changes the project's current render settings (format,
+-- codec, TargetDir, CustomName, ExportVideo, range...). The scripting API has
+-- no GetRenderSettings(), so the snapshot is a temporary user render preset
+-- (a preset captures the Deliver page settings; whether it also keeps the
+-- output location may vary by Resolve build) plus
+-- GetCurrentRenderFormatAndCodec() as a fallback if the preset path fails.
+-- Every call is wrapped in pcall because older or Free builds may lack some
+-- of these methods.
+
+-- Fixed name so a stale preset left by a crashed run is cleaned up next time.
+local RESTORE_PRESET_NAME = "AutoSubsES_Restaurar_Render_Temporal"
+
+--- Calls a method on a Resolve API object, swallowing missing-method errors.
+-- @param obj table|nil API object (e.g. the project).
+-- @param method string Method name.
+-- @param ... any Arguments forwarded to the method.
+-- @return boolean True when the method exists and returned a truthy value.
+-- @return any The method's first return value (nil on failure).
+local function safeCall(obj, method, ...)
+  if not obj then return false, nil end
+  local hasFn, fn = pcall(function() return obj[method] end)
+  if not hasFn or not fn then return false, nil end
+  local ok, result = pcall(fn, obj, ...)
+  if ok and result then return true, result end
+  return false, nil
 end
+
+local prevFormat, prevCodec = nil, nil
+do
+  local ok, fc = safeCall(project, "GetCurrentRenderFormatAndCodec")
+  if ok and type(fc) == "table" then
+    prevFormat, prevCodec = fc.format, fc.codec
+  end
+end
+
+safeCall(project, "DeleteRenderPreset", RESTORE_PRESET_NAME)
+local presetSaved = safeCall(project, "SaveAsNewRenderPreset", RESTORE_PRESET_NAME)
+
+--- Restores the render settings captured before the audio export.
+-- Loads (then deletes) the temporary preset; if that is unavailable, at
+-- least puts back the previous format/codec. Called once, after the render
+-- attempt, whether it succeeded, failed, or threw.
+local function restoreRenderSettings()
+  local restored = false
+  if presetSaved then
+    restored = safeCall(project, "LoadRenderPreset", RESTORE_PRESET_NAME)
+    safeCall(project, "DeleteRenderPreset", RESTORE_PRESET_NAME)
+  end
+  if not restored and prevFormat and prevCodec then
+    restored = safeCall(project, "SetCurrentRenderFormatAndCodec", prevFormat, prevCodec)
+  end
+  if not restored then
+    print("[AutoSubs ES] Aviso: no se pudieron restaurar los ajustes de render anteriores; revísalos en la página Deliver.")
+  end
+end
+
+-- Render job --
 
 -- Resolve appends the container extension, producing timeline_audio.wav.
 local customName = "timeline_audio"
-project:SetRenderSettings({
-  TargetDir = inboxDir,
-  CustomName = customName,
-  ExportVideo = false,
-  ExportAudio = true,
-  AudioCodec = "LinearPCM",
-  AudioSampleRate = 48000,
-  AudioBitDepth = 16,
-  SelectAllFrames = true, -- Whole timeline, ignoring any In/Out marks.
-})
+-- Wall-clock budget for the render and the polling interval, in seconds.
+local RENDER_TIMEOUT_S = 180
+local POLL_INTERVAL_S = 0.2
 
-local jobId = project:AddRenderJob()
-if not jobId then
-  print("[AutoSubs ES] Error: no se pudo añadir el trabajo de render de audio.")
-  return
-end
-
-local started = project:StartRendering(jobId)
-if not started then
-  print("[AutoSubs ES] Error: Resolve no pudo iniciar el render de audio.")
-  return
-end
-
--- StartRendering returns immediately, so poll IsRenderingInProgress every
--- 0.2 s for at most 180 s of wall time; a render still running after that is
--- reported as a timeout and the server is not notified.
--- Caveat: `elapsed` counts loop iterations, not real time. If bmd.wait is
--- unavailable the loop spins without sleeping and exhausts the budget almost
--- instantly, so any non-trivial render would be reported as timed out.
-local elapsed = 0.0
-while project:IsRenderingInProgress() and elapsed < 180.0 do
+--- Sleeps between render polls without burning CPU.
+-- bmd.wait is the native Fusion sleep; when a host lacks it, a short shell
+-- `sleep` keeps the loop from spinning. If neither exists the call returns
+-- immediately (the wall-clock timeout still bounds the loop).
+-- @param seconds number Time to sleep, in seconds.
+local function sleepBriefly(seconds)
   if bmd and bmd.wait then
-    bmd.wait(0.2)
+    bmd.wait(seconds)
+    return
   end
-  elapsed = elapsed + 0.2
+  if os and os.execute then
+    pcall(function() os.execute("sleep " .. tostring(seconds)) end)
+  end
 end
-local timedOut = project:IsRenderingInProgress()
 
--- Drop the job so repeated runs do not pile up entries in the Render Queue.
-pcall(function()
-  project:DeleteRenderJob(jobId)
-end)
+--- Configures, queues, and waits for the audio-only render job.
+-- Mutates the project's render settings; the caller restores them with
+-- restoreRenderSettings() whatever this returns or throws.
+-- @return string Outcome: "ok", "no_job", "not_started", or "timeout".
+-- @return number Wall-clock seconds spent waiting for the render.
+local function runAudioRender()
+  local formatOk = project:SetCurrentRenderFormatAndCodec("wav", "LinearPCM")
+  if not formatOk then
+    print("[AutoSubs ES] Aviso: usando formato WAV por defecto.")
+  end
+
+  project:SetRenderSettings({
+    TargetDir = inboxDir,
+    CustomName = customName,
+    ExportVideo = false,
+    ExportAudio = true,
+    AudioCodec = "LinearPCM",
+    AudioSampleRate = 48000,
+    AudioBitDepth = 16,
+    SelectAllFrames = true, -- Whole timeline, ignoring any In/Out marks.
+  })
+
+  local jobId = project:AddRenderJob()
+  if not jobId then
+    return "no_job", 0
+  end
+
+  local started = project:StartRendering(jobId)
+  if not started then
+    pcall(function() project:DeleteRenderJob(jobId) end)
+    return "not_started", 0
+  end
+
+  -- StartRendering returns immediately, so poll IsRenderingInProgress for at
+  -- most RENDER_TIMEOUT_S of wall time. os.time() is used rather than
+  -- os.clock(): os.clock() measures this process's CPU time, which barely
+  -- advances while bmd.wait sleeps (and can run faster than real time while
+  -- Resolve's render threads are busy), so it cannot bound a wait. os.time()
+  -- has 1 s resolution, which is plenty for a 180 s budget. Without os.time
+  -- the loop falls back to counting poll intervals.
+  local hasClock = os and os.time and os.difftime
+  local t0 = hasClock and os.time() or 0
+  local elapsed = 0
+  while project:IsRenderingInProgress() and elapsed < RENDER_TIMEOUT_S do
+    sleepBriefly(POLL_INTERVAL_S)
+    if hasClock then
+      elapsed = os.difftime(os.time(), t0)
+    else
+      elapsed = elapsed + POLL_INTERVAL_S
+    end
+  end
+  local timedOut = project:IsRenderingInProgress()
+
+  -- Drop the job so repeated runs do not pile up entries in the Render Queue.
+  pcall(function()
+    project:DeleteRenderJob(jobId)
+  end)
+
+  return timedOut and "timeout" or "ok", elapsed
+end
+
+local renderOk, outcome, elapsed = pcall(runAudioRender)
+restoreRenderSettings()
 
 if prevPage and resolve.OpenPage then
   pcall(function() resolve:OpenPage(prevPage) end)
 end
 
-if timedOut then
+if not renderOk then
+  print("[AutoSubs ES] Error inesperado durante el render de audio: " .. tostring(outcome))
+  return
+end
+elapsed = tonumber(elapsed) or 0
+if outcome == "no_job" then
+  print("[AutoSubs ES] Error: no se pudo añadir el trabajo de render de audio.")
+  return
+end
+if outcome == "not_started" then
+  print("[AutoSubs ES] Error: Resolve no pudo iniciar el render de audio.")
+  return
+end
+if outcome == "timeout" then
   print(string.format("[AutoSubs ES] Error: el render de audio superó el límite de %.0fs; no se notificó al servidor.", elapsed))
   return
 end
