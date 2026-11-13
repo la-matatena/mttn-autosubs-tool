@@ -1,4 +1,40 @@
-"""Spanish NLP engine: whisper.cpp -ojf parsing, RAE wrapping, and repair."""
+"""Spanish NLP engine: whisper.cpp -ojf parsing, RAE wrapping, and repair.
+
+This module turns raw whisper.cpp output into broadcast-ready Spanish
+subtitle cues. It has no I/O and no third-party dependencies, so it is safe
+to import from the HTTP server (`autosubs_server.py`), the Resolve bridge,
+and the unit tests (`autosubs_es_test.py`).
+
+Pipeline (the order matters; each stage assumes the previous one ran):
+
+  1. `parse_whisper_ojf(ojf_data)`: reads `whisper-cli --output-json-full`
+     (`-ojf`) JSON, drops control/timestamp tokens and hallucinated segments,
+     merges BPE sub-word tokens into whole words, and recovers accented words
+     that BPE split into U+FFFD bytes. Returns a flat `list[WordTiming]`.
+  2. `clean_spanish_words(words, config)`: optional muletilla removal,
+     domain phonetic fixes (e.g. "mipel" -> "meeple"), glossary casing,
+     opening ¿/¡ repair, and uppercase. Returns new `WordTiming` copies.
+  3. `segment_and_wrap_spanish(words, config)`: groups words into cues
+     (pauses, speaker changes, CPL/CPS/duration limits, clause ends), wraps
+     each cue into balanced lines with RAE/Netflix penalties, then polishes
+     durations so cues never overlap. NOTE: it calls `clean_spanish_words`
+     itself, so callers normally go straight from step 1 to step 3.
+
+Data model and units:
+  * All times are integer milliseconds (ms) relative to the start of the
+    transcribed audio (not timeline timecode; see `exporters.py` for TC).
+  * `WordTiming`: one displayed token (word plus attached punctuation).
+  * `SubtitleCue`: one on-screen subtitle with wrapped `lines` and the
+    `words` that compose it (used for karaoke and the cue editor).
+  * Invariant enforced by `align_words_to_lines` (used whenever a cue is
+    rebuilt from a dict, e.g. after UI edits): a cue's words are sorted,
+    non-overlapping (`words[i].start_ms >= words[i-1].end_ms`), and lie
+    within `[cue.start_ms, cue.end_ms]`. `parse_whisper_ojf` only
+    guarantees non-decreasing word starts.
+
+Spanish word lists, prompts, and RAE rule data are intentionally kept in
+Spanish; do not translate them, they are matched against transcribed text.
+"""
 
 from __future__ import annotations
 
@@ -8,9 +44,22 @@ import re
 from typing import Any
 
 
+# --- Data model ---
+
+
 @dataclass
 class WordTiming:
-  """Single word with millisecond timings and Whisper token confidence."""
+  """Single word with millisecond timings and Whisper token confidence.
+
+  Attributes:
+    text: Displayed token, including attached punctuation (e.g. "¿Vale?").
+    start_ms: Start time in ms from the beginning of the audio.
+    end_ms: End time in ms; expected to be >= `start_ms`.
+    prob: Mean Whisper token probability in [0, 1]. Synthetic values are
+      used for interpolated words (0.9 for UTF-8 recovery, 0.5 for words
+      inserted by the cue editor).
+    speaker: Speaker label; cues are split when it changes.
+  """
 
   text: str
   start_ms: int
@@ -19,10 +68,20 @@ class WordTiming:
   speaker: str = "Hablante 1"
 
   def to_dict(self) -> dict[str, Any]:
+    """Returns a JSON-serializable dict with the same keys as the fields."""
     return asdict(self)
 
   @classmethod
   def from_dict(cls, raw: dict[str, Any]) -> WordTiming:
+    """Builds a WordTiming from a (possibly partial) JSON dict.
+
+    Args:
+      raw: Dict with any of the field names as keys; missing keys fall back
+        to the dataclass defaults (times default to 0).
+
+    Returns:
+      A new WordTiming with values coerced to the declared types.
+    """
     return cls(
         text=str(raw.get("text", "")),
         start_ms=int(raw.get("start_ms", 0)),
@@ -34,7 +93,20 @@ class WordTiming:
 
 @dataclass
 class SubtitleCue:
-  """Formatted subtitle cue ready for preview, SRT/ASS/FCPXML, and Resolve."""
+  """Formatted subtitle cue ready for preview, SRT/ASS/FCPXML, and Resolve.
+
+  Attributes:
+    index: 1-based cue number (SRT block number).
+    start_ms: Cue start in ms from the beginning of the audio.
+    end_ms: Cue end in ms; producers keep it >= `start_ms + 40`.
+    lines: Wrapped display lines (at most `max_lines`), without newlines.
+    words: Per-token timings, one per whitespace token of `lines` in order.
+      Exporters rely on this 1:1 mapping for ASS karaoke (`\\kf`).
+    speaker: Speaker label of the first word.
+    cps: Reading speed in characters per second (see
+      `refresh_cue_metrics`).
+    warnings: Human-readable (Spanish) readability warnings for the UI.
+  """
 
   index: int
   start_ms: int
@@ -47,9 +119,14 @@ class SubtitleCue:
 
   @property
   def text(self) -> str:
+    """Cue text with lines joined by "\\n" (the SRT/VTT body)."""
     return "\n".join(self.lines)
 
   def to_dict(self) -> dict[str, Any]:
+    """Returns the JSON shape used by the HTTP API and the JSON export.
+
+    Includes the derived `text` field and rounds `cps` to one decimal.
+    """
     return {
         "index": self.index,
         "start_ms": self.start_ms,
@@ -64,6 +141,21 @@ class SubtitleCue:
 
   @classmethod
   def from_dict(cls, raw: dict[str, Any]) -> SubtitleCue:
+    """Rebuilds a cue from API/UI JSON, re-aligning words and metrics.
+
+    Called after the user edits text or drags/retimes a cue, so `words` may
+    no longer match `lines`. Words are re-aligned with
+    `align_words_to_lines` and CPS/warnings are recomputed with the default
+    `SpanishFormatConfig` limits.
+
+    Args:
+      raw: Dict as produced by `to_dict`. `lines` wins over `text`; if
+        `lines` is empty, `text` is split on newlines. Minimum duration is
+        clamped to 40 ms; a missing `end_ms` defaults to start + 500 ms.
+
+    Returns:
+      A new SubtitleCue satisfying the word alignment invariant.
+    """
     lines = raw.get("lines")
     if not lines:
       text_val = str(raw.get("text", "")).strip()
@@ -89,7 +181,11 @@ class SubtitleCue:
     return refresh_cue_metrics(cue)
 
 
+# --- Word/line alignment (cue editor support) ---
+
+
 def _norm_token(token: str) -> str:
+  """Lowercased token without edge punctuation, used for diff matching."""
   return _strip_edge_punct(token)[1].lower()
 
 
@@ -101,6 +197,17 @@ def align_words_to_lines(
   Words still present after a text edit keep their Whisper timings (matched via
   difflib); new or rewritten words share the time between their neighbours in
   proportion to their length. Words outside [start_ms, end_ms] are rescaled.
+
+  Args:
+    words: Previous word timings of the cue (may be stale or empty).
+    lines: Current display lines; tokens are their whitespace-split words.
+    start_ms: Cue start in ms.
+    end_ms: Cue end in ms (clamped to at least `start_ms + 40`).
+
+  Returns:
+    Exactly one WordTiming per token, in order, sorted and non-overlapping,
+    all within [start_ms, end_ms]. Inserted words get `prob=0.5`. Empty if
+    `lines` has no tokens.
   """
   tokens = [t for ln in lines for t in ln.split()]
   if not tokens:
@@ -110,6 +217,8 @@ def align_words_to_lines(
   src = [w for w in words if w.text.strip()]
   speaker = src[0].speaker if src else "Hablante 1"
 
+  # If the cue was moved or trimmed so some words fall outside it, linearly
+  # remap the old word span onto the cue span (keeps relative word rhythm).
   if src:
     lo = min(w.start_ms for w in src)
     hi = max(w.end_ms for w in src)
@@ -126,6 +235,8 @@ def align_words_to_lines(
           for w in src
       ]
 
+  # Fast path: same token count (typo fix, casing, punctuation, retime).
+  # Reuse timings positionally and only clamp to the invariant.
   if len(src) == len(tokens):
     result = [
         WordTiming(tok, w.start_ms, w.end_ms, w.prob, w.speaker)
@@ -137,6 +248,8 @@ def align_words_to_lines(
       w.end_ms = max(w.start_ms, min(w.end_ms, end_ms))
     return result
 
+  # Token count changed: diff normalized tokens and keep the timings of
+  # unchanged words; `out[j]` stays None for inserted/replaced tokens.
   out: list[WordTiming | None] = [None] * len(tokens)
   matcher = difflib.SequenceMatcher(
       None,
@@ -152,6 +265,9 @@ def align_words_to_lines(
             tokens[j1 + k], w.start_ms, w.end_ms, w.prob, w.speaker
         )
 
+  # Fill each run of unmatched tokens [j, k) inside the gap between its
+  # matched neighbours [lo, hi], weighting by token length (+1 so 1-char
+  # words still get time).
   j = 0
   while j < len(tokens):
     if out[j] is not None:
@@ -164,7 +280,7 @@ def align_words_to_lines(
     right = out[k] if k < len(tokens) else None
     lo = left.end_ms if left else start_ms
     hi = right.start_ms if right else end_ms
-    need = 60 * (k - j)
+    need = 60 * (k - j)  # ~60 ms minimum per inserted word.
     if hi - lo < need:
       # Borrow half of each neighbour so inserted words stay visible,
       # without ever expanding short neighbours or overlapping right.
@@ -190,6 +306,7 @@ def align_words_to_lines(
       out[idx] = WordTiming(tokens[idx], seg_start, round(cursor), 0.5, speaker)
     j = k
 
+  # Final pass: enforce the sorted, non-overlapping, in-cue invariant.
   result = [w for w in out if w is not None]
   for i, w in enumerate(result):
     floor_ms = result[i - 1].end_ms if i > 0 else start_ms
@@ -198,9 +315,35 @@ def align_words_to_lines(
   return result
 
 
+# --- Formatting configuration and presets ---
+
+
 @dataclass
 class SpanishFormatConfig:
-  """Configurable formatting and linguistic rules for Spanish subtitles."""
+  """Configurable formatting and linguistic rules for Spanish subtitles.
+
+  Defaults match the "youtube_16_9" preset (Netflix Spanish style guide).
+
+  Attributes:
+    preset_id: Key of `FORMAT_PRESETS` used as the base for `from_dict`.
+    dialect: Key of `SPANISH_DIALECT_PROMPTS` for the Whisper prompt.
+    domain: Key of `DOMAIN_PROFILES` (phonetic fixes and glossary).
+    max_cpl: Maximum characters per line.
+    max_lines: Maximum lines per cue (1..3).
+    max_words: Maximum words per cue before forcing a split.
+    target_cps: Desired reading speed in characters/second. Stored and
+      round-tripped only; nothing in the engine reads it today.
+    max_cps: Reading speed above which a cue gets a warning.
+    min_duration_ms: Cues shorter than this are extended when possible.
+    max_duration_ms: A cue is split once it would exceed this length.
+    pause_split_ms: Silence between words that always starts a new cue.
+    gap_bridge_ms: Gaps between cues up to this size are closed to avoid
+      subtitle flicker.
+    fix_inverted_punctuation: Insert missing opening ¿/¡.
+    remove_muletillas: Drop hesitations ("eh", "mmm", isolated "este").
+    uppercase: Uppercase every word.
+    custom_glossary: User terms whose exact casing is enforced.
+  """
 
   preset_id: str = "youtube_16_9"
   dialect: str = "neutro"
@@ -220,10 +363,26 @@ class SpanishFormatConfig:
   custom_glossary: list[str] = field(default_factory=list)
 
   def to_dict(self) -> dict[str, Any]:
+    """Returns a JSON-serializable dict with the same keys as the fields."""
     return asdict(self)
 
   @classmethod
   def from_dict(cls, raw: dict[str, Any] | None) -> SpanishFormatConfig:
+    """Builds a validated config from UI/API JSON.
+
+    Resolution order: preset values from `FORMAT_PRESETS[preset_id]`
+    (unknown ids fall back to "youtube_16_9"), then any non-None override in
+    `raw`. Numeric limits are clamped to safe ranges. If no explicit domain
+    is given, the "tech_spanglish" dialect implies the "tech_video" domain.
+
+    Args:
+      raw: Partial config dict, or None/empty for all defaults.
+        `custom_glossary` may be a list or a string separated by commas,
+        semicolons, or newlines.
+
+    Returns:
+      A new SpanishFormatConfig.
+    """
     if not raw:
       return cls()
     preset_id = str(raw.get("preset_id", "youtube_16_9"))
@@ -288,6 +447,8 @@ class SpanishFormatConfig:
     )
 
 
+# Segmentation presets selectable in the UI. `label` is user-facing Spanish;
+# the remaining keys mirror `SpanishFormatConfig` fields (ms / chars / CPS).
 FORMAT_PRESETS: dict[str, dict[str, Any]] = {
     "youtube_16_9": {
         "label": "YouTube 16:9 (Netflix / RAE)",
@@ -340,6 +501,11 @@ FORMAT_PRESETS: dict[str, dict[str, Any]] = {
 }
 
 
+# --- Whisper prompts and domain vocabularies (Spanish data, do not edit) ---
+
+# Dialect-specific Whisper `--prompt` prefixes. Whisper imitates the style of
+# the prompt, so these sentences prime Spanish punctuation (¿?, ¡!), accents,
+# and regional vocabulary.
 SPANISH_DIALECT_PROMPTS: dict[str, str] = {
     "neutro": (
         "Transcripción fiel en español con ortografía, tildes y puntuación"
@@ -364,6 +530,8 @@ SPANISH_DIALECT_PROMPTS: dict[str, str] = {
 }
 
 
+# Board-game anglicisms appended to the Whisper prompt so the model spells
+# them in English instead of phonetically.
 BOARDGAME_PROMPT_TERMS: tuple[str, ...] = (
     "meeple",
     "meeples",
@@ -408,6 +576,8 @@ BOARDGAME_PROMPT_TERMS: tuple[str, ...] = (
     "BoardGameGeek",
 )
 
+# Proper nouns whose exact casing is restored after transcription by
+# `_apply_glossary` (merged with the user's `custom_glossary`).
 BOARDGAME_GLOSSARY_TERMS: tuple[str, ...] = (
     "BoardGameGeek",
     "BGG",
@@ -448,6 +618,9 @@ BOARDGAME_GLOSSARY_TERMS: tuple[str, ...] = (
     "CMON",
 )
 
+# Phonetic misspelling -> canonical term. Keys are lowercase and may span
+# several words ("worker pleisment"); they are matched by `_apply_phrase_map`
+# ignoring case and edge punctuation. Values keep the desired casing.
 BOARDGAME_PHONETIC_FIXES: dict[str, str] = {
     "mipel": "meeple",
     "mípel": "meeple",
@@ -548,6 +721,11 @@ BOARDGAME_PHONETIC_FIXES: dict[str, str] = {
     "seven wonders": "7 Wonders",
 }
 
+# Content domains selectable in the UI. Each profile bundles:
+#   label: user-facing Spanish name.
+#   prompt_terms: vocabulary appended to the Whisper prompt.
+#   glossary_terms: casing enforced after transcription.
+#   phonetic_fixes: phrase map applied before the glossary.
 DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
     "juegos_mesa": {
         "label": "Juegos de Mesa y Anglicismos (BGG)",
@@ -593,7 +771,12 @@ DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
 }
 
 
+# --- RAE / Netflix line-break rules (Spanish data, do not edit) ---
+
 # Words that should NEVER stay orphaned at the end of line 1 (RAE / Netflix ES).
+# Articles, prepositions, conjunctions, relatives, clitic pronouns,
+# possessives, negation/intensifiers, and auxiliaries bind to the next word.
+# Matched lowercase, without edge punctuation (see `_last_word_penalty`).
 SPANISH_WEAK_LINE_ENDINGS: frozenset[str] = frozenset({
     "el",
     "la",
@@ -683,6 +866,9 @@ SPANISH_WEAK_LINE_ENDINGS: frozenset[str] = frozenset({
 })
 
 
+# Discourse markers that may open a question/exclamation before the real
+# clause ("Oye, ¿cómo...?"). `_repair_inverted_spanish_punctuation` places
+# the opening ¿/¡ after them instead of before them.
 SPANISH_DISCOURSE_PREFIXES: frozenset[str] = frozenset({
     "oye",
     "mira",
@@ -703,6 +889,9 @@ SPANISH_DISCOURSE_PREFIXES: frozenset[str] = frozenset({
 })
 
 
+# Known Whisper hallucinations on silence/music in Spanish (credits lines
+# from subtitle sites, YouTube outros, bracketed sound tags). A segment that
+# matches any pattern is dropped entirely by `parse_whisper_ojf`.
 SPANISH_HALLUCINATION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"amara\.org", re.IGNORECASE),
     re.compile(r"subt[íi]tulos\s+realizados\s+por", re.IGNORECASE),
@@ -719,10 +908,18 @@ SPANISH_HALLUCINATION_PATTERNS: tuple[re.Pattern[str], ...] = (
 # whisper.cpp control tokens: [_BEG_], [_SOT_], [_EOT_]... and timestamp
 # tokens [_TT_335] (these end in a digit, not "_]").
 _SPECIAL_TOKEN_RE = re.compile(r"^\[_[A-Z]+_\d*\]$")
+# Same tokens embedded in segment/token text (with any leading spaces).
 _INLINE_SPECIAL_TOKEN_RE = re.compile(r"\s*\[_[A-Z]+_\d*\]")
+# Pure hesitation sounds ("eh", "emm", "mmm", "hm", "uh", "ahh").
 _MULETILLA_RE = re.compile(r"^(?:eh+|em+|mm+|hm+|uh+|ah+)$", re.IGNORECASE)
+# Token ends a sentence: . ? ! … optionally followed by closing quotes or
+# brackets. Used as a strong cue/line break point.
 _CLAUSE_END_RE = re.compile(r"[.?!…]+[\"'»”’\)\]]*$")
+# Token ends with a soft pause: , ; : or a dash (weaker break point).
 _SOFT_BREAK_RE = re.compile(r"[,;:—–]+[\"'»”’\)\]]*$")
+
+
+# --- Whisper prompt and hallucination filtering ---
 
 
 def build_spanish_initial_prompt(
@@ -730,7 +927,18 @@ def build_spanish_initial_prompt(
     glossary_terms: list[str] | None = None,
     domain: str = "juegos_mesa",
 ) -> str:
-  """Builds the whisper-cli --prompt string in Spanish with domain & glossary."""
+  """Builds the whisper-cli --prompt string in Spanish with domain & glossary.
+
+  Args:
+    dialect: Key of `SPANISH_DIALECT_PROMPTS`; unknown keys use "neutro".
+    glossary_terms: User terms; listed before domain terms so they survive
+      truncation. Duplicates are removed case-insensitively.
+    domain: Key of `DOMAIN_PROFILES` providing `prompt_terms`.
+
+  Returns:
+    "<dialect sentence> <label>: term1, term2, ...." capped at 580 chars,
+    or just the dialect sentence when there are no terms.
+  """
   base = SPANISH_DIALECT_PROMPTS.get(dialect, SPANISH_DIALECT_PROMPTS["neutro"])
   profile = DOMAIN_PROFILES.get(domain, {})
   domain_terms = [str(t).strip() for t in profile.get("prompt_terms", [])]
@@ -757,10 +965,13 @@ def build_spanish_initial_prompt(
       else "Términos y anglicismos"
   )
   prefix = f"{base} {prefix_label}: "
+  # Character cap that keeps the prompt within whisper.cpp's prompt token
+  # budget (whisper keeps at most ~224 prompt tokens and drops the rest).
   max_len = 580
   if len(prefix) >= max_len - 8:
     return base[:max_len].rstrip()
 
+  # Whole terms only; the "+ 1" reserves room for the final period.
   accepted: list[str] = []
   cur_len = len(prefix)
   for term in combined:
@@ -778,7 +989,17 @@ def build_spanish_initial_prompt(
 def is_spanish_hallucination(
     segment_text: str, avg_prob: float | None = None
 ) -> bool:
-  """Detects common Whisper Spanish silence hallucinations and loops."""
+  """Detects common Whisper Spanish silence hallucinations and loops.
+
+  Args:
+    segment_text: Segment text with control tokens already removed.
+    avg_prob: Mean token probability of the segment, or None if unknown.
+
+  Returns:
+    True if the segment is empty, matches `SPANISH_HALLUCINATION_PATTERNS`,
+    or is a repetition loop (>= 6 words, <= 25% unique) with low or unknown
+    confidence (< 0.65).
+  """
   cleaned = segment_text.strip()
   if not cleaned:
     return True
@@ -795,8 +1016,21 @@ def is_spanish_hallucination(
   return False
 
 
+# --- whisper.cpp -ojf parsing ---
+
+
 def _token_time_ms(token: dict[str, Any], seg_start_ms: int) -> tuple[int, int]:
-  """Extracts millisecond offsets from a whisper.cpp -ojf token."""
+  """Extracts millisecond offsets from a whisper.cpp -ojf token.
+
+  Args:
+    token: One entry of `segment["tokens"]`; times live in
+      `token["offsets"]["from"/"to"]` in ms.
+    seg_start_ms: Segment start used when the token has no offsets.
+
+  Returns:
+    (start_ms, end_ms) with end >= start; (seg_start, seg_start + 80) when
+    offsets are missing.
+  """
   offsets = token.get("offsets") or {}
   t0 = offsets.get("from")
   t1 = offsets.get("to")
@@ -813,7 +1047,24 @@ def _map_clean_words_to_spans(
     seg_start_ms: int,
     seg_end_ms: int,
 ) -> list[WordTiming]:
-  """Maps clean UTF-8 words onto token spans when BPE split multi-byte UTF-8."""
+  """Maps clean UTF-8 words onto token spans when BPE split multi-byte UTF-8.
+
+  Used when token-level text is corrupt (contains U+FFFD) but the segment
+  text is clean. If the word counts match, each clean word takes the timing
+  of the corresponding merged token word; otherwise the segment span is
+  divided among the words proportionally to their character length.
+
+  Args:
+    clean_words: Words from the clean segment text (`seg_text.split()`).
+    merged_words: Merged token-word dicts built by `parse_whisper_ojf`
+      (keys: text, start_ms, end_ms, prob_sum, count).
+    seg_start_ms: Segment start in ms.
+    seg_end_ms: Segment end in ms (extended to >= 60 ms per word).
+
+  Returns:
+    One WordTiming per clean word, each at least 40 ms long. Interpolated
+    words get `prob=0.9`.
+  """
   if not clean_words:
     return []
   if len(clean_words) == len(merged_words):
@@ -842,7 +1093,27 @@ def _map_clean_words_to_spans(
 
 
 def parse_whisper_ojf(ojf_data: dict[str, Any]) -> list[WordTiming]:
-  """Parses whisper.cpp --output-json-full (-ojf) into clean Spanish WordTimings."""
+  """Parses whisper.cpp --output-json-full (-ojf) into Spanish WordTimings.
+
+  Pipeline stage 1 (see module docstring). For each segment in
+  `ojf_data["transcription"]`:
+    1. Strip control/timestamp tokens and skip hallucinated segments.
+    2. Merge BPE tokens into words: a token that starts with whitespace
+       starts a new word; otherwise it is glued to the previous word,
+       except an opening ¿/¡ after a sentence end, which starts a new word.
+    3. If any merged word contains U+FFFD (an accented character split
+       across tokens), fall back to the clean segment text and interpolate
+       timings with `_map_clean_words_to_spans`.
+
+  Args:
+    ojf_data: Parsed JSON written by `whisper-cli -ojf`. Segment/token
+      times are read from `offsets.from` / `offsets.to` in ms; token
+      confidence from `p`.
+
+  Returns:
+    Words in time order with non-decreasing starts, each >= 40 ms long and
+    with the default speaker. Empty if nothing usable was transcribed.
+  """
   words: list[WordTiming] = []
   last_end_ms = 0
 
@@ -869,6 +1140,9 @@ def parse_whisper_ojf(ojf_data: dict[str, Any]) -> list[WordTiming]:
     if is_spanish_hallucination(seg_text, avg_prob):
       continue
 
+    # Each merged entry is a word-in-progress dict:
+    #   text: concatenated token pieces; start_ms/end_ms: word span in ms;
+    #   prob_sum/count: running sum used to average token probability.
     merged: list[dict[str, Any]] = []
     for tok in raw_tokens:
       raw_text = _INLINE_SPECIAL_TOKEN_RE.sub("", str(tok.get("text", "")))
@@ -921,6 +1195,8 @@ def parse_whisper_ojf(ojf_data: dict[str, Any]) -> list[WordTiming]:
           for item in merged
       ]
 
+    # Whisper segments can start slightly before the previous segment's
+    # last word; push such words after it so starts never go backwards.
     for w in seg_words:
       if words and w.start_ms < words[-1].start_ms:
         w.start_ms = words[-1].end_ms
@@ -931,6 +1207,11 @@ def parse_whisper_ojf(ojf_data: dict[str, Any]) -> list[WordTiming]:
   return words
 
 
+# --- Word cleaning: phrase maps, glossary, and ¿/¡ repair ---
+
+# Splits a token into (leading punctuation, core word, trailing punctuation).
+# Leading: opening ¿ ¡ quotes, brackets, dashes. Trailing: closing quotes,
+# brackets, dashes, and . , ; : ? ! …
 _EDGE_PUNCT_RE = re.compile(
     r"^([¿¡\"'«“‘(\[—–-]*)(.*?)([.,;:?!…\"'»”’)\]—–]*)$"
 )
@@ -949,7 +1230,34 @@ def _apply_phrase_map(
     phrase_map: dict[str, str],
     preserve_sentence_cap: bool = False,
 ) -> list[WordTiming]:
-  """Applies 1..N word case-insensitive phrase replacements on WordTimings."""
+  """Applies 1..N word case-insensitive phrase replacements on WordTimings.
+
+  Matching rules:
+    * Keys and values are split on whitespace, so an N-word key can map to
+      an M-word value ("dec bilding" -> "deckbuilding").
+    * Comparison uses the lowercased core of each word (edge punctuation
+      removed). Leading punctuation of the first word and trailing
+      punctuation of the last word are carried over to the replacement.
+    * A multi-word match must not cross punctuation: inner words may have
+      no leading or trailing punctuation (so "mira, play mat" won't merge
+      across the comma).
+    * Longest keys are tried first; matching is greedy left to right and
+      non-overlapping.
+
+  Timing: the replaced window's span (at least 40 ms per source word) is
+  split evenly among the replacement words; the last one ends at the window
+  end (or 40 ms after its own start, if later). Confidence is the window's
+  minimum `prob`.
+
+  Args:
+    words: Input words (not mutated; unmatched words are reused as is).
+    phrase_map: Lowercase key phrase -> canonical replacement.
+    preserve_sentence_cap: If True and the matched first word is
+      capitalized (sentence start), capitalize a lowercase replacement.
+
+  Returns:
+    A new list of words with replacements applied.
+  """
   if not words or not phrase_map:
     return words
 
@@ -964,10 +1272,14 @@ def _apply_phrase_map(
   if not parsed_terms:
     return words
 
+  # Index terms by their first (lowercase) word so each position only tries
+  # the few candidates that can start there instead of the whole map. The
+  # stable sort above keeps candidates longest-first within each bucket.
   by_first: dict[str, list[tuple[list[str], list[str]]]] = {}
   for norm_parts, canon_parts in parsed_terms:
     by_first.setdefault(norm_parts[0], []).append((norm_parts, canon_parts))
 
+  # Pre-split every word once: (lead, core, core_lower, trail).
   stripped: list[tuple[str, str, str, str]] = []
   for w in words:
     lead, core, trail = _strip_edge_punct(w.text)
@@ -985,8 +1297,11 @@ def _apply_phrase_map(
         k = len(norm_parts)
         if i + k > n:
           continue
+        # Trailing punctuation on the first word ends the phrase early.
         if k > 1 and trail0:
           continue
+        # Words 1..k-1 must match exactly, with no punctuation in between
+        # (the last word may carry trailing punctuation).
         ok = True
         for j in range(1, k):
           lead_j, _, lower_j, trail_j = stripped[i + j]
@@ -1008,6 +1323,7 @@ def _apply_phrase_map(
             and canon_parts[0].islower()
         ):
           canon_parts[0] = canon_parts[0][:1].upper() + canon_parts[0][1:]
+        # Spread the window's time evenly over the replacement words.
         total_span = max(k * 40, window[-1].end_ms - window[0].start_ms)
         step = total_span / float(len(canon_parts))
         for idx, cpart in enumerate(canon_parts):
@@ -1045,7 +1361,19 @@ def _apply_phrase_map(
 def _apply_glossary(
     words: list[WordTiming], glossary: list[str]
 ) -> list[WordTiming]:
-  """Applies 1..N word case-insensitive glossary replacements on WordTimings."""
+  """Applies 1..N word case-insensitive glossary replacements on WordTimings.
+
+  Each glossary term maps to itself, so matching words are recased to the
+  exact glossary spelling (e.g. "ark nova" -> "Ark Nova"). Later duplicate
+  terms (case-insensitive) win.
+
+  Args:
+    words: Input words.
+    glossary: Terms with the desired casing; inner whitespace is collapsed.
+
+  Returns:
+    A new list of words (or `words` itself if the glossary is empty).
+  """
   phrase_map: dict[str, str] = {}
   for term in glossary:
     cleaned = " ".join(p for p in term.strip().split() if p)
@@ -1057,7 +1385,17 @@ def _apply_glossary(
 
 
 def _repair_inverted_spanish_punctuation(words: list[WordTiming]) -> None:
-  """Adds missing opening ¿ or ¡ to Spanish question/exclamation clauses."""
+  """Adds missing opening ¿ or ¡ to Spanish question/exclamation clauses.
+
+  Whisper often emits only the closing "?" or "!". The text is split into
+  clauses at sentence-ending punctuation or pauses >= 1400 ms; a clause
+  ending in ?/! without its opener gets one on the first meaningful word,
+  skipping leading hesitations and discourse markers ("Oye, ¿cómo...?",
+  "pero ¿qué...?").
+
+  Args:
+    words: Words to fix. Mutated in place (only `text` changes).
+  """
   if not words:
     return
 
@@ -1109,6 +1447,8 @@ def _repair_inverted_spanish_punctuation(words: list[WordTiming]) -> None:
           and not first_trail
           and (c_end - target_idx) >= 2
       ):
+        # Leading conjunction without comma ("pero qué haces?") goes outside
+        # the question, but only if at least two words remain after it.
         target_idx += 1
 
     lead, core, rest_trail = _strip_edge_punct(words[target_idx].text)
@@ -1119,7 +1459,25 @@ def _repair_inverted_spanish_punctuation(words: list[WordTiming]) -> None:
 def clean_spanish_words(
     words: list[WordTiming], config: SpanishFormatConfig
 ) -> list[WordTiming]:
-  """Cleans muletillas, normalizes domain anglicisms, applies glossary, and ¿¡."""
+  """Cleans muletillas, normalizes domain anglicisms, glossary, and ¿¡.
+
+  Pipeline stage 2 (see module docstring). Steps, in order:
+    1. Copy words and drop empty ones (input list is never mutated).
+    2. If `remove_muletillas`: drop pure hesitations and an "este" filler
+       that trails off ("este…") or is isolated by >= 250 ms on both sides.
+    3. Domain `phonetic_fixes` (sentence-start capitalization preserved).
+    4. Glossary casing: domain terms first, then `custom_glossary`, so user
+       terms override domain spellings.
+    5. If `fix_inverted_punctuation`: add missing ¿/¡.
+    6. If `uppercase`: uppercase every word.
+
+  Args:
+    words: Words from `parse_whisper_ojf` (or a previous cleaning pass).
+    config: Formatting/linguistic options.
+
+  Returns:
+    New WordTiming objects; word count may change (removals, phrase maps).
+  """
   working = [
       WordTiming(
           text=w.text,
@@ -1137,6 +1495,7 @@ def clean_spanish_words(
     for idx, w in enumerate(working):
       _, core, trail = _strip_edge_punct(w.text)
       core_l = core.lower()
+      # Silence (ms) around the word; 500 at the edges counts as isolated.
       prev_gap = w.start_ms - working[idx - 1].end_ms if idx > 0 else 500
       next_gap = (
           working[idx + 1].start_ms - w.end_ms
@@ -1177,8 +1536,28 @@ def clean_spanish_words(
   return working
 
 
+# --- Line wrapping (RAE / Netflix) ---
+
+
 def _last_word_penalty(word: str) -> float:
-  """Returns RAE/Netflix line-break penalty for ending line 1 with `word`."""
+  """Returns RAE/Netflix line-break penalty for ending line 1 with `word`.
+
+  Penalty constants (score units; compared against 500 per overflow char
+  and 1.2 per char of line-length imbalance in `wrap_spanish_lines`):
+    +70: short word opening a question/exclamation ("¿Qué" / "¡Ay") left
+      dangling at the end of line 1.
+    +120: weak word (`SPANISH_WEAK_LINE_ENDINGS`) without punctuation, e.g.
+      an article separated from its noun. Worth ~100 chars of imbalance,
+      so it is avoided unless the alternative overflows.
+    -55: sentence end (. ? ! …): best possible break.
+    -45: soft pause (, ; : dash): good break.
+
+  Args:
+    word: The candidate last token of line 1, with punctuation.
+
+  Returns:
+    Penalty to add to the split score (negative is a bonus).
+  """
   if not word:
     return 0.0
   _, core, trail = _strip_edge_punct(word)
@@ -1199,7 +1578,26 @@ def _last_word_penalty(word: str) -> float:
 def wrap_spanish_lines(
     words_text: list[str], max_cpl: int, max_lines: int
 ) -> list[str]:
-  """Breaks a cue's words into balanced Spanish lines respecting RAE grammar."""
+  """Breaks a cue's words into balanced Spanish lines respecting RAE grammar.
+
+  For two lines, every split point is scored and the lowest score wins:
+    * 500 per character over `max_cpl` on either line (hard limit),
+    * `_last_word_penalty` of the last word of line 1 (grammar),
+    * -40 if line 2 starts with ¿/¡ (keeps the question/exclamation whole),
+    * 1.2 per character of length difference (balance),
+    * +4 if line 1 is longer (prefers the bottom-heavy "pyramid" shape).
+  For three lines a simple greedy fill is used.
+
+  Args:
+    words_text: Display tokens of the cue in order.
+    max_cpl: Maximum characters per line.
+    max_lines: Maximum number of lines (1, 2, or 3).
+
+  Returns:
+    Lines joined with single spaces. A single line if everything fits in
+    `max_cpl`, if only one word, or if `max_lines <= 1` (may exceed
+    `max_cpl`; `refresh_cue_metrics` flags it). Empty if no words.
+  """
   cleaned = [w.strip() for w in words_text if w.strip()]
   if not cleaned:
     return []
@@ -1227,7 +1625,8 @@ def wrap_spanish_lines(
         best_split = split
     return [" ".join(cleaned[:best_split]), " ".join(cleaned[best_split:])]
 
-  # 3 lines fallback (greedy with weak-word avoidance).
+  # 3 lines fallback: greedy fill up to `max_cpl`; the last line takes the
+  # remainder. NOTE: unlike the 2-line path it applies no weak-word penalty.
   lines: list[str] = []
   current: list[str] = []
   for word in cleaned:
@@ -1245,7 +1644,21 @@ def wrap_spanish_lines(
 def refresh_cue_metrics(
     cue: SubtitleCue, config: SpanishFormatConfig | None = None
 ) -> SubtitleCue:
-  """Recomputes CPS and Spanish readability warnings for a cue."""
+  """Recomputes CPS and Spanish readability warnings for a cue.
+
+  CPS = characters of the lines joined by spaces / duration in seconds
+  (duration floored at 50 ms to avoid division by zero). Warnings are
+  user-facing Spanish strings: reading speed above `max_cps`, any line
+  longer than `max_cpl`, and multi-line cues shorter than
+  `min_duration_ms`.
+
+  Args:
+    cue: Cue to update. Mutated in place (`cps` and `warnings`).
+    config: Limits to check against; defaults to `SpanishFormatConfig()`.
+
+  Returns:
+    The same `cue`, for chaining.
+  """
   cfg = config or SpanishFormatConfig()
   joined = " ".join(cue.lines)
   char_count = len(joined.replace("\n", " "))
@@ -1268,7 +1681,31 @@ def refresh_cue_metrics(
 def segment_and_wrap_spanish(
     words: list[WordTiming], config: SpanishFormatConfig | None = None
 ) -> list[SubtitleCue]:
-  """Groups cleaned Spanish WordTimings into broadcast-ready SubtitleCues."""
+  """Groups cleaned Spanish WordTimings into broadcast-ready SubtitleCues.
+
+  Pipeline stage 3 (see module docstring); runs `clean_spanish_words`
+  first, so pass raw `parse_whisper_ojf` output. Then:
+    1. Bucketing: walk the words and start a new cue before the current
+       word when (first match wins) the silence before it is
+       >= `pause_split_ms`, the speaker changes, the cue already has
+       `max_words`, the text would exceed `max_cpl * max_lines`, the
+       duration would exceed `max_duration_ms` (cue has >= 2 words), the
+       previous word ends a sentence, the previous word ends with a soft
+       pause and the cue already fills 72% of a line, or the word opens a
+       question/exclamation (¿/¡) after >= 3 words.
+    2. Wrapping: `wrap_spanish_lines` on each bucket.
+    3. Timing polish: extend cues shorter than `min_duration_ms` without
+       running past the next cue (keeps a 10 ms gap), close gaps up to
+       `gap_bridge_ms`, and trim any overlap with the next cue.
+
+  Args:
+    words: Raw words in time order.
+    config: Formatting options; defaults to `SpanishFormatConfig()`.
+
+  Returns:
+    Cues numbered from 1, in time order, non-overlapping, with `cps` and
+    `warnings` filled. Empty if no words survive cleaning.
+  """
   cfg = config or SpanishFormatConfig()
   cleaned = clean_spanish_words(words, cfg)
   if not cleaned:
@@ -1308,7 +1745,9 @@ def segment_and_wrap_spanish(
     elif word.text.startswith(("¿", "¡")) and len(current) >= 3:
       should_split = True
 
-    # Avoid leaving a single 1-word orphan if the bucket can absorb or wait.
+    # NOTE: no orphan-avoidance logic exists here despite the historical
+    # intent ("avoid leaving a single 1-word orphan"); a split is applied
+    # as soon as any rule above fires.
     if should_split:
       buckets.append(current)
       current = [word]
@@ -1318,7 +1757,7 @@ def segment_and_wrap_spanish(
   if current:
     buckets.append(current)
 
-  # Build raw cues.
+  # Build raw cues (minimum 80 ms each before polishing).
   cues: list[SubtitleCue] = []
   for idx, bucket in enumerate(buckets, start=1):
     start_ms = bucket[0].start_ms
@@ -1344,6 +1783,8 @@ def segment_and_wrap_spanish(
     if cur_dur < cfg.min_duration_ms:
       desired_end = cue.start_ms + cfg.min_duration_ms
       if next_start is not None:
+        # Grow toward the minimum but stop 10 ms before the next cue;
+        # never shrink below the cue's natural end here.
         cue.end_ms = min(desired_end, max(cue.end_ms, next_start - 10))
       else:
         cue.end_ms = desired_end

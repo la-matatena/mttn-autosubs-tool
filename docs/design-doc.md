@@ -123,7 +123,7 @@ Two precision hazards affect DaVinci Resolve timelines on macOS and are handled 
 
 -   **Eliminating `+3.6 s/hour` NDF drift on `23.976` and `29.97` fps**: Real audio elapsed milliseconds run at `1000/1001` slower clock rate than integer NDF SMPTE counters (`24`, `30`, or `60`). Both `ms_to_timeline_tc_ms` (backing `export_srt_timeline_tc`) and `frames_to_smpte` (backing `jump_playhead` and Resolve Lua payloads) apply `effective_fps` rational rates (`24000/1001`, `30000/1001`, `60000/1001`), keeping a 1,001-second clip aligned at exact timeline timecode `01:16:40:00`.
 -   **Unified export routing and ASS injection hardening**: All HTTP downloads (`POST /api/export`) and CLI outputs share the `exporters.render_export` router across eight formats (`srt`, `srt_tc`, `vtt`, `ass`, `txt`, `txt_tc`, `fcpxml`, `json`). ASS karaoke strips commas and newlines from font and speaker headers (`_sanitize_ass_field`), escapes literal braces (`\{`, `\}`) using `_escape_ass_text`, falls back to plain line text when `len(cue.words)` disagrees with edited lines, and passes `:fontsdir` to `ffmpeg` so uploaded `.otf` or `.ttf` fonts render during MP4 burn-ins before macOS restarts font caches.
--   **Resilient Lua IPC**: `resolve_bridge.py` writes both `push_payload.lua` (`return { ... }`) and `push_payload.table` (`{ ... }`), because DaVinci Resolve's `bmd.readfile` rejects `return` statements. Script 2 verifies both `#appended > 0` and track item growth (`GetItemListInTrack`) so silent empty-table returns never report false success.
+-   **Resilient Lua IPC**: `resolve_bridge.py` writes both `push_payload.lua` (`return { ... }`) and `push_payload.table` (`{ ... }`), because DaVinci Resolve's `bmd.readfile` rejects `return` statements. Script 2 verifies `#appended > 0` and, in subtitle mode, that the new subtitle track is not empty (`GetItemListInTrack`) so silent empty-table returns never report false success.
 
 ### OpenType parsing and non-destructive ASCII folding
 
@@ -157,6 +157,20 @@ Automated offline verification runs via `python3 -B autosubs_es_test.py -v` in l
 | `ResolveTemplatesAndBundleTest` | Presence of `UseFrameFormatSettings = 1` across all five `.setting` macros, zero `math.`/`%` errors in Fusion expressions, three-tier Lua loading, and `verify_zip_bytes` bundle validation. |
 
 Physical macOS execution with real downloaded GGML weights, Homebrew `whisper-cli`/`ffmpeg`, and DaVinci Resolve 20 Media Pool rendering must still be exercised directly on the target 2017 iMac hardware.
+
+## Code style and documentation conventions
+
+Every file should be understandable by a maintainer who has never seen it. Apply these conventions when you add or change code:
+
+-   **Language**: Write code, identifiers, comments, and docstrings in English. Keep user-facing UI strings, Resolve Console messages, and Spanish NLP data (word lists, RAE rules, glossaries) in Spanish.
+-   **File headers**: Start every source file with a short header that states its responsibility, main entry points, and how it is run. Group files longer than about 300 lines with section banners.
+-   **Python**: Follow the Google Python Style Guide with the repository's 2-space indentation and 80-column limit. Give every module, class, and function a docstring with `Args:`, `Returns:`, and `Raises:` sections (omit them only for trivial one-liners), plus `Attributes:` for stateful classes. Each test method needs a one-line docstring that states the verified behavior.
+-   **JavaScript (`ui/app.js`)**: Add a JSDoc `/** ... */` block above every function with `@param {type}` and `@return {type}` tags, and document the shape of `state` fields inline.
+-   **Lua (`lua/`)**: Each script header explains how it is launched (**Workspace** > **Scripts**), which bridge inbox or outbox files it reads and writes, and which HTTP endpoint it calls. Add `---` LuaDoc comments with `@param` and `@return` above every function, and comment Resolve API quirks such as `bmd.readfile` rejecting `return`, `AppendToTimeline` returning `{}`, and render polling timeouts.
+-   **Shell (`install_imac.sh`, `*.command`)**: Follow the Google Shell Style Guide with a purpose, usage, and flags header, plus a `Globals:`/`Arguments:`/`Outputs:`/`Returns:` comment block above every function.
+-   **Comments**: Explain why, not what. Document units (ms, frames, px, normalized `0..1`), coordinate spaces, locking, magic numbers, and host quirks.
+-   **Debt markers**: Mark intentional engineering shortcuts with a `shortcut:` comment, which works as a tracked debt ledger. Keep existing markers and `NOLINT` annotations intact.
+-   **Documentation-only changes**: Commits that only touch comments, docstrings, or docs must not change behavior. Do not rename identifiers, routes, JSON keys, DOM IDs, or OpenFX IDs, and do not reorder logic. The full test suite must pass unchanged.
 
 ## What's next
 

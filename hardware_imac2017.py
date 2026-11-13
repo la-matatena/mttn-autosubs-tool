@@ -1,4 +1,29 @@
-"""Hardware governor and whisper.cpp profiles (Intel iMac 2017 / Apple Silicon)."""
+"""Hardware governor and whisper.cpp profiles (Intel iMac 2017 / Apple Silicon).
+
+The tool was designed for a 21.5" Retina 4K iMac (2017): 4-core i5 without
+Hyper-Threading and a 2 GB AMD Radeon Polaris GPU, usually running DaVinci
+Resolve at the same time. This module decides how hard transcription and
+burn-in may push such a machine, and scales up on Apple Silicon:
+
+  * Intel Macs: whisper.cpp runs CPU-only (`-ng`), because its Metal backend
+    is unreliable on AMD/Intel GPUs and the 2 GB of VRAM is needed by
+    Resolve; burn-in uses libx264 (pure CPU, 0 MB VRAM).
+  * Apple Silicon: whisper.cpp uses the Metal GPU (unified memory) and
+    burn-in uses h264_videotoolbox (hardware media engine).
+  * Thread budgets: `threads_with_resolve` leaves cores free for Resolve
+    playback, `threads_standalone` uses the whole CPU; all external tools
+    run under `nice -n 10` so the UI and Resolve keep priority.
+
+It also owns the GGML model catalog, app/Resolve folder locations, binary
+discovery (Homebrew Intel and Apple Silicon prefixes), and builders for the
+whisper-cli and ffmpeg command lines. Capability probes (`--help`,
+`-filters`, `-encoders`) are cached per process because spawning the
+binaries is slow on the iMac.
+
+Main entry points: detect_hardware_profile, detect_environment,
+build_whisper_command, build_ffmpeg_burnin_command, MODEL_CATALOG.
+Set AUTOSUBS_HW_PROFILE to force a profile (see detect_hardware_profile).
+"""
 
 from __future__ import annotations
 
@@ -14,9 +39,32 @@ import subprocess
 import sys
 
 
+# --- Hardware profiles ---
+
+
 @dataclass(frozen=True)
 class HardwareProfile:
-  """Target workstation profile for CPU/VRAM scheduling."""
+  """Target workstation profile for CPU/VRAM scheduling.
+
+  Attributes:
+    name: Human-readable machine name shown in the UI.
+    cpu_arch: "x86_64" or "arm64".
+    cpu_description: Longer CPU description (Spanish, UI text).
+    physical_cores: Physical CPU cores.
+    logical_threads: Logical CPUs (equals cores without Hyper-Threading).
+    gpu_name: GPU model name.
+    gpu_vram_mb: Dedicated VRAM in MB (0 = unknown or unified memory).
+    ram_gb: System RAM in GB.
+    os_target: macOS version and architecture string.
+    force_no_gpu: True to pass `-ng` (CPU-only) to whisper-cli by default.
+    threads_with_resolve: whisper/ffmpeg threads while Resolve is open.
+    threads_standalone: Threads when Resolve is closed.
+    nice_level: `nice -n` value for spawned tools (higher = lower priority).
+    profile_id: "intel_imac2017", "intel" or "apple_silicon".
+    cpu_short: Short CPU label for compact UI badges.
+    video_encoder: ffmpeg encoder for burn-in ("libx264" or
+      "h264_videotoolbox").
+  """
 
   name: str
   cpu_arch: str
@@ -36,6 +84,9 @@ class HardwareProfile:
   video_encoder: str = "libx264"
 
 
+# Reference machine and fallback for non-macOS hosts. 3 threads with Resolve
+# open leaves one of the 4 cores (no Hyper-Threading) for playback; CPU-only
+# because the 2 GB Polaris is fully used by Resolve's own GPU work.
 IMAC_2017_PROFILE = HardwareProfile(
     name="iMac Retina 4K 21.5-inch (2017)",
     cpu_arch="x86_64",
@@ -57,7 +108,11 @@ _MAX_WHISPER_THREADS = 8
 
 
 def _sysctl(key: str) -> str:
-  """Reads a macOS sysctl value, returning '' when unavailable."""
+  """Reads a macOS sysctl value, returning '' when unavailable.
+
+  The 1.5 s timeout keeps startup responsive on non-macOS hosts or when the
+  key does not exist (e.g. hw.perflevel0.* on Intel).
+  """
   sysctl_bin = shutil.which("sysctl") or "/usr/sbin/sysctl"
   try:
     res = subprocess.run(
@@ -73,6 +128,15 @@ def _sysctl(key: str) -> str:
 
 
 def _sysctl_int(key: str, default: int = 0) -> int:
+  """Reads an integer sysctl value.
+
+  Args:
+    key: sysctl name, e.g. "hw.physicalcpu".
+    default: Value used when the key is missing or not an integer.
+
+  Returns:
+    The parsed integer, or `default`.
+  """
   try:
     return int(_sysctl(key))
   except ValueError:
@@ -82,7 +146,23 @@ def _sysctl_int(key: str, default: int = 0) -> int:
 def build_apple_silicon_profile(
     chip_name: str, perf_cores: int, total_cores: int, ram_gb: int
 ) -> HardwareProfile:
-  """Builds a Metal-accelerated profile for an Apple Silicon (M1–M4+) Mac."""
+  """Builds a Metal-accelerated profile for an Apple Silicon (M1–M4+) Mac.
+
+  Threads are sized on performance cores only: whisper.cpp splits work
+  evenly, so a thread landing on a slower efficiency core becomes a
+  straggler. With Metal doing most of the work, the CPU budget mainly feeds
+  the GPU. Examples: M1 (4P+4E) gives standalone 4, with Resolve 2; M3 Max
+  (12P) gives 8 and 6.
+
+  Args:
+    chip_name: CPU brand string, e.g. "Apple M2 Pro".
+    perf_cores: Performance cores (hw.perflevel0.physicalcpu), 0 if unknown.
+    total_cores: All physical cores.
+    ram_gb: Unified memory in GB.
+
+  Returns:
+    Profile with Metal enabled and h264_videotoolbox burn-in.
+  """
   perf = max(1, perf_cores or total_cores or 4)
   standalone = max(2, min(perf, _MAX_WHISPER_THREADS))
   # Leave performance cores free for Resolve playback when it is open.
@@ -112,7 +192,11 @@ def build_apple_silicon_profile(
 
 @functools.lru_cache(maxsize=1)
 def _detect_gpu() -> tuple[str, int]:
-  """Returns (GPU model, dedicated VRAM in MB) via system_profiler, best effort."""
+  """Returns (GPU model, dedicated VRAM in MB) via system_profiler, best effort.
+
+  Cached for the process lifetime: system_profiler can take several seconds,
+  hence also the generous 8 s timeout.
+  """
   try:
     res = subprocess.run(
         ["/usr/sbin/system_profiler", "SPDisplaysDataType", "-json"],
@@ -126,6 +210,7 @@ def _detect_gpu() -> tuple[str, int]:
     return "", 0
 
   def _vram_mb(gpu: dict) -> int:
+    """Parses "2 GB" / "1536 MB" style VRAM strings into MB (0 if absent)."""
     raw = str(gpu.get("spdisplays_vram") or gpu.get("_spdisplays_vram") or "")
     match = re.search(r"(\d+)\s*(GB|MB)", raw, re.IGNORECASE)
     if not match:
@@ -152,11 +237,29 @@ def build_intel_profile(
 
   whisper.cpp's Metal backend is unreliable on Intel/AMD GPUs and competes with
   Resolve for scarce VRAM, so Intel Macs always transcribe on CPU (-ng).
+  Threads follow *physical* cores: the decode is bound by the AVX2 units,
+  which Hyper-Threading siblings share, so extra logical threads add
+  contention rather than speed. Burn-in uses libx264 for the same VRAM
+  reason. Example: the 4-core i5 iMac 2017 gives standalone 4, with
+  Resolve 3.
+
+  Args:
+    cpu_brand: machdep.cpu.brand_string, e.g.
+      "Intel(R) Core(TM) i5-7500 CPU @ 3.40GHz".
+    physical_cores: Physical cores (hw.physicalcpu).
+    logical_threads: Logical CPUs (hw.logicalcpu).
+    ram_gb: System RAM in GB.
+    gpu_name: GPU model from system_profiler, "" if unknown.
+    gpu_vram_mb: Dedicated VRAM in MB, 0 if unknown.
+
+  Returns:
+    Profile with force_no_gpu=True and libx264 burn-in.
   """
   cores = max(1, physical_cores or 4)
   standalone = max(2, min(cores, _MAX_WHISPER_THREADS))
   # Keep one core free for Resolve playback when it is open.
   with_resolve = max(2, min(standalone, cores - 1))
+  # Strip trademark marks, "CPU" and the "@ 3.40GHz" clock suffix.
   short = re.sub(r"\((R|TM)\)|CPU|@.*$", "", cpu_brand).strip()
   short = re.sub(r"\s+", " ", short) or "CPU Intel"
   match = re.search(r"(Core\(TM\)\s*|Core\s+)(i\d|Xeon|m\d)", cpu_brand)
@@ -190,16 +293,26 @@ def detect_hardware_profile() -> HardwareProfile:
   Apple Silicon gets Metal GPU acceleration; Intel Macs get a CPU-only profile
   sized to their cores. Set AUTOSUBS_HW_PROFILE=intel_imac2017|apple_silicon
   to force one (useful to simulate the 2017 iMac on another machine).
+
+  A real 2017 iMac is detected through the generic Intel path (same thread
+  numbers); IMAC_2017_PROFILE itself is returned only when forced, on
+  non-macOS hosts (dev/CI) or when the CPU brand cannot be read. The result
+  is cached per process, so changing the env var needs a server restart.
+
+  Returns:
+    The HardwareProfile used for all scheduling decisions.
   """
   forced = os.environ.get("AUTOSUBS_HW_PROFILE", "").strip().lower()
   if forced == "intel_imac2017":
     return IMAC_2017_PROFILE
   is_apple_silicon = sys.platform == "darwin" and platform.machine() == "arm64"
   total = _sysctl_int("hw.physicalcpu", os.cpu_count() or 4)
+  # hw.memsize is in bytes; the default assumes 16 GB when sysctl fails.
   ram_gb = int(round(_sysctl_int("hw.memsize", 16 * 1024**3) / 1024**3))
 
   if forced == "apple_silicon" or is_apple_silicon:
     chip = _sysctl("machdep.cpu.brand_string") or "Apple Silicon"
+    # perflevel0 = performance cluster (P-cores) on Apple Silicon.
     perf = _sysctl_int("hw.perflevel0.physicalcpu", total)
     return build_apple_silicon_profile(chip, perf, total, ram_gb)
 
@@ -219,9 +332,24 @@ def detect_hardware_profile() -> HardwareProfile:
   )
 
 
+# --- Whisper model catalog ---
+
+
 @dataclass(frozen=True)
 class ModelSpec:
-  """Downloadable GGML Whisper model entry optimized for Spanish on CPU."""
+  """Downloadable GGML Whisper model entry optimized for Spanish on CPU.
+
+  Attributes:
+    model_id: Catalog key (e.g. "turbo-q8"), stored in settings.json.
+    label: UI label (Spanish).
+    filename: File name under `<app_data_dir>/models`.
+    url: Hugging Face download URL (ggerganov/whisper.cpp repo).
+    size_mb: Approximate download size in MB.
+    ram_mb: Approximate RAM used while transcribing, in MB.
+    spanish_wer: Approximate Spanish word error rate, display only.
+    speed_note: UI hint about speed/accuracy (Spanish).
+    recommended: Whether the UI highlights this model.
+  """
 
   model_id: str
   label: str
@@ -322,13 +450,36 @@ MODEL_CATALOG: dict[str, ModelSpec] = {
     ),
 }
 
+# --- Capability caches ---
+#
+# Process-lifetime memo of binary capability probes, keyed by
+# (binary path, flag/filter/encoder name). Spawning whisper-cli/ffmpeg costs
+# hundreds of ms on the iMac, and the answers only change if the user
+# reinstalls a binary (restart the server then). Only successful probes are
+# cached; failures (timeouts, missing binary) are retried next time. Plain
+# dicts without a lock: a race at worst runs the same probe twice.
 _WHISPER_FLAG_CACHE: dict[tuple[str, str], bool] = {}
 _FFMPEG_FILTER_CACHE: dict[tuple[str, str], bool] = {}
 _FFMPEG_ENCODER_CACHE: dict[tuple[str, str], bool] = {}
 
 
+# --- Paths, binaries and environment detection ---
+
+
 def get_app_data_dir(create: bool = True) -> Path:
-  """Returns the AutoSubs ES application data directory."""
+  """Returns the AutoSubs ES application data directory.
+
+  ~/Library/Application Support/AutoSubsES on macOS (the Lua scripts in
+  Resolve hard-code this path for the bridge mailbox),
+  ~/.local/share/autosubs_es elsewhere, or AUTOSUBS_ES_HOME if set.
+
+  Args:
+    create: Also create the models, fonts, bridge/inbox, bridge/outbox and
+      cache subfolders.
+
+  Returns:
+    The base folder path.
+  """
   override = os.environ.get("AUTOSUBS_ES_HOME")
   if override:
     base = Path(override).expanduser()
@@ -344,7 +495,12 @@ def get_app_data_dir(create: bool = True) -> Path:
 
 
 def get_resolve_user_fusion_dir() -> Path:
-  """Returns the DaVinci Resolve Fusion user directory on macOS or Linux."""
+  """Returns the DaVinci Resolve Fusion user directory on macOS or Linux.
+
+  This is where install_imac.sh puts the Lua scripts (Scripts/Utility) and
+  Text+ templates (Templates/Edit/Titles), and where Fusion.prefs lives.
+  AUTOSUBS_RESOLVE_FUSION_DIR overrides it (tests).
+  """
   override = os.environ.get("AUTOSUBS_RESOLVE_FUSION_DIR")
   if override:
     return Path(override).expanduser()
@@ -361,7 +517,19 @@ def get_resolve_user_fusion_dir() -> Path:
 
 
 def find_binary(candidates: list[str]) -> str | None:
-  """Finds an executable checking Homebrew Intel, Apple Silicon, and PATH."""
+  """Finds an executable checking Homebrew Intel, Apple Silicon, and PATH.
+
+  The explicit folders matter because apps launched from Finder (the
+  .command launcher) get a minimal PATH without Homebrew. /usr/local is the
+  Intel Homebrew prefix, /opt/homebrew the Apple Silicon one.
+
+  Args:
+    candidates: Executable names in preference order; each name is looked
+      up in every folder and then on PATH before trying the next name.
+
+  Returns:
+    Absolute path of the first match, or None.
+  """
   search_dirs = [
       "/usr/local/bin",
       "/usr/local/opt/whisper-cpp/bin",
@@ -380,7 +548,12 @@ def find_binary(candidates: list[str]) -> str | None:
 
 
 def is_resolve_running() -> bool:
-  """Checks whether DaVinci Resolve is currently running without blocking."""
+  """Checks whether DaVinci Resolve is currently running without blocking.
+
+  Uses `pgrep -x` (exact process name) with a 1.5 s timeout per pattern.
+  Returns False when pgrep is unavailable or fails, so the caller falls back
+  to the more generous standalone thread budget.
+  """
   pgrep_bin = shutil.which("pgrep")
   if not pgrep_bin:
     return False
@@ -401,7 +574,19 @@ def is_resolve_running() -> bool:
 
 
 def get_installed_models(models_dir: Path | None = None) -> dict[str, dict]:
-  """Inspects downloaded GGML model files and returns catalog metadata."""
+  """Inspects downloaded GGML model files and returns catalog metadata.
+
+  A model counts as installed only above 1 MiB, so an empty or failed
+  download is not mistaken for a real model. `<filename>.part` files are
+  in-progress (resumable) downloads.
+
+  Args:
+    models_dir: Models folder; defaults to `<app_data_dir>/models`.
+
+  Returns:
+    {model_id: ModelSpec fields + installed, path, disk_bytes,
+    partial_bytes} for every MODEL_CATALOG entry.
+  """
   target_dir = models_dir or (get_app_data_dir(create=False) / "models")
   installed: dict[str, dict] = {}
   for model_id, spec in MODEL_CATALOG.items():
@@ -436,7 +621,19 @@ def choose_default_model_id(models_dir: Path | None = None) -> str:
 
 
 def whisper_supports_flag(whisper_bin: str, flag: str) -> bool:
-  """Checks whether a whisper-cli binary supports a given CLI flag."""
+  """Checks whether a whisper-cli binary supports a given CLI flag.
+
+  Parses `--help` output (stdout and stderr, since builds differ). Used to
+  enable newer flags such as --carry-initial-prompt only when available.
+  Results are memoized in _WHISPER_FLAG_CACHE.
+
+  Args:
+    whisper_bin: Path to the whisper-cli executable.
+    flag: Flag text to look for, e.g. "--carry-initial-prompt".
+
+  Returns:
+    True if the flag appears in the help text; False otherwise or on error.
+  """
   key = (whisper_bin, flag)
   if key in _WHISPER_FLAG_CACHE:
     return _WHISPER_FLAG_CACHE[key]
@@ -460,8 +657,18 @@ def whisper_supports_flag(whisper_bin: str, flag: str) -> bool:
 
 
 def detect_environment() -> dict:
-  """Collects host hardware, binary paths, model availability, and Resolve state."""
+  """Collects host hardware, binary paths, models, and Resolve state.
+
+  Backs several server endpoints (status, transcription, burn-in). Side
+  effect: creates the app data folders.
+
+  Returns:
+    JSON-ready dict: app_data_dir, resolve_fusion_dir, whisper_cli_path,
+    ffmpeg_path, resolve_running, recommended_threads, default_model_id,
+    models, hardware_profile and host_runtime.
+  """
   app_dir = get_app_data_dir(create=True)
+  # "main" is the binary name of older whisper.cpp builds.
   whisper_bin = find_binary(["whisper-cli", "whisper-cpp", "main"])
   ffmpeg_bin = find_binary(["ffmpeg"])
   resolve_running = is_resolve_running()
@@ -510,6 +717,24 @@ def build_whisper_command(
 
   `force_no_gpu=None` follows the profile: CPU-only (-ng) on the Intel iMac to
   protect its 2 GB Polaris, Metal GPU on Apple Silicon.
+
+  Args:
+    whisper_bin: Path to whisper-cli.
+    model_path: GGML model file.
+    wav_path: 16 kHz mono PCM16 input WAV.
+    output_prefix: Output path without extension; whisper writes
+      `<prefix>.json`.
+    prompt: Initial prompt (glossary / style hint); empty to omit.
+    threads: CPU threads; None picks the profile budget depending on
+      whether Resolve is running. Clamped to 1.._MAX_WHISPER_THREADS.
+    force_no_gpu: True adds -ng; None follows the profile.
+    fast_beam: Beam size 2 instead of 5 (faster, slightly less accurate).
+    nice_level: Scheduling niceness; 0 disables the `nice` wrapper.
+    carry_initial_prompt: Keep the prompt for every 30 s window; None
+      enables it when the binary supports the flag.
+
+  Returns:
+    argv list ready for subprocess (optionally prefixed by nice -n N).
   """
   profile = detect_hardware_profile()
   if force_no_gpu is None:
@@ -527,6 +752,12 @@ def build_whisper_command(
   if nice_bin and nice_level > 0 and os.name == "posix":
     cmd.extend([nice_bin, "-n", str(nice_level)])
 
+  # -l es: force Spanish (no auto-detect). -ojf: full JSON with per-token
+  # timestamps/probabilities. -sow: split on word boundaries.
+  # -et 2.4 / -lpt -1.0: whisper's default entropy / log-prob thresholds,
+  # pinned explicitly. -nf: no temperature fallback (no re-decoding of
+  # doubtful windows at higher temperature), keeping run time bounded and
+  # output deterministic on slow CPUs.
   cmd.extend([
       whisper_bin,
       "-m",
@@ -560,13 +791,29 @@ def build_whisper_command(
         else whisper_supports_flag(whisper_bin, "--carry-initial-prompt")
     )
     if use_carry:
+      # -mc 64 caps the decoder text context at 64 tokens so the carried
+      # prompt is not crowded out and hallucinated loops cannot snowball.
       cmd.extend(["--carry-initial-prompt", "-mc", "64"])
 
   return cmd
 
 
+# --- FFmpeg capability probes and burn-in ---
+
+
 def escape_ffmpeg_filter_path(path_str: str) -> str:
-  """Escapes special characters in a file path for FFmpeg libass filter."""
+  """Escapes special characters in a file path for FFmpeg libass filter.
+
+  Inside a filtergraph, ":" separates options, "," separates filters and
+  "[ ]" delimit pad labels, so they (plus backslash and the quote) are
+  backslash-escaped. The caller still wraps the result in single quotes.
+
+  Args:
+    path_str: Filesystem path (may contain spaces or accents).
+
+  Returns:
+    The escaped path.
+  """
   out = path_str.replace("\\", "\\\\")
   for ch in (":", "'", ",", "[", "]"):
     out = out.replace(ch, f"\\{ch}")
@@ -574,7 +821,19 @@ def escape_ffmpeg_filter_path(path_str: str) -> str:
 
 
 def ffmpeg_supports_filter(ffmpeg_bin: str, filter_name: str) -> bool:
-  """Checks whether the local FFmpeg build ships a filter (e.g. libass 'ass')."""
+  """Checks whether the local FFmpeg build ships a filter (e.g. libass 'ass').
+
+  `ffmpeg -filters` lists one filter per line as "<flags> <name> <pads>
+  <description>", so the name is the second whitespace-separated column.
+  Results are memoized in _FFMPEG_FILTER_CACHE.
+
+  Args:
+    ffmpeg_bin: Path to the ffmpeg executable.
+    filter_name: Filter name, e.g. "ass" or "subtitles".
+
+  Returns:
+    True if listed; False otherwise or on error.
+  """
   key = (ffmpeg_bin, filter_name)
   if key in _FFMPEG_FILTER_CACHE:
     return _FFMPEG_FILTER_CACHE[key]
@@ -601,6 +860,10 @@ def find_burnin_ffmpeg() -> str | None:
 
   Homebrew's slim `ffmpeg` formula ships without libass; the keg-only
   `ffmpeg-full` formula includes it.
+
+  Returns:
+    Path of the first ffmpeg-full (Apple Silicon, then Intel prefix) or
+    default ffmpeg that has the "ass" filter, else None.
   """
   candidates = [
       "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg",
@@ -617,7 +880,19 @@ def find_burnin_ffmpeg() -> str | None:
 
 
 def ffmpeg_supports_encoder(ffmpeg_bin: str, encoder: str) -> bool:
-  """Checks whether the local FFmpeg build ships a given video encoder."""
+  """Checks whether the local FFmpeg build ships a given video encoder.
+
+  Parses `ffmpeg -encoders` the same way as ffmpeg_supports_filter (name in
+  the second column). Used to confirm h264_videotoolbox before choosing it.
+  Results are memoized in _FFMPEG_ENCODER_CACHE.
+
+  Args:
+    ffmpeg_bin: Path to the ffmpeg executable.
+    encoder: Encoder name, e.g. "h264_videotoolbox".
+
+  Returns:
+    True if listed; False otherwise or on error.
+  """
   key = (ffmpeg_bin, encoder)
   if key in _FFMPEG_ENCODER_CACHE:
     return _FFMPEG_ENCODER_CACHE[key]
@@ -653,6 +928,23 @@ def build_ffmpeg_burnin_command(
 
   `libx264` runs purely on CPU (0 MB Polaris VRAM); `h264_videotoolbox` uses
   the Apple Silicon hardware media engine.
+
+  Output is H.264 yuv420p (widest player compatibility) with AAC 192 kbps
+  audio and +faststart (moov atom first, so the MP4 starts playing before it
+  is fully downloaded).
+
+  Args:
+    ffmpeg_bin: ffmpeg with libass (see find_burnin_ffmpeg).
+    input_video_path: Source video.
+    ass_path: ASS subtitle file to burn in.
+    output_mp4_path: Destination MP4 (overwritten, -y).
+    threads: Encoder threads, clamped to 1.._MAX_WHISPER_THREADS.
+    nice_level: Scheduling niceness; 0 disables the `nice` wrapper.
+    fonts_dir: Extra folder libass searches for fonts (custom uploads).
+    video_encoder: "libx264" or "h264_videotoolbox".
+
+  Returns:
+    argv list ready for subprocess.
   """
   effective_threads = max(1, min(int(threads), _MAX_WHISPER_THREADS))
   cmd: list[str] = []
@@ -668,6 +960,8 @@ def build_ffmpeg_burnin_command(
     # Constant-quality mode (~CRF 20 equivalent) on the hardware encoder.
     codec_args = ["-c:v", "h264_videotoolbox", "-q:v", "65"]
   else:
+    # "veryfast" keeps 4K burn-in tolerable on the 4-core i5; CRF 20 is
+    # visually transparent for subtitle overlays.
     codec_args = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
   cmd.extend([
       ffmpeg_bin,

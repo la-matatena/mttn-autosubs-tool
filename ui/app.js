@@ -1,46 +1,159 @@
+/**
+ * @fileoverview Front-end controller for MTTN AutoSubs Tool (ui/index.html).
+ *
+ * Structure: the whole file is one strict-mode IIFE, so nothing leaks into
+ * the global scope. index.html loads it with a plain <script> at the end of
+ * <body>, so the DOM already exists when it runs. No framework, no build
+ * step, no dependencies. Function declarations are hoisted inside the IIFE,
+ * so helpers are often called above the line where they are defined.
+ *
+ * Server: everything talks to the local Python server (autosubs_server.py,
+ * http://127.0.0.1:55120 by default) through same-origin relative URLs.
+ * JSON endpoints go through apiJson(); binary uploads (media, fonts) use
+ * fetch() with the raw file as body and its name in the X-Filename header.
+ *   GET  /api/status         Environment, Resolve bridge, fonts, machine
+ *                            settings and a summary of the active session.
+ *   PUT  /api/cues           Persist edited cues (debounced, see editSeq).
+ *   POST /api/transcribe     Start Whisper; returns a job_id to poll.
+ *   GET  /api/jobs/<id>      Progress of transcribe, model download,
+ *                            benchmark and MP4 burn-in jobs.
+ *   POST /api/export         Subtitle file content (SRT, ASS, FCPXML...).
+ *   POST /api/export-video   Burned-in MP4 render job.
+ *   POST /api/resolve/push   Send cues to DaVinci Resolve (or prepare files
+ *                            for the Lua bridge scripts in Resolve Free).
+ *   GET/PUT /api/settings    Per-machine performance settings + preferences.
+ *
+ * Main flows:
+ *   1. Init (bottom of file): wireEvents() -> applyTheme() ->
+ *      applyStylePreset("netflix") -> refreshStatus(), which fills selects,
+ *      picks Resolve vs standalone mode and restores an existing session.
+ *   2. Media in: Resolve inbox (Lua script exports the timeline audio) or a
+ *      file upload -> applySession() loads cues, waveform peaks and media.
+ *   3. Transcribe: POST /api/transcribe -> pollJob() -> applySession().
+ *   4. Edit: cue text areas, time inputs and waveform drags mutate
+ *      state.cues in place, then scheduleSaveCues() debounces a PUT.
+ *   5. Style: style card controls -> readStyleFromUI() -> live preview; the
+ *      same style object is sent with every export and Resolve push.
+ *   6. Output: subtitle files, burned-in MP4, or DaVinci Resolve.
+ *
+ * Sections follow source order, which is only loosely grouped by topic.
+ * User-facing strings are Spanish by design (AGENTS.md); comments and
+ * identifiers are English.
+ */
 (() => {
   "use strict";
 
+  // ---------------------------------------------------------------------------
+  // Application state
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Single mutable store for the whole UI. There is no reactivity: code that
+   * changes a field must re-render whatever depends on it. Two more fields are
+   * added lazily by applyStylePreset(): `activePreset` (chip key of the last
+   * applied preset) and `presetSignature` (styleSignature() right after it).
+   */
   const state = {
+    // Last `environment` block from /api/status (models, Resolve,
+    // hardware profile).
     env: null,
+    // Resolve bridge status from /api/status (mode, inbox audio,
+    // timeline_meta).
     bridge: null,
+    // Server subtitle presets by id (max_cpl, max_lines,
+    // pause_split_ms).
     presets: {},
+    // Glossary domains reported by the server (e.g. juegos_mesa).
     domains: {},
+    // Session cues: {index, start_ms, end_ms, text, lines[], words[],
+    // cps, warnings[]}. Edited in place: cue list handlers close over
+    // these objects.
     cues: [],
+    // Waveform peak amplitudes (0..1), evenly spaced over durationMs.
     peaks: [],
+    // Media duration in ms as reported by the server (0 = unknown).
     durationMs: 0,
+    // Index into `cues` of the highlighted cue, or -1.
     activeCueIndex: -1,
+    // Job shown in the progress box (target of the cancel button).
     activeJobId: null,
+    // setInterval handle used by pollJob() (500 ms).
     jobTimer: null,
+    // setTimeout handle that hides the job box 2 s after success.
     jobHideTimer: null,
+    // setTimeout handle of the debounced cue save (350 ms).
     saveTimer: null,
+    // Monitor aspect ratio: "16:9" or "9:16".
     aspect: "16:9",
+    // "resolve" (DaVinci Resolve workflow) or "standalone" (file in,
+    // MP4 out). See setAppMode().
     appMode: "resolve",
+    // True once the user clicked a mode button; stops
+    // refreshStatus() from auto-selecting the mode.
     userChoseMode: false,
+    // True when the session media is video (<video> player, burn-in).
     isVideo: false,
+    // Server says the media can be rendered as a subtitled MP4.
     canBurninVideo: false,
+    // "inbox" (Resolve export) or "uploaded" (file tab). Currently
+    // write-only: the transcribe handler derives the source from the
+    // active tab instead.
     uploadSource: "resolve",
+    // Server media revision (name:mtime:size); a change forces the
+    // player to reload its src.
     mediaRev: null,
+    // Unused (kept to avoid churn; safe to remove).
     threadsInitialized: false,
+    // Last fonts payload: {packs, builtin_fonts, custom_faces}.
     fontCatalog: null,
+    // #st-font <option> value -> font pack. Built-in fonts are
+    // wrapped as single-family packs so every option resolves.
     packByOptionValue: {},
+    // Pack currently selected in #st-font (null if none).
     selectedPack: null,
+    // Synthetic clock (ms) driving preview animation while paused.
     animClockMs: 0,
+    // setInterval handle advancing animClockMs every 80 ms while an
+    // animation mode is active.
     animTimer: null,
+    // Hardware profile from the first /api/status (threads, GPU).
     hwProfile: null,
+    // Monotonic counter bumped on every local cue edit and every save.
+    // A PUT /api/cues response is applied only if it is still the
+    // latest (see saveCuesToServer).
     editSeq: 0,
+    // Waveform viewport in ms; spanMs 0 means "fit the whole duration".
     view: { startMs: 0, spanMs: 0 },
+    // Active waveform gesture: null, {kind: "scrub"} or {kind: "cue",
+    // idx, mode: "start"|"end"|"move", grabMs, startX, moved, orig}.
     drag: null,
+    // Auto-pause target (ms) for seekAndPlay(), or null.
     playUntilMs: null,
+    // Last /api/settings payload (settings, effective, profile).
     machine: null,
+    // setTimeout handle of the debounced preferences save (600 ms).
     prefsTimer: null,
+    // requestAnimationFrame id of the seekAndPlay() stop watcher.
     playUntilRaf: 0,
   };
 
+  /**
+   * Returns the media element that plays the current session.
+   * @return {!HTMLMediaElement} #video-player for video, else #audio-player.
+   */
   function activeMedia() {
     return state.isVideo ? $("video-player") : $("audio-player");
   }
 
+  // ---------------------------------------------------------------------------
+  // Static data: ASCII folding and built-in style presets
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Spanish-specific characters mapped to ASCII for fonts without Spanish
+   * glyphs (preview of «Adaptar glifos ASCII»). Mirrors
+   * exporters.fold_spanish_to_ascii so the monitor matches the exports.
+   */
   const ASCII_FOLD_MAP = {
     á: "a",
     é: "e",
@@ -69,6 +182,13 @@
     "…": "...",
   };
 
+  /**
+   * Folds Spanish text to plain ASCII for the preview: the explicit map first
+   * (ñ -> n, ¿/¡ removed, curly quotes -> straight), then NFKD plus removal of
+   * combining marks for any other accented letter.
+   * @param {*} text Text to fold; null/undefined become "".
+   * @return {string} ASCII-only text.
+   */
   function foldSpanishToAsciiPreview(text) {
     return String(text || "")
       .normalize("NFC")
@@ -77,6 +197,13 @@
       .replace(/[\u0300-\u036f]/g, "");
   }
 
+  /**
+   * Built-in style presets keyed by chip id (data-style). `size` and `pos_y`
+   * are fractions of the video height (pos_y measured from the bottom);
+   * outline_thickness is a unitless value shared with the exporters; alphas
+   * are 0..1; anim_hold_frames counts 24 fps frames; template_name is the
+   * Resolve Text+ template (.setting) used by the "textplus" push mode.
+   */
   const STYLE_PRESETS = {
     netflix: {
       preset_name: "Cine Netflix",
@@ -200,8 +327,23 @@
     },
   };
 
+  // ---------------------------------------------------------------------------
+  // DOM helpers and small utilities
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Shorthand for document.getElementById.
+   * @param {string} id Element id.
+   * @return {?HTMLElement} The element, or null.
+   */
   const $ = (id) => document.getElementById(id);
 
+  /**
+   * Shows the bottom-right toast, replacing any visible message. The hide
+   * timer lives on the element so consecutive toasts restart it.
+   * @param {string} msg Message (Spanish UI text).
+   * @param {number=} ms How long to keep it visible, in ms.
+   */
   function showToast(msg, ms = 3800) {
     const el = $("toast");
     el.textContent = msg;
@@ -210,6 +352,11 @@
     el._hideTimer = setTimeout(() => el.classList.add("hidden"), ms);
   }
 
+  /**
+   * Formats a time as "MM:SS.cc" (centiseconds) for cue timecodes.
+   * @param {number} ms Time in ms; negative or missing values clamp to 0.
+   * @return {string} e.g. "01:04.25".
+   */
   function formatMsReadable(ms) {
     const safe = Math.max(0, Math.floor(ms || 0));
     const min = Math.floor(safe / 60000);
@@ -218,6 +365,21 @@
     return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
   }
 
+  // ---------------------------------------------------------------------------
+  // API client
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Calls a JSON endpoint of the local server and returns the parsed body.
+   * Note: `...opts` is spread after `headers`, so passing opts.headers would
+   * replace the merged headers (no caller does this today).
+   * @async
+   * @param {string} url Same-origin path, e.g. "/api/status".
+   * @param {!RequestInit=} opts fetch() options (method, body...).
+   * @return {!Promise<!Object>} Parsed JSON body.
+   * @throws {Error} With the server's `error` field, the first 200 chars of a
+   *     non-JSON error body, or a generic message for empty/invalid JSON.
+   */
   async function apiJson(url, opts = {}) {
     const resp = await fetch(url, {
       headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
@@ -242,6 +404,12 @@
     return data;
   }
 
+  /**
+   * Reads the segmentation options sent as `format_config` with transcribe,
+   * demo and resegment requests.
+   * @return {!Object} preset_id, dialect, domain, max_cpl (characters per
+   *     line), max_lines, pause_split_ms, boolean fixes and custom_glossary.
+   */
   function readFormatConfigFromUI() {
     return {
       preset_id: $("preset-select").value,
@@ -257,6 +425,19 @@
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Mode switching (DaVinci Resolve vs standalone)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Switches between the Resolve workflow and the standalone (file -> MP4)
+   * workflow: segmented control, source tab, which card is highlighted or
+   * collapsed (.card-muted), which export button is primary, and the per-cue
+   * Resolve jump button (hidden by .mode-standalone in CSS).
+   * @param {string} mode "standalone"; any other value means "resolve".
+   * @param {boolean=} userInitiated True for clicks; disables auto-detection
+   *     in refreshStatus() from then on.
+   */
   function setAppMode(mode, userInitiated = false) {
     state.appMode = mode === "standalone" ? "standalone" : "resolve";
     if (userInitiated) state.userChoseMode = true;
@@ -274,7 +455,7 @@
     if (resolveCard) resolveCard.classList.toggle("card-muted", state.appMode === "standalone");
     const exportCard = $("card-standalone-export");
     if (exportCard) exportCard.classList.toggle("card-highlight", state.appMode === "standalone");
-    // Una sola acción primaria por zona: en modo independiente, el render MP4.
+    // One primary action per area: in standalone mode it is the MP4 render.
     const burnBtn = $("btn-burn-video");
     if (burnBtn) {
       burnBtn.classList.toggle("btn-primary", state.appMode === "standalone");
@@ -293,12 +474,27 @@
     updateStyleTargetHint();
   }
 
+  // ---------------------------------------------------------------------------
+  // Style controls: readouts, user presets, contrast check
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Reads an opacity slider (0..100 %) as alpha.
+   * @param {string} id Range input id.
+   * @return {number} Alpha 0..1; 1 if the element is missing or not numeric.
+   */
   function alphaOf(id) {
     const el = $(id);
     const v = el ? Number(el.value) : 100;
     return Math.max(0, Math.min(1, (Number.isFinite(v) ? v : 100) / 100));
   }
 
+  /**
+   * Converts a hex color plus alpha into a CSS rgba() string.
+   * @param {string} hex "#rgb" or "#rrggbb" ("#" optional).
+   * @param {number} alpha Opacity 0..1.
+   * @return {string} e.g. "rgba(255, 212, 59, 0.750)".
+   */
   function hexToRgba(hex, alpha) {
     const h = String(hex || "#000000").replace("#", "");
     const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h.padEnd(6, "0");
@@ -308,7 +504,8 @@
     return `rgba(${r}, ${g}, ${b}, ${Number(alpha).toFixed(3)})`;
   }
 
-  // Valores visibles junto a cada slider y color de la muestra de opacidad.
+  // [opacity slider id, color input id]: drives the % readout next to each
+  // slider and the swatch color (null = shadow, always black).
   const ALPHA_ROWS = [
     ["st-fill-a", "st-fill"],
     ["st-highlight-a", "st-highlight"],
@@ -317,6 +514,10 @@
     ["st-box-a", "st-box-color"],
   ];
 
+  /**
+   * Refreshes the readouts next to the style sliders (size, position, outline
+   * width, opacities), their aria-valuetext, and each opacity swatch color.
+   */
   function updateStyleReadouts() {
     $("st-size-val").textContent = `${(Number($("st-size").value) * 100).toFixed(1)} %`;
     $("st-posy-val").textContent = `${Math.round(Number($("st-posy").value) * 100)} %`;
@@ -334,7 +535,11 @@
     });
   }
 
-  // Desactiva controles que no tienen efecto en el estado actual.
+  /**
+   * Disables controls that have no effect right now (highlight without
+   * karaoke, shadow opacity without shadow, box color/opacity without box)
+   * and dims their rows with .is-disabled.
+   */
   function syncStyleControlStates() {
     const karaoke = $("st-karaoke").checked;
     $("st-highlight").disabled = !karaoke;
@@ -349,9 +554,15 @@
     });
   }
 
-  // Estilos guardados por el usuario (localStorage).
+  // User-saved styles, stored in localStorage as {id: preset} with the same
+  // shape as STYLE_PRESETS entries. Chip keys use the "custom:<id>" prefix.
   const CUSTOM_PRESETS_KEY = "autosubs-custom-presets";
 
+  /**
+   * Loads the user presets from localStorage.
+   * @return {!Object<string, !Object>} id -> preset; {} when missing, corrupt
+   *     or when storage is blocked.
+   */
   function loadCustomPresets() {
     try {
       const raw = JSON.parse(localStorage.getItem(CUSTOM_PRESETS_KEY) || "{}");
@@ -361,6 +572,11 @@
     }
   }
 
+  /**
+   * Persists the user presets to localStorage.
+   * @param {!Object<string, !Object>} map id -> preset.
+   * @return {boolean} False if storage is unavailable or full.
+   */
   function saveCustomPresets(map) {
     try {
       localStorage.setItem(CUSTOM_PRESETS_KEY, JSON.stringify(map));
@@ -370,12 +586,22 @@
     }
   }
 
+  /**
+   * Resolves a chip key to its preset.
+   * @param {?string} key Built-in id (e.g. "netflix") or "custom:<id>".
+   * @return {?Object} The preset, or null if unknown.
+   */
   function getPreset(key) {
     if (!key) return null;
     if (key.startsWith("custom:")) return loadCustomPresets()[key.slice(7)] || null;
     return STYLE_PRESETS[key] || null;
   }
 
+  /**
+   * Rebuilds the user preset chips, each with a "×" delete button (handled by
+   * the delegated .style-chips listener in wireEvents), and refreshes the
+   * preset status line.
+   */
   function renderCustomChips() {
     const box = $("custom-chips");
     const map = loadCustomPresets();
@@ -402,6 +628,11 @@
     updatePresetStatus();
   }
 
+  /**
+   * Saves the current style controls as a user preset and applies it. The id
+   * is an accent-free slug of the name, so reusing a name overwrites it.
+   * @param {string} name Display name; trimmed and capped at 28 characters.
+   */
   function saveCurrentAsPreset(name) {
     const clean = String(name || "").trim().slice(0, 28);
     if (!clean) return;
@@ -442,18 +673,36 @@
     showToast(`Estilo «${clean}» guardado.`);
   }
 
-  // Contraste aproximado (WCAG) entre el texto y lo que tiene detrás, ya
-  // mezclado con su opacidad. Se evalúa sobre fondo blanco y negro y se toma
-  // el peor caso, porque no sabemos qué habrá en el vídeo.
+  // Approximate WCAG contrast between the text and whatever is behind it,
+  // already blended with its opacity. It is evaluated over white and black
+  // backdrops and the worst case wins, because the video content is unknown.
+
+  /**
+   * Parses "#rrggbb" into an RGB triple (short "#rgb" is not expanded).
+   * @param {string} hex Color string.
+   * @return {!Array<number>} [r, g, b], each 0..255.
+   */
   function parseHex(hex) {
     const h = String(hex || "#000000").replace("#", "").padEnd(6, "0");
     return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) || 0);
   }
 
+  /**
+   * Alpha-composites one RGB color over another ("over" operator).
+   * @param {!Array<number>} top Foreground RGB.
+   * @param {number} alpha Foreground opacity 0..1.
+   * @param {!Array<number>} under Background RGB.
+   * @return {!Array<number>} Composited RGB (not rounded).
+   */
   function blend(top, alpha, under) {
     return top.map((c, i) => c * alpha + under[i] * (1 - alpha));
   }
 
+  /**
+   * WCAG 2.x relative luminance (sRGB linearization, Rec. 709 weights).
+   * @param {!Array<number>} rgb RGB 0..255.
+   * @return {number} Luminance 0..1.
+   */
   function luminance(rgb) {
     const [r, g, b] = rgb.map((v) => {
       const c = v / 255;
@@ -462,12 +711,25 @@
     return 0.2126 * r + 0.7152 * g + 0.0722 * b;
   }
 
+  /**
+   * WCAG contrast ratio between two colors.
+   * @param {!Array<number>} a RGB 0..255.
+   * @param {!Array<number>} b RGB 0..255.
+   * @return {number} Ratio from 1 to 21.
+   */
   function contrastRatio(a, b) {
     const la = luminance(a);
     const lb = luminance(b);
     return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
   }
 
+  /**
+   * Updates the legibility badge of the style card. Checks, in order: almost
+   * transparent fill (< 20 %), no outline and no box, then the worst-case
+   * contrast of the fill against the box (or outline) over black and white.
+   * Levels: < 3:1 warn, < 4.5:1 info (WCAG AA for normal text), else ok
+   * (hidden by CSS). An outline counts if thickness > 0 and opacity >= 15 %.
+   */
   function updateContrastBadge() {
     const el = $("style-contrast");
     if (!el) return;
@@ -508,13 +770,19 @@
     el.dataset.level = level;
   }
 
-  // Campos que definen un preset; sirven para detectar si el usuario lo modificó.
+  // Fields that define a preset; used to detect whether the user modified it.
   const PRESET_KEYS = [
     "size", "pos_y", "fill_hex", "highlight_hex", "outline_hex", "outline_thickness",
     "shadow_enabled", "box_enabled", "box_hex", "fill_alpha", "highlight_alpha",
     "outline_alpha", "shadow_alpha", "box_alpha", "font_style", "animation_mode", "ascii_fold",
   ];
 
+  /**
+   * Fingerprint of the current style controls (numbers rounded to 3 decimals,
+   * strings lower-cased, plus the selected font). Compared against
+   * state.presetSignature to flag a preset as «modificado».
+   * @return {string} JSON string.
+   */
   function styleSignature() {
     const st = readStyleFromUI();
     return JSON.stringify(PRESET_KEYS.map((k) => {
@@ -523,6 +791,10 @@
     }).concat([$("st-font").value]));
   }
 
+  /**
+   * Shows the active preset and whether it was modified; toggles the reset
+   * link and every chip's active / modified / aria-pressed state.
+   */
   function updatePresetStatus() {
     const key = state.activePreset;
     const preset = getPreset(key);
@@ -539,6 +811,11 @@
   }
 
 
+  /**
+   * Warns when the selected Resolve push mode cannot carry the style: native
+   * SRT subtitle tracks ignore colors and opacity, FCPXML only carries text
+   * opacity. Hidden in standalone mode.
+   */
   function updateStyleTargetHint() {
     const el = $("style-target-hint");
     if (!el) return;
@@ -553,27 +830,60 @@
     el.classList.toggle("hidden", !msg);
   }
 
+  // ---------------------------------------------------------------------------
+  // Style / preview caches
+  // ---------------------------------------------------------------------------
+  // renderPreviewAtMs() runs on every timeupdate and animation tick, so it must
+  // not read ~25 controls or force layout every time.
+  //   cachedStyle   Last readStyleFromUI() result. Cleared by
+  //                 invalidateStyleCache() whenever a style control, preset,
+  //                 font, animation setting, karaoke toggle, preference import
+  //                 or session changes.
+  //   cachedStageH  #preview-stage height in CSS px (caption font size is
+  //                 relative to it). Cleared on window resize, by a
+  //                 ResizeObserver on the stage, on aspect change and in
+  //                 applySession().
+  // Code that writes style inputs programmatically must call
+  // invalidateStyleCache(), or the preview keeps showing the old style.
+
+  /** @type {?Object} Memoized readStyleFromUI(); null means stale. */
   let cachedStyle = null;
+  /** @type {number} Memoized stage height in CSS px; 0 means stale. */
   let cachedStageH = 0;
 
+  /** Marks cachedStyle stale; the next getCachedStyle() re-reads the DOM. */
   function invalidateStyleCache() {
     cachedStyle = null;
   }
 
+  /** Marks cachedStageH stale; call after any layout change of the stage. */
   function invalidateStageSizeCache() {
     cachedStageH = 0;
   }
 
+  /**
+   * Returns the memoized style, reading the controls only when stale.
+   * @return {!Object} Same shape as readStyleFromUI().
+   */
   function getCachedStyle() {
     if (!cachedStyle) cachedStyle = readStyleFromUI();
     return cachedStyle;
   }
 
+  /**
+   * Returns the preview stage height, measuring it only when stale.
+   * @return {number} Height in CSS px. Falls back to 260 before layout; that
+   *     fallback stays cached until the next invalidation.
+   */
   function getCachedStageH() {
     if (!cachedStageH) cachedStageH = $("preview-stage").clientHeight || 260;
     return cachedStageH;
   }
 
+  /**
+   * Shared input/change handler of the style controls: invalidates the style
+   * cache, refreshes dependent UI and re-renders the preview at the playhead.
+   */
   function onStyleControlChanged() {
     invalidateStyleCache();
     syncStyleControlStates();
@@ -583,6 +893,17 @@
     renderPreviewAtMs((activeMedia().currentTime || 0) * 1000);
   }
 
+  /**
+   * Reads the full style from the style card. This exact object is sent as
+   * `style` to /api/export, /api/export-video and /api/resolve/push, and it
+   * feeds the live preview (through getCachedStyle()). Animated packs list
+   * up to 5 font_variants (the Resolve template has TextPlus1..5); any other
+   * font yields a single variant.
+   * @return {!Object} font, font_style, size and pos_y (fractions of video
+   *     height), *_hex colors, *_alpha (0..1), outline_thickness, shadow/box
+   *     flags, uppercase, ascii_fold, animation_mode, anim_hold_frames (24 fps
+   *     frames), anim_jitter, font_variants and karaoke_enabled.
+   */
   function readStyleFromUI() {
     const optVal = $("st-font").value;
     const pack = state.packByOptionValue[optVal] || state.selectedPack;
@@ -625,6 +946,16 @@
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Fonts: catalog, weights and animation controls
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Replaces <style id="dynamic-fonts-style"> with @font-face rules for the
+   * user-uploaded fonts (served by the local server) so the preview can use
+   * them.
+   * @param {!Array<!Object>} customFaces Items with css_family and url.
+   */
   function injectFontFaces(customFaces) {
     const styleEl = $("dynamic-fonts-style");
     if (!styleEl) return;
@@ -636,6 +967,12 @@
       .join("\n");
   }
 
+  /**
+   * Fills #st-weight with the distinct styles of a pack's variants.
+   * @param {?Object} pack Font pack; null falls back to Regular/Bold.
+   * @param {string=} preferredStyle Style to keep if available (defaults to
+   *     the current selection, else the first style).
+   */
   function populateWeightSelect(pack, preferredStyle) {
     const weightSel = $("st-weight");
     const prev = preferredStyle || weightSel.value || "Regular";
@@ -662,6 +999,11 @@
     }
   }
 
+  /**
+   * Shows/hides the animation parameters and contextual hint for the chosen
+   * mode, and starts/stops the 80 ms timer (state.animTimer) that advances
+   * state.animClockMs so boil/flipbook effects keep moving while paused.
+   */
   function syncAnimControlsVisibility() {
     const mode = $("st-anim-mode").value || "none";
     const active = mode !== "none";
@@ -703,6 +1045,15 @@
     }
   }
 
+  /**
+   * Applies the font selected in #st-font: state.selectedPack, weight options,
+   * missing-glyph warning, animation controls and preview.
+   * @param {boolean=} autoConfigure True when the user picked the font or a
+   *     pack was just uploaded: also toggles ASCII folding for fonts without
+   *     Spanish glyphs, and switches animated packs to the animated Text+
+   *     template (or turns flipbook modes off for regular fonts).
+   * @param {string=} preferredStyle Weight to select if the pack has it.
+   */
   function syncFontSelection(autoConfigure = false, preferredStyle = "") {
     invalidateStyleCache();
     const selVal = $("st-font").value;
@@ -744,6 +1095,14 @@
     renderPreviewAtMs((activeMedia().currentTime || 0) * 1000);
   }
 
+  /**
+   * Rebuilds the #st-font options from a fonts payload (from /api/status or a
+   * font upload): animated packs, custom/macOS fonts and built-in fonts, each
+   * in its own optgroup, and refreshes state.packByOptionValue.
+   * @param {?Object} fontsData {packs, builtin_fonts, custom_faces}.
+   * @param {string=} preferredPackId Pack id or family name to select (e.g.
+   *     the pack just uploaded); when given, autoConfigure is enabled.
+   */
   function updateFontCatalog(fontsData, preferredPackId = "") {
     if (!fontsData) return;
     state.fontCatalog = fontsData;
@@ -819,6 +1178,14 @@
     syncFontSelection(Boolean(preferredPackId));
   }
 
+  /**
+   * Writes a preset into every style control and records it as the active
+   * preset (state.activePreset / state.presetSignature) so later edits show
+   * as «modificado». "anitype" also selects the first animated pack, forces
+   * the Text+ push mode and enables ASCII folding only if that pack lacks
+   * Spanish glyphs.
+   * @param {string} key Built-in preset id or "custom:<id>".
+   */
   function applyStylePreset(key) {
     invalidateStyleCache();
     const p = getPreset(key);
@@ -877,6 +1244,15 @@
     renderPreviewAtMs((activeMedia().currentTime || 0) * 1000);
   }
 
+  // ---------------------------------------------------------------------------
+  // Whisper model selection and session loading
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fills #model-select with the known Whisper models in recommended order
+   * (✓ installed, ↓ needs download), keeping the previous choice.
+   * @param {!Object} env `environment` from /api/status.
+   */
   function updateModelSelect(env) {
     const sel = $("model-select");
     const prev = sel.value || env.default_model_id;
@@ -894,6 +1270,10 @@
     updateModelHint();
   }
 
+  /**
+   * Shows accuracy/RAM/speed notes for the selected model and updates the
+   * download button (disabled when already installed).
+   */
   function updateModelHint() {
     if (!state.env) return;
     const m = state.env.models[$("model-select").value];
@@ -903,6 +1283,17 @@
     $("btn-download-model").disabled = m.installed;
   }
 
+  /**
+   * Loads a server session into the UI: cues, waveform peaks, duration, media
+   * source and the format settings it was generated with. Resets the waveform
+   * zoom and both preview caches, then re-renders the cue list, waveform and
+   * preview at the first cue. The media src is reassigned only when media_rev
+   * changes (or in demo mode) to avoid re-buffering the same file on every
+   * refresh; `?v=<rev>` busts the browser cache when the file does change.
+   * @param {!Object} session cues, peaks, duration_ms, is_video,
+   *     can_burnin_video, media_url, media_rev, media_name, format_config and
+   *     demo_mode.
+   */
   function applySession(session) {
     state.cues = session.cues || [];
     state.peaks = session.peaks || [];
@@ -974,7 +1365,17 @@
     renderPreviewAtMs(previewMs);
   }
 
-  // Perfil de hardware detectado por el servidor (Intel iMac 2017 / Apple Silicon).
+  // ---------------------------------------------------------------------------
+  // Hardware profile (server-detected: Intel iMac 2017 / Apple Silicon)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fills a thread-count select from threads_standalone down to 1, tagging
+   * the maximum, the safe count while Resolve is open and the quiet
+   * 2-thread option.
+   * @param {!HTMLSelectElement} sel Select to fill (previous value kept).
+   * @param {!Object} hw Hardware profile.
+   */
   function fillThreadOptions(sel, hw) {
     const maxT = Number(hw.threads_standalone || 4);
     const resolveT = Number(hw.threads_with_resolve || 3);
@@ -990,6 +1391,13 @@
     if (prev) sel.value = prev;
   }
 
+  /**
+   * Writes the label of a "CPU only" checkbox, which maps to whisper.cpp's
+   * `-ng` flag. On Intel iMacs it protects the 2 GB AMD VRAM that Resolve
+   * needs; on Apple Silicon it disables Metal.
+   * @param {!HTMLElement} lbl Label element (content replaced).
+   * @param {!Object} hw Hardware profile.
+   */
   function setGpuLabel(lbl, hw) {
     lbl.textContent = "";
     const code = document.createElement("code");
@@ -1002,7 +1410,11 @@
     }
   }
 
-  // Perfil de hardware detectado por el servidor (Intel / Apple Silicon).
+  /**
+   * One-time setup of the hardware-dependent controls (card 2 and the
+   * «Esta Mac» dialog) from the server-detected profile.
+   * @param {!Object} hw environment.hardware_profile from /api/status.
+   */
   function initHardwareControls(hw) {
     fillThreadOptions($("threads-select"), hw);
     fillThreadOptions($("mp-threads"), hw);
@@ -1012,9 +1424,13 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Rendimiento de esta Mac: ajustes guardados en settings.json de cada equipo
+  // Machine performance («Esta Mac»): settings stored per computer in the
+  // server's settings.json, plus portable user preferences.
   // ---------------------------------------------------------------------------
+  // Display labels of performance.mode values.
   const PERF_MODE_LABELS = { auto: "Automático", safe: "Seguro", max: "Máximo", custom: "Personalizado" };
+  // Portable preferences mirrored to settings.json:
+  // [preferences key, element id, how to read/write it: "value"|"number"|"checked"].
   const PREF_FIELDS = [
     ["dialect", "dialect-select", "value"],
     ["domain", "domain-select", "value"],
@@ -1028,6 +1444,13 @@
     ["custom_glossary", "cfg-glossary", "value"],
   ];
 
+  /**
+   * Fills the «Esta Mac» model select, marking the model the server
+   * recommends for this machine.
+   * @param {!HTMLSelectElement} sel Select to fill (previous value kept).
+   * @param {!Object} env `environment` from /api/status.
+   * @param {string} recommendedId Recommended model id.
+   */
   function fillModelOptions(sel, env, recommendedId) {
     const prev = sel.value;
     sel.innerHTML = "";
@@ -1042,6 +1465,11 @@
     if (prev) sel.value = prev;
   }
 
+  /**
+   * Renders the hardware summary (<dl>) of the «Esta Mac» dialog.
+   * @param {!Object} hw Profile: name, cpu_description, ram_gb, gpu_name,
+   *     gpu_vram_mb (MB) and force_no_gpu.
+   */
   function renderMachineHardware(hw) {
     const dl = $("machine-hw");
     dl.textContent = "";
@@ -1060,6 +1488,11 @@
     });
   }
 
+  /**
+   * Lists previous benchmark results, newest first.
+   * @param {?Object<string, !Object>} benchmarks Results keyed by model id;
+   *     `at` is a Unix timestamp in seconds.
+   */
   function renderBenchHistory(benchmarks) {
     const ul = $("bench-history");
     ul.textContent = "";
@@ -1076,7 +1509,16 @@
       });
   }
 
-  // Refleja los ajustes efectivos del servidor en la tarjeta 2 y en el diálogo.
+  /**
+   * Mirrors the server's effective performance settings into card 2 and the
+   * «Esta Mac» dialog (both control sets stay in sync), and updates the mode
+   * pill, summary line, hardware info and topbar badges.
+   * @param {?Object} m /api/settings payload: settings, effective, profile,
+   *     recommended_model_id and settings_path.
+   * @param {{firstLoad: (boolean|undefined)}=} options firstLoad also copies
+   *     the effective model into the main model select (startup only, so
+   *     later refreshes do not override the user's current choice).
+   */
   function applyMachinePayload(m, { firstLoad = false } = {}) {
     if (!m) return;
     state.machine = m;
@@ -1102,7 +1544,7 @@
     if (radio) radio.checked = true;
     $("perf-mode-pill").textContent = PERF_MODE_LABELS[mode] || mode;
     $("perf-mode-pill").className = "pill " + (mode === "auto" ? "pill-info" : "pill-neutral");
-    // Resumen de lo que se aplicará; los controles viven en el diálogo «Esta Mac».
+    // Summary of what will be applied; the controls live in the «Esta Mac» dialog.
     $("hw-profile-note").textContent = [
       `${eff.threads} hilos`,
       eff.force_no_gpu ? "solo CPU" : "GPU",
@@ -1114,6 +1556,14 @@
     updateHardwareBadges();
   }
 
+  /**
+   * PUTs a partial settings patch and applies the merged result. Errors are
+   * shown as a toast, never thrown.
+   * @async
+   * @param {!Object} patch e.g. {performance: {mode: "safe"}}.
+   * @param {string=} toastMsg Confirmation toast on success ("" = silent).
+   * @return {!Promise<void>}
+   */
   async function saveMachineSettings(patch, toastMsg = "") {
     try {
       const m = await apiJson("/api/settings", { method: "PUT", body: JSON.stringify(patch) });
@@ -1124,7 +1574,14 @@
     }
   }
 
-  // Cambiar hilos, GPU o precisión a mano convierte el perfil en "Personalizado".
+  /**
+   * Saves manual thread/beam/GPU choices. Any manual change turns the
+   * performance profile into "custom" (Personalizado). Called with either
+   * the card-2 controls or the dialog controls.
+   * @param {!HTMLSelectElement} threadsSel Threads select.
+   * @param {!HTMLSelectElement} beamSel Beam select ("fast" | "quality").
+   * @param {!HTMLInputElement} gpuChk "CPU only" checkbox.
+   */
   function saveCustomPerformance(threadsSel, beamSel, gpuChk) {
     saveMachineSettings(
       {
@@ -1139,6 +1596,10 @@
     );
   }
 
+  /**
+   * Collects the portable preferences listed in PREF_FIELDS.
+   * @return {!Object} preferences key -> value.
+   */
   function readPreferencesFromUI() {
     const prefs = {};
     PREF_FIELDS.forEach(([key, id, kind]) => {
@@ -1149,6 +1610,12 @@
     return prefs;
   }
 
+  /**
+   * Writes saved preferences into the controls (null/undefined keys are
+   * skipped). No change events are dispatched, so this does not trigger
+   * schedulePreferencesSave().
+   * @param {?Object} prefs Preferences object from settings.json.
+   */
   function applyPreferencesToUI(prefs) {
     if (!prefs) return;
     PREF_FIELDS.forEach(([key, id, kind]) => {
@@ -1160,6 +1627,10 @@
     invalidateStyleCache();
   }
 
+  /**
+   * Debounces (600 ms) a PUT of the current preferences. Failures are ignored:
+   * preferences are a convenience, not session data.
+   */
   function schedulePreferencesSave() {
     clearTimeout(state.prefsTimer);
     state.prefsTimer = setTimeout(() => {
@@ -1170,6 +1641,13 @@
     }, 600);
   }
 
+  /**
+   * Downloads autosubs-preferencias.json: the server export merged with the
+   * current UI preferences and UI-only data (karaoke toggle, user presets
+   * from localStorage), via a temporary Blob URL.
+   * @async
+   * @return {!Promise<void>}
+   */
   async function exportPreferences() {
     try {
       const data = await apiJson("/api/settings/export");
@@ -1192,6 +1670,15 @@
     }
   }
 
+  /**
+   * Imports a file produced by exportPreferences(): sends it to the server,
+   * applies it to the UI, restores karaoke and merges user presets (same ids
+   * are overwritten). Per-machine performance settings are not changed. The
+   * file input is always cleared so the same file can be chosen again.
+   * @async
+   * @param {?File} file Selected JSON file.
+   * @return {!Promise<void>}
+   */
   async function importPreferences(file) {
     if (!file) return;
     try {
@@ -1218,6 +1705,14 @@
     }
   }
 
+  /**
+   * Runs the Whisper speed benchmark with the dialog's model: starts a job,
+   * polls it every 700 ms on its own timer (the main job box is untouched),
+   * shows the realtime factor and offers to apply the model the server
+   * recommends for this machine.
+   * @async
+   * @return {!Promise<void>}
+   */
   async function runBenchmark() {
     const box = $("bench-result");
     const btn = $("btn-benchmark");
@@ -1267,8 +1762,14 @@
     }
   }
 
+  /**
+   * Wires the «Esta Mac» dialog and the card-2 performance controls: mode
+   * radios, manual overrides, model and voice-enhance toggles, reset,
+   * benchmark, preferences import/export and debounced preference saving.
+   * Adds fallbacks for WebKit builds without Invoker Commands or closedby.
+   */
   function wireMachinePanel() {
-    // Respaldo para WebKit sin Invoker Commands (command / commandfor).
+    // Fallback for WebKit without Invoker Commands (command / commandfor).
     if (!("commandForElement" in HTMLButtonElement.prototype)) {
       document.addEventListener("click", (ev) => {
         const btn = ev.target.closest("button[commandfor]");
@@ -1280,12 +1781,15 @@
       });
     }
     const dialog = $("machine-dialog");
-    // Respaldo de closedby="any" (cerrar al hacer clic fuera) para Safari/WebKit.
+    // Fallback for closedby="any" (close on outside click) in Safari/WebKit.
     if (!("closedBy" in HTMLDialogElement.prototype)) {
+      // True when the pointer is outside the dialog box (i.e. on the backdrop).
       const outside = (e) => {
         const r = dialog.getBoundingClientRect();
         return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
       };
+      // Both press and release must be outside, so a text selection that ends on
+      // the backdrop does not close the dialog.
       let pressedOutside = false;
       dialog.addEventListener("pointerdown", (e) => { pressedOutside = outside(e); });
       dialog.addEventListener("pointerup", (e) => { if (pressedOutside && outside(e)) dialog.close(); });
@@ -1348,6 +1852,11 @@
     $("cfg-glossary").addEventListener("input", schedulePreferencesSave);
   }
 
+  /**
+   * Updates the topbar CPU/GPU status from the hardware profile and the
+   * card-2 thread / "CPU only" choices. On Intel an active GPU is flagged
+   * (pill-warn) because it competes with Resolve for VRAM.
+   */
   function updateHardwareBadges() {
     const hw = state.hwProfile || {};
     const isApple = hw.profile_id === "apple_silicon";
@@ -1372,6 +1881,20 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Server status
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fetches /api/status and syncs the UI with it: models, fonts, app mode
+   * (auto-selected until the user picks one), Resolve badge, hardware controls
+   * (first call only), machine settings and saved preferences, Resolve
+   * timeline info, and the session when it changed server-side (new media_rev,
+   * or server cues while none are loaded). Runs at startup and from the
+   * refresh / inbox buttons and model download; there is no periodic polling.
+   * @async
+   * @return {!Promise<void>} Errors are shown as a toast.
+   */
   async function refreshStatus() {
     try {
       const data = await apiJson("/api/status");
@@ -1384,8 +1907,9 @@
       if (data.fonts) {
         const firstFonts = !state.fontCatalog;
         updateFontCatalog(data.fonts);
-        // El preset inicial se aplica antes de conocer las fuentes, cuando aún
-        // no existe el peso "Semibold"; se reaplica si el usuario no lo tocó.
+        // The initial preset is applied before fonts are known, when the
+        // "Semibold" weight does not exist yet; re-apply it if the user has
+        // not touched the style since.
         if (firstFonts && state.activePreset && styleSignature() === state.presetSignature) {
           applyStylePreset(state.activePreset);
         }
@@ -1418,7 +1942,7 @@
       }
       applyMachinePayload(data.machine, { firstLoad });
       if (firstLoad && data.machine) {
-        // Preferencias guardadas en esta Mac (la sesión activa, si existe, manda después).
+        // Preferences saved on this Mac (an active session is applied afterwards).
         applyPreferencesToUI(data.machine.settings.preferences);
       }
 
@@ -1455,9 +1979,9 @@
           (state.cues.length === 0 && data.session.cue_count > 0))
       ) {
         applySession(data.session);
-        // Al restaurar una sesión al abrir la app, los selectores muestran las
-        // preferencias guardadas (lo que el usuario eligió por última vez), no
-        // la configuración con la que se generó esa sesión.
+        // When a session is restored at startup, the selects show the saved
+        // preferences (what the user picked last), not the configuration that
+        // session was generated with.
         if (firstLoad && data.machine) applyPreferencesToUI(data.machine.settings.preferences);
       }
     } catch (err) {
@@ -1465,14 +1989,26 @@
     }
   }
 
-  // Velocidad de lectura: solo se colorea cuando pide atención (> 17 CPS).
+  // ---------------------------------------------------------------------------
+  // Cue editor: list, edits and save sequencing
+  // ---------------------------------------------------------------------------
+
+  /**
+   * CSS class of a cue's reading-speed badge. Only speeds that need
+   * attention are colored: > 17 CPS warn, > 20 CPS danger.
+   * @param {number} cps Characters per second.
+   * @return {string} Class name(s).
+   */
   function cpsClassName(cps) {
     if (cps > 20) return "pill pill-danger";
     if (cps > 17) return "pill pill-warn";
     return "cue-cps";
   }
 
-  // Estadísticas como texto plano; «avisos» solo se colorea si hay alguno.
+  /**
+   * Updates the editor stats (cue count, mean CPS, warnings) as plain text;
+   * the warnings count is colored only when non-zero.
+   */
   function updateEditorStats() {
     const cues = state.cues;
     const avgCps = cues.length ? cues.reduce((acc, c) => acc + (c.cps || 0), 0) / cues.length : 0;
@@ -1483,6 +2019,13 @@
     $("stat-warns").className = "stat" + (warnsCount > 0 ? " stat-warn" : "");
   }
 
+  /**
+   * Rebuilds the whole cue list from state.cues. Used after structural
+   * changes (load, split, merge, delete, drag end), not on every keystroke.
+   * Each row has start/end ms inputs, a readable timecode, a CPS badge, cue
+   * tools and a text area. Handlers close over the cue object, which is why
+   * server responses update cues in place (see saveCuesToServer).
+   */
   function renderCueList() {
     const list = $("cue-list");
     const cues = state.cues;
@@ -1514,6 +2057,7 @@
       startIn.step = "10";
       startIn.value = String(cue.start_ms);
       startIn.title = "Inicio en milisegundos";
+      // Time edits rescale word timings so karaoke stays in sync.
       startIn.addEventListener("change", () => {
         const oldStart = cue.start_ms;
         cue.start_ms = Math.max(0, Number(startIn.value || 0));
@@ -1530,6 +2074,7 @@
       endIn.step = "10";
       endIn.value = String(cue.end_ms);
       endIn.title = "Fin en milisegundos";
+      // The end is kept at least 80 ms after the start.
       endIn.addEventListener("change", () => {
         const oldEnd = cue.end_ms;
         cue.end_ms = Math.max(cue.start_ms + 80, Number(endIn.value || cue.start_ms + 500));
@@ -1561,7 +2106,7 @@
       const btnMerge = makeMiniBtn("+Unir", "Unir con el siguiente", () => mergeCue(idx));
       const btnDel = makeMiniBtn("×", "Eliminar subtítulo", () => deleteCue(idx));
 
-      // Herramientas atenuadas hasta pasar el ratón o enfocar la fila (siguen en el orden de tabulación).
+      // Tools dimmed until the row is hovered or focused (still in the tab order).
       const tools = document.createElement("span");
       tools.className = "cue-tools";
       const btnJump = makeMiniBtn("Resolve", "Mover cabezal en DaVinci Resolve", () => jumpResolve(cue.start_ms));
@@ -1607,9 +2152,13 @@
     });
   }
 
-  // Las palabras se conservan al editar: el servidor (align_words_to_lines)
-  // mantiene los tiempos de Whisper de las palabras que siguen y reparte el
-  // tiempo entre las nuevas. Aquí solo se sincroniza el texto si coincide el número.
+  /**
+   * Keeps word timings when a cue's text is edited. The server
+   * (align_words_to_lines) keeps Whisper timings for words that survive and
+   * spreads time over new ones; locally the word texts are only synced when
+   * the token count still matches.
+   * @param {!Object} cue Cue whose `lines` were just updated.
+   */
   function syncCueWordsAfterTextEdit(cue) {
     const tokens = (cue.lines || []).flatMap((ln) => ln.split(/\s+/).filter(Boolean));
     if (cue.words && cue.words.length === tokens.length) {
@@ -1617,6 +2166,16 @@
     }
   }
 
+  /**
+   * Linearly remaps word timings from an old cue span to a new one.
+   * @param {?Array<!Object>} words Words with start_ms/end_ms.
+   * @param {number} oldStart Old cue start, ms.
+   * @param {number} oldEnd Old cue end, ms.
+   * @param {number} newStart New cue start, ms.
+   * @param {number} newEnd New cue end, ms.
+   * @return {!Array<!Object>} New word objects (inputs not mutated); [] when
+   *     there are no words.
+   */
   function rescaleWords(words, oldStart, oldEnd, newStart, newEnd) {
     if (!words || !words.length) return [];
     const scale = (newEnd - newStart) / Math.max(1, oldEnd - oldStart);
@@ -1627,6 +2186,13 @@
     }));
   }
 
+  /**
+   * Creates a small ghost button for cue rows.
+   * @param {string} label Visible text.
+   * @param {string} title Tooltip and aria-label.
+   * @param {function(!Event)} onClick Click handler.
+   * @return {!HTMLButtonElement}
+   */
   function makeMiniBtn(label, title, onClick) {
     const b = document.createElement("button");
     b.type = "button";
@@ -1638,12 +2204,29 @@
     return b;
   }
 
+  // Save sequencing: every local edit calls scheduleSaveCues(), which bumps
+  // state.editSeq and debounces a PUT by 350 ms. saveCuesToServer() bumps it
+  // again and remembers its own value; the response is applied only if
+  // editSeq is unchanged, i.e. no edit happened while the request was in
+  // flight. Otherwise the stale response is dropped and the pending debounced
+  // save sends the newer cues.
+
+  /** Marks cues dirty and (re)starts the 350 ms save debounce. */
   function scheduleSaveCues() {
     state.editSeq += 1;
     clearTimeout(state.saveTimer);
     state.saveTimer = setTimeout(saveCuesToServer, 350);
   }
 
+  /**
+   * PUTs state.cues to /api/cues now (cancelling a pending debounce). The
+   * server recomputes CPS, warnings and word alignment; its version is merged
+   * back only if no newer edit exists. With the same cue count, objects are
+   * updated in place so open text areas keep their references and caret;
+   * otherwise the array is replaced and the list re-rendered.
+   * @async
+   * @return {!Promise<void>} Errors are shown as a toast.
+   */
   async function saveCuesToServer() {
     clearTimeout(state.saveTimer);
     state.editSeq += 1;
@@ -1653,11 +2236,11 @@
         method: "PUT",
         body: JSON.stringify({ cues: state.cues }),
       });
-      // Ignora respuestas viejas si hubo ediciones mientras viajaba la petición.
+      // Ignore stale responses if there were edits while the request was in flight.
       if (data.session && seq === state.editSeq) {
         const serverCues = data.session.cues || [];
         if (serverCues.length === state.cues.length) {
-          // Actualiza en sitio: los textareas abiertos siguen apuntando a estos objetos.
+          // Update in place: open textareas still point at these objects.
           serverCues.forEach((c, i) => Object.assign(state.cues[i], c));
           invalidateWaveCache();
         } else {
@@ -1672,13 +2255,21 @@
     }
   }
 
+  /**
+   * Splits a cue at its middle word: at that word's start when per-word
+   * timings exist, else at the time midpoint; the cut stays >= 80 ms from both
+   * edges. Saves, then re-renders the list.
+   * @async
+   * @param {number} idx Cue index; cues with fewer than 2 words are ignored.
+   * @return {!Promise<void>}
+   */
   async function splitCue(idx) {
     const cue = state.cues[idx];
     if (!cue) return;
     const words = (cue.text || "").trim().split(/\s+/);
     if (words.length < 2) return;
     const midWord = Math.floor(words.length / 2);
-    // Con tiempos por palabra, corta justo donde empieza la palabra central.
+    // With per-word timings, cut exactly where the middle word starts.
     const timed = (cue.words || []).length === words.length ? cue.words : null;
     const rawMid = timed ? timed[midWord].start_ms : (cue.start_ms + cue.end_ms) / 2;
     const midMs = Math.round(Math.min(Math.max(rawMid, cue.start_ms + 80), cue.end_ms - 80));
@@ -1701,6 +2292,12 @@
     renderCueList();
   }
 
+  /**
+   * Merges a cue with the next one (one line each, word timings concatenated).
+   * @async
+   * @param {number} idx Cue index; the last cue is ignored.
+   * @return {!Promise<void>}
+   */
   async function mergeCue(idx) {
     if (idx >= state.cues.length - 1) return;
     const cur = state.cues[idx];
@@ -1714,12 +2311,32 @@
     renderCueList();
   }
 
+  /**
+   * Deletes a cue, saves and re-renders the list.
+   * @async
+   * @param {number} idx Cue index.
+   * @return {!Promise<void>}
+   */
   async function deleteCue(idx) {
     state.cues.splice(idx, 1);
     await saveCuesToServer();
     renderCueList();
   }
 
+  // ---------------------------------------------------------------------------
+  // Live preview and theme
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Renders the caption overlay of the monitor at a given time. Hot path: runs
+   * on every timeupdate, animation tick (80 ms) and style change, so it reads
+   * the cached style and stage height. Approximates the exporters: font size
+   * is a fraction of the stage height, the outline is a real stroke under the
+   * fill, karaoke highlights the word being spoken, and flipbook/boil steps
+   * every anim_hold_frames frames at 24 fps.
+   * @param {number} ms Time in ms. If no cue spans it, the active cue is shown
+   *     so the cue being edited stays visible while paused elsewhere.
+   */
   function renderPreviewAtMs(ms) {
     const cap = $("preview-caption");
     const st = getCachedStyle();
@@ -1728,6 +2345,8 @@
     const active = state.cues.find((c) => ms >= c.start_ms && ms <= c.end_ms) ||
       (state.activeCueIndex >= 0 ? state.cues[state.activeCueIndex] : null);
 
+    // Animation step: playing media drives the clock; while paused the synthetic
+    // animClockMs keeps boil/flipbook moving. 1000 / 24 ms = one 24 fps frame.
     const holdFrames = Math.max(1, Number(st.anim_hold_frames || 3));
     const clockMs = !activeMedia().paused ? ms : state.animClockMs;
     const step = Math.floor(clockMs / (holdFrames * (1000 / 24)));
@@ -1746,6 +2365,8 @@
       resolvedFamily = `"${variants[0].css_family}", "${st.font}", sans-serif`;
     }
 
+    // Weight is guessed from the style name (Extra* 800, *Bold 700, else 500).
+    // 1.15 is an empirical size factor; 12 px keeps tiny stages legible.
     cap.style.fontFamily = resolvedFamily;
     cap.style.fontWeight = st.font_style.toLowerCase().includes("extra") ? "800" : st.font_style.toLowerCase().includes("bold") ? "700" : "500";
     const stageH = getCachedStageH();
@@ -1758,6 +2379,8 @@
       (st.animation_mode === "boil" || st.animation_mode === "font_cycle_boil") &&
       st.anim_jitter > 0
     ) {
+      // Deterministic wobble per step (unrelated sine frequencies) scaled by
+      // jitter: offsets in px, rotation in degrees, and a tiny scale change.
       const j = Number(st.anim_jitter || 0);
       const dx = (Math.sin(step * 2.13) * 1.8 * j).toFixed(2);
       const dy = (Math.cos(step * 1.67) * 2.4 * j).toFixed(2);
@@ -1768,8 +2391,9 @@
       cap.style.transform = "none";
     }
 
-    // Contorno real (stroke) pintado bajo el relleno: con texto al 0 % quedan
-    // letras huecas, igual que en .ASS y Text+.
+    // Real outline (stroke) painted under the fill: with text at 0 % opacity
+    // the letters are hollow, as in .ASS and Text+. The width is doubled
+    // because the fill covers the inner half of the stroke.
     const ol = Math.max(0, Math.round(st.outline_thickness * 18));
     cap.style.webkitTextStroke = ol > 0 ? `${ol * 2}px ${hexToRgba(st.outline_hex, st.outline_alpha)}` : "0";
     cap.style.paintOrder = "stroke fill";
@@ -1777,6 +2401,7 @@
       ? `0 3px 8px ${hexToRgba("#000000", st.shadow_alpha)}`
       : "none";
 
+    // Applies ASCII folding and uppercase the same way the exporters do.
     const transformToken = (txt) => {
       let out = st.ascii_fold ? foldSpanishToAsciiPreview(txt) : txt;
       if (st.uppercase) out = out.toUpperCase();
@@ -1817,6 +2442,11 @@
     }
   }
 
+  /**
+   * Resolves the effective color scheme: explicit meta color-scheme value,
+   * then the data-theme attribute, then the OS preference.
+   * @return {string} "light" or "dark".
+   */
   function getCurrentScheme() {
     const meta = document.querySelector('meta[name="color-scheme"]');
     const content = meta ? meta.content : "light dark";
@@ -1829,6 +2459,16 @@
     return "dark";
   }
 
+  /**
+   * Applies a theme through <meta name="color-scheme"> and data-theme (the CSS
+   * keys off both). Only an explicit choice that differs from the OS setting
+   * is stored ("autosubs-theme" in localStorage), so the app otherwise keeps
+   * following the system. Redraws the waveform because its canvas colors
+   * depend on the theme (part of the waveCache key).
+   * @param {?string} theme "light", "dark", or "system"/null for automatic.
+   * @param {boolean=} persist Whether to update localStorage (false for the
+   *     initial load and for changes coming from another tab or the OS).
+   */
   function applyTheme(theme, persist = true) {
     const meta = document.querySelector('meta[name="color-scheme"]');
     const systemPref = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
@@ -1866,6 +2506,7 @@
     }
   }
 
+  /** Flips between light and dark (persisted) and confirms with a toast. */
   function toggleTheme() {
     const current = getCurrentScheme();
     const target = current === "dark" ? "light" : "dark";
@@ -1874,24 +2515,43 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Forma de onda: regla de tiempo, zoom/desplazamiento y arrastre de subtítulos
+  // Waveform: time ruler, zoom/scroll and cue dragging
   // ---------------------------------------------------------------------------
+  // Coordinates: times are ms on the media timeline; x/y are CSS px relative
+  // to the canvas box. The visible window comes from viewRange() and
+  // msToX()/xToMs() convert between both. Layout from the top: time ruler
+  // (WAVE_RULER_H), audio peaks, then the draggable cue lane (WAVE_LANE_H).
+  // Layout in CSS px: ruler height, cue lane height, edge grab tolerance.
   const WAVE_RULER_H = 14;
   const WAVE_LANE_H = 26;
   const WAVE_EDGE_PX = 8;
+  // Shortest cue a drag can produce, and the narrowest zoom window (ms).
   const MIN_CUE_MS = 200;
   const MIN_VIEW_MS = 2000;
 
+  /**
+   * Playhead of the active media element.
+   * @return {number} Time in ms.
+   */
   function currentMs() {
     return (activeMedia().currentTime || 0) * 1000;
   }
 
+  /**
+   * Timeline length for the waveform: server duration, else media metadata,
+   * else the end of the last cue; never below 1 s.
+   * @return {number} Duration in ms.
+   */
   function totalDurMs() {
     const m = activeMedia();
     const lastEnd = state.cues.length ? state.cues[state.cues.length - 1].end_ms : 0;
     return Math.max(1000, state.durationMs || (m.duration ? m.duration * 1000 : 0) || lastEnd);
   }
 
+  /**
+   * Resolves state.view into a clamped visible window.
+   * @return {{start: number, span: number, dur: number}} All in ms.
+   */
   function viewRange() {
     const dur = totalDurMs();
     const span = state.view.spanMs > 0 ? Math.min(state.view.spanMs, dur) : dur;
@@ -1899,6 +2559,12 @@
     return { start, span, dur };
   }
 
+  /**
+   * Sets the waveform window, clamped to [MIN_VIEW_MS, duration]; a span
+   * covering the whole duration is stored as 0 ("fit"). Redraws.
+   * @param {number} startMs Window start, ms.
+   * @param {number} spanMs Window length, ms (Infinity = fit all).
+   */
   function setView(startMs, spanMs) {
     const dur = totalDurMs();
     const span = Math.max(MIN_VIEW_MS, Math.min(spanMs, dur));
@@ -1908,6 +2574,11 @@
     drawWaveform(currentMs());
   }
 
+  /**
+   * Zooms while keeping `centerMs` at the same x position.
+   * @param {number} centerMs Anchor time, ms.
+   * @param {number} factor Span multiplier (< 1 zooms in), clamped to 0.25..4.
+   */
   function zoomAround(centerMs, factor) {
     const { start, span } = viewRange();
     const f = Math.max(0.25, Math.min(4, factor));
@@ -1915,6 +2586,7 @@
     setView(centerMs - frac * span * f, span * f);
   }
 
+  /** Shows the visible span ("Todo", "1.5 min", "8.0 s") next to the zoom buttons. */
   function updateZoomReadout() {
     const el = $("zoom-readout");
     if (!el) return;
@@ -1925,21 +2597,51 @@
       : `${(span / 1000).toFixed(span < 10000 ? 1 : 0)} s`;
   }
 
+  /**
+   * Scrolls the zoomed waveform so `ms` is visible (no-op when fitting all).
+   * @param {number} ms Time to reveal.
+   * @param {number=} pad Fraction of the span left before `ms` after a scroll.
+   */
   function ensureMsVisible(ms, pad = 0.1) {
     if (state.view.spanMs <= 0) return;
     const { start, span } = viewRange();
     if (ms < start || ms > start + span) setView(ms - span * pad, span);
   }
 
+  /**
+   * Measures the waveform canvas box (reads layout).
+   * @return {{canvas: !HTMLCanvasElement, w: number, h: number}} Size in CSS
+   *     px, with 960 x 96 fallbacks before layout.
+   */
   function waveSize() {
     const canvas = $("waveform-canvas");
     const rect = canvas.getBoundingClientRect();
     return { canvas, w: rect.width || 960, h: rect.height || 96 };
   }
 
+  /**
+   * Maps a time to an x coordinate in the visible window.
+   * @param {number} ms Time in ms.
+   * @param {number} w Canvas width in CSS px.
+   * @param {{start: number, span: number}} vr Window from viewRange().
+   * @return {number} x in CSS px (may fall outside 0..w).
+   */
   const msToX = (ms, w, vr) => ((ms - vr.start) / vr.span) * w;
+  /**
+   * Maps an x coordinate in the visible window to a time.
+   * @param {number} x x in CSS px.
+   * @param {number} w Canvas width in CSS px.
+   * @param {{start: number, span: number}} vr Window from viewRange().
+   * @return {number} Time in ms.
+   */
   const xToMs = (x, w, vr) => vr.start + (x / w) * vr.span;
 
+  /**
+   * Formats a ruler label as "m:ss", or "m:ss.s" when ticks are < 1 s apart.
+   * @param {number} ms Tick time.
+   * @param {number} step Tick spacing in ms.
+   * @return {string}
+   */
   function formatTick(ms, step) {
     const totalS = ms / 1000;
     const m = Math.floor(totalS / 60);
@@ -1948,7 +2650,16 @@
     return `${m}:${secStr}`;
   }
 
+  // Offscreen render cache of the waveform. Everything except the playhead
+  // (ruler, cue regions, peaks, cue lane) is drawn into waveCache.canvas only
+  // when one of the recorded keys changes; otherwise drawWaveform() just blits
+  // it and paints the playhead, which keeps per-timeupdate redraws cheap.
+  // Keys: device-px size, devicePixelRatio, theme, visible window, peaks and
+  // cues array identity, durationMs, active cue, dragged cue and cuesVersion.
+  // In-place cue edits keep the array identity, so they must call
+  // invalidateWaveCache() to bump cuesVersion.
   const waveCache = {
+    // Sentinel initial values never match real state, so the first draw renders.
     canvas: null,
     pw: 0,
     ph: 0,
@@ -1965,10 +2676,27 @@
     dragIdx: -2,
   };
 
+  /**
+   * Forces the next drawWaveform() to re-render the offscreen layer (needed
+   * after in-place cue edits).
+   */
   function invalidateWaveCache() {
     waveCache.cuesVersion += 1;
   }
 
+  /**
+   * Draws the static waveform layer into the offscreen canvas: background,
+   * time ruler (tick step chosen so labels are >= 70 px apart), translucent
+   * cue regions, audio peaks (max of the peaks under each px column) and the
+   * cue lane with grab handles and clipped labels. Colors are hard-coded per
+   * theme because canvas cannot read CSS custom properties directly.
+   * @param {!CanvasRenderingContext2D} offCtx Offscreen context.
+   * @param {number} w Width in CSS px.
+   * @param {number} h Height in CSS px.
+   * @param {number} dpr devicePixelRatio (drawing is scaled to device px).
+   * @param {{start: number, span: number}} vr Visible window, ms.
+   * @param {boolean} isLight Use light-theme colors.
+   */
   function renderWaveformBackground(offCtx, w, h, dpr, vr, isLight) {
     offCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     offCtx.fillStyle = isLight ? "#f0f0f3" : "#141417";
@@ -1981,7 +2709,7 @@
     const waveHalf = (waveBottom - waveTop) / 2;
     const mutedText = isLight ? "#71717a" : "#92929c";
 
-    // Regla de tiempo
+    // Time ruler
     const steps = [100, 250, 500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000];
     const step = steps.find((st) => (st / vr.span) * w >= 70) || 600000;
     offCtx.fillStyle = mutedText;
@@ -1993,7 +2721,7 @@
       offCtx.fillText(formatTick(t, step), x + 3, 2);
     }
 
-    // Regiones de subtítulos sobre la onda
+    // Cue regions over the waveform
     state.cues.forEach((cue, idx) => {
       const x1 = msToX(cue.start_ms, w, vr);
       const x2 = msToX(cue.end_ms, w, vr);
@@ -2002,7 +2730,7 @@
       offCtx.fillRect(x1, waveTop, Math.max(1, x2 - x1), waveBottom - waveTop);
     });
 
-    // Picos de audio (máximo por columna de píxel en la ventana visible)
+    // Audio peaks (max per pixel column within the visible window)
     const peaks = state.peaks || [];
     if (peaks.length > 0 && state.durationMs > 0) {
       const n = peaks.length;
@@ -2018,7 +2746,7 @@
       }
     }
 
-    // Carril de bloques arrastrables
+    // Lane of draggable cue blocks
     offCtx.textBaseline = "middle";
     state.cues.forEach((cue, idx) => {
       const x1 = msToX(cue.start_ms, w, vr);
@@ -2050,6 +2778,12 @@
     });
   }
 
+  /**
+   * Draws the waveform canvas: re-renders the offscreen layer only when the
+   * cache is dirty, then blits it and paints the playhead. The backing store
+   * is sized to CSS px x devicePixelRatio for crisp lines on Retina screens.
+   * @param {number} playheadMs Playhead time in ms.
+   */
   function drawWaveform(playheadMs) {
     const { canvas, w, h } = waveSize();
     const dpr = window.devicePixelRatio || 1;
@@ -2108,7 +2842,7 @@
     ctx.drawImage(waveCache.canvas, 0, 0);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // Cabezal de reproducción
+    // Playhead
     const px = msToX(playheadMs, w, vr);
     if (px >= 0 && px <= w) {
       ctx.fillStyle = "#8367c7";
@@ -2116,15 +2850,24 @@
     }
   }
 
-  // Devuelve { idx, mode: "start" | "end" | "move" } si el puntero está sobre un bloque.
+  /**
+   * Finds the cue block (and which part of it) under the pointer.
+   * @param {number} x Pointer x, CSS px relative to the canvas.
+   * @param {number} y Pointer y, CSS px relative to the canvas.
+   * @return {?{idx: number, mode: string}} mode is "start" or "end" (edge
+   *     resize) or "move"; null when off the lane or far from any block.
+   *     Gap hits also carry a `dist` field (px to the edge).
+   */
   function hitTestCue(x, y) {
     const { w, h } = waveSize();
-    // El carril acepta clics un poco por encima de su borde superior.
+    // The lane accepts clicks slightly above its top edge.
     if (y < h - WAVE_LANE_H - 8) return null;
     const vr = viewRange();
     const spans = state.cues.map((cue) => [msToX(cue.start_ms, w, vr), msToX(cue.end_ms, w, vr)]);
+    // Edge tolerance: up to WAVE_EDGE_PX but at most a third of a narrow block
+    // (min 2 px), so the middle of short cues stays draggable.
     const tolFor = (x1, x2) => Math.min(WAVE_EDGE_PX, Math.max(2, (x2 - x1) / 3));
-    // Dentro de un bloque solo cuentan sus propios bordes (nunca los del vecino).
+    // Inside a block only its own edges count (never the neighbor's).
     const insideIdx = spans.findIndex(([x1, x2]) => x >= x1 && x <= x2);
     if (insideIdx >= 0) {
       const [x1, x2] = spans[insideIdx];
@@ -2133,7 +2876,7 @@
       if (x2 - x <= tol) return { idx: insideIdx, mode: "end" };
       return { idx: insideIdx, mode: "move" };
     }
-    // En un hueco: el borde más cercano dentro de la tolerancia.
+    // In a gap: the nearest edge within tolerance.
     let edge = null;
     spans.forEach(([x1, x2], idx) => {
       const tol = tolFor(x1, x2);
@@ -2144,6 +2887,11 @@
     return edge;
   }
 
+  /**
+   * Seeks the active media (if it has a source), cancels any auto-stop and
+   * redraws the waveform and preview.
+   * @param {number} ms Target time, clamped to [0, totalDurMs()].
+   */
   function seekToMs(ms) {
     state.playUntilMs = null;
     const clamped = Math.max(0, Math.min(ms, totalDurMs()));
@@ -2155,6 +2903,11 @@
     renderPreviewAtMs(clamped);
   }
 
+  /**
+   * Changes the highlighted cue by toggling only the two affected rows (no
+   * list re-render). Does not redraw the waveform.
+   * @param {number} idx Cue index or -1.
+   */
   function setActiveCueIndex(idx) {
     const prevIdx = state.activeCueIndex;
     if (idx === prevIdx) return;
@@ -2172,14 +2925,21 @@
     state.activeCueIndex = idx;
   }
 
+  /**
+   * Highlights a cue and scrolls the list to it.
+   * @param {number} idx Cue index.
+   */
   function selectCue(idx) {
     setActiveCueIndex(idx);
     scrollCueIntoList(idx);
   }
 
-  // Desplaza solo la lista de subtítulos. scrollIntoView también movía la
-  // página y la forma de onda quedaba en otro sitio bajo el puntero, así que el
-  // siguiente clic en un borde caía en el lugar equivocado.
+  /**
+   * Scrolls only the cue list so a row is visible. scrollIntoView() also
+   * moved the page, leaving the waveform somewhere else under the pointer,
+   * so the next click on an edge landed in the wrong place.
+   * @param {number} idx Cue index.
+   */
   function scrollCueIntoList(idx) {
     const list = $("cue-list");
     const el = list.querySelector(`.cue-item[data-index="${idx}"]`);
@@ -2190,6 +2950,11 @@
     else if (er.bottom > lr.bottom) list.scrollTop += er.bottom - lr.bottom + 4;
   }
 
+  /**
+   * Refreshes a row's time inputs and timecode without re-rendering the list
+   * (used during drags and time edits).
+   * @param {number} idx Cue index.
+   */
   function updateCueRowTimes(idx) {
     const cue = state.cues[idx];
     const el = document.querySelector(`.cue-item[data-index="${idx}"]`);
@@ -2200,6 +2965,14 @@
       `${formatMsReadable(cue.start_ms)} → ${formatMsReadable(cue.end_ms)}`;
   }
 
+  /**
+   * Applies a drag offset to the dragged cue, relative to its original times:
+   * snaps to 10 ms, keeps at least MIN_CUE_MS, never overlaps the neighbors
+   * and rescales word timings. Updates row, waveform and preview live; the
+   * save happens on pointerup.
+   * @param {!Object} d state.drag of kind "cue".
+   * @param {number} deltaMs Pointer offset from the grab point, ms.
+   */
   function applyCueDrag(d, deltaMs) {
     const cue = state.cues[d.idx];
     const prevEnd = d.idx > 0 ? state.cues[d.idx - 1].end_ms : 0;
@@ -2227,6 +3000,10 @@
     drawWaveform(currentMs());
   }
 
+  /**
+   * Aborts a cue drag (Escape or pointercancel), restoring the original times
+   * and words.
+   */
   function cancelCueDrag() {
     const d = state.drag;
     if (!d || d.kind !== "cue") return;
@@ -2241,8 +3018,16 @@
     renderPreviewAtMs(currentMs());
   }
 
+  /**
+   * Wires waveform interaction: press on a cue block to move/resize it (a
+   * click without movement seeks to its start), press elsewhere to scrub,
+   * Escape cancels a drag, ⌘/Ctrl + wheel or pinch zooms around the pointer,
+   * plain wheel scrolls while zoomed. Also wires the zoom buttons and resize
+   * handling (which invalidates the cached stage height).
+   */
   function wireWaveform() {
     const canvas = $("waveform-canvas");
+    // Pointer position in canvas-local CSS px.
     const local = (ev) => {
       const r = canvas.getBoundingClientRect();
       return { x: ev.clientX - r.left, y: ev.clientY - r.top };
@@ -2288,12 +3073,15 @@
         seekToMs(xToMs(x, w, vr));
         return;
       }
+      // 3 px dead zone so a plain click is not treated as a drag.
       if (!d.moved && Math.abs(x - d.startX) < 3) return;
       d.moved = true;
       canvas.style.cursor = d.mode === "move" ? "grabbing" : "ew-resize";
       applyCueDrag(d, xToMs(x, w, vr) - d.grabMs);
     });
 
+    // Ends the current gesture. A cancelled cue drag restores the original
+    // times; a click without movement seeks; a real drag saves and re-renders.
     const endDrag = (cancelled) => {
       const d = state.drag;
       if (!d) return;
@@ -2329,7 +3117,7 @@
         const { w } = waveSize();
         const vr = viewRange();
         if (ev.ctrlKey || ev.metaKey) {
-          // Pellizco en trackpad (ctrlKey) o ⌘ + rueda: zoom alrededor del puntero.
+          // Trackpad pinch (ctrlKey) or ⌘ + wheel: zoom around the pointer.
           ev.preventDefault();
           zoomAround(xToMs(x, w, vr), Math.exp(ev.deltaY * 0.01));
         } else if (state.view.spanMs > 0) {
@@ -2341,6 +3129,7 @@
       { passive: false }
     );
 
+    // Zoom buttons anchor on the playhead when visible, else the window center.
     const zoomCenter = () => {
       const { start, span } = viewRange();
       const ms = currentMs();
@@ -2358,8 +3147,13 @@
     }
   }
 
-  // Reproduce desde `ms`; con `stopAtMs` se pausa sola al llegar ahí
-  // (se revisa en cada frame, así no se pasa ~250 ms como con timeupdate).
+  /**
+   * Plays from `ms`; with `stopAtMs` it pauses itself on arrival. The check
+   * runs every animation frame, so it does not overshoot by ~250 ms the way
+   * a timeupdate listener would.
+   * @param {number} ms Start time, ms.
+   * @param {?number=} stopAtMs Auto-pause time in ms, or null to play freely.
+   */
   function seekAndPlay(ms, stopAtMs = null) {
     const mediaEl = activeMedia();
     state.playUntilMs = stopAtMs;
@@ -2367,6 +3161,7 @@
     mediaEl.play().catch(() => {});
     if (stopAtMs == null) return;
     cancelAnimationFrame(state.playUntilRaf);
+    // rAF loop; stops once paused, when the limit is cleared, or on arrival.
     const tick = () => {
       const m = activeMedia();
       if (state.playUntilMs == null || m.paused) {
@@ -2375,8 +3170,8 @@
       }
       if (m.currentTime * 1000 >= state.playUntilMs) {
         m.pause();
-        // Retrocede unos ms para que el monitor siga mostrando este subtítulo
-        // y no el siguiente cuando ambos se tocan.
+        // Step back a few ms so the monitor keeps showing this cue and not
+        // the next one when both touch.
         m.currentTime = Math.max(0, (state.playUntilMs - 30) / 1000);
         state.playUntilMs = null;
         return;
@@ -2386,6 +3181,18 @@
     state.playUntilRaf = requestAnimationFrame(tick);
   }
 
+  // ---------------------------------------------------------------------------
+  // Resolve bridge
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Moves DaVinci Resolve's playhead to a time. Resolve Studio is driven
+   * directly; otherwise the server stores the timecode and the toast tells the
+   * user to run the «3 - MTTN AutoSubs - Ir a Tiempo» Lua script.
+   * @async
+   * @param {number} ms Time on the session timeline, ms.
+   * @return {!Promise<void>}
+   */
   async function jumpResolve(ms) {
     try {
       const res = await apiJson("/api/resolve/jump", {
@@ -2402,6 +3209,20 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Background jobs and uploads
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Polls a server job every 500 ms and drives the shared progress box. Only
+   * one job is tracked at a time: a new poll replaces the previous interval
+   * (the old job keeps running server-side, it is just no longer shown). On
+   * success the box hides after 2 s and `onSuccess` runs; errors and
+   * cancellations are shown as toasts.
+   * @param {string} jobId Id returned by the job-starting endpoint.
+   * @param {function(!Object)} onSuccess Receives the finished job (payload in
+   *     job.result).
+   */
   function pollJob(jobId, onSuccess) {
     state.activeJobId = jobId;
     clearTimeout(state.jobHideTimer);
@@ -2436,6 +3257,13 @@
     }, 500);
   }
 
+  /**
+   * Uploads a media file as the raw request body (URI-encoded name in
+   * X-Filename, so non-ASCII names survive) and loads the returned session.
+   * @async
+   * @param {?File} file Audio or video file.
+   * @return {!Promise<void>}
+   */
   async function uploadFile(file) {
     if (!file) return;
     $("upload-status").textContent = `Subiendo ${file.name}...`;
@@ -2458,6 +3286,18 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Event wiring
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Attaches every UI event handler; called once at startup. Grouped by area:
+   * mode and tabs, Resolve inbox and demo, model download and transcription,
+   * presets, uploads, transport, waveform, aspect ratio, find and replace,
+   * fonts and style, user presets, karaoke, monitor background, machine
+   * panel, Resolve push, exports, keyboard shortcut and theme sync. Also
+   * restores UI-only localStorage state (karaoke, stage background).
+   */
   function wireEvents() {
     $("btn-mode-standalone").addEventListener("click", () => setAppMode("standalone", true));
     $("btn-mode-resolve").addEventListener("click", () => setAppMode("resolve", true));
@@ -2465,6 +3305,7 @@
 
     if ($("btn-fill-bgg-glossary")) {
       $("btn-fill-bgg-glossary").addEventListener("click", () => {
+        // Board-game (BGG) terms appended to the custom glossary, skipping duplicates.
         const bggPreset = [
           "BoardGameGeek",
           "Meeple",
@@ -2562,6 +3403,7 @@
 
     $("btn-transcribe").addEventListener("click", async () => {
       try {
+        // The source follows the visible tab (Resolve inbox vs uploaded file).
         const activeTab = document.querySelector(".tab-btn.active")?.dataset.tab || "resolve";
         const source = activeTab === "resolve" ? "inbox" : "uploaded";
         const payload = {
@@ -2608,6 +3450,7 @@
       }
     });
 
+    // Server presets fill CPL/lines/pause; vertical presets switch to 9:16.
     $("preset-select").addEventListener("change", () => {
       const p = state.presets[$("preset-select").value];
       if (!p) return;
@@ -2621,7 +3464,7 @@
       }
     });
 
-    // Subida de archivos y drag & drop
+    // File upload and drag & drop
     const dz = $("dropzone");
     $("file-input").addEventListener("change", (ev) => uploadFile(ev.target.files[0]));
     dz.addEventListener("dragover", (ev) => {
@@ -2635,17 +3478,19 @@
       if (ev.dataTransfer.files[0]) uploadFile(ev.dataTransfer.files[0]);
     });
 
-    // Monitor y audio/vídeo
+    // Monitor and audio/video transport
     const audio = $("audio-player");
     const video = $("video-player");
     $("btn-play").addEventListener("click", () => {
-      state.playUntilMs = null; // El botón principal reproduce sin límite.
+      state.playUntilMs = null; // The main button plays without a stop limit.
       const m = activeMedia();
       if (m.paused) m.play().catch(() => {});
       else m.pause();
     });
     const onPlay = () => ($("btn-play").textContent = "II Pausar");
     const onPause = () => ($("btn-play").textContent = "▶ Reproducir");
+    // Hot path (~4 Hz while playing): time readout, active cue, auto-scroll of a
+    // zoomed waveform (not while dragging), preview and waveform.
     const onTimeUpdate = () => {
       const m = activeMedia();
       const ms = (m.currentTime || 0) * 1000;
@@ -2663,7 +3508,7 @@
       mEl.addEventListener("play", onPlay);
       mEl.addEventListener("pause", onPause);
       mEl.addEventListener("timeupdate", onTimeUpdate);
-      // Muestra la duración en cuanto se conoce, sin esperar a reproducir.
+      // Show the duration as soon as it is known, without waiting for playback.
       mEl.addEventListener("loadedmetadata", onTimeUpdate);
     });
     $("btn-back").addEventListener("click", () => {
@@ -2682,7 +3527,12 @@
 
     wireWaveform();
 
-    // Aspecto 16:9 / 9:16
+    // Aspect ratio 16:9 / 9:16
+    /**
+     * Switches the monitor aspect ratio. Declared inside wireEvents but
+     * hoisted, so the preset-select handler above can already call it.
+     * @param {string} mode "16:9" or "9:16".
+     */
     function setAspect(mode) {
       state.aspect = mode;
       const stage = $("preview-stage");
@@ -2696,7 +3546,7 @@
     $("btn-aspect-16-9").addEventListener("click", () => setAspect("16:9"));
     $("btn-aspect-9-16").addEventListener("click", () => setAspect("9:16"));
 
-    // Buscar y reemplazar
+    // Find and replace (literal, case-sensitive, across all cues)
     $("btn-replace-all").addEventListener("click", async () => {
       const find = $("search-input").value;
       const rep = $("replace-input").value;
@@ -2711,7 +3561,15 @@
       showToast(`Reemplazado "${find}" por "${rep}".`);
     });
 
-    // Chips, fuentes personalizadas y controles de estilo
+    // Chips, custom fonts and style controls
+    /**
+     * Uploads font files (.ttf/.otf or a .zip pack) one at a time, optionally
+     * installing them into ~/Library/Fonts so Resolve can use them, then
+     * refreshes the catalog selecting the last uploaded pack.
+     * @async
+     * @param {?FileList} fileList Files from the input.
+     * @return {!Promise<void>}
+     */
     async function uploadFontFiles(fileList) {
       const files = Array.from(fileList || []).filter(Boolean);
       if (!files.length) return;
@@ -2773,6 +3631,7 @@
       });
     });
 
+    // Delegated clicks on chip containers: apply a preset or delete a user preset.
     document.querySelectorAll(".style-chips").forEach((box) => {
       box.addEventListener("click", (ev) => {
         const del = ev.target.closest("[data-delete-preset]");
@@ -2792,6 +3651,7 @@
     });
 
     const saveForm = $("preset-save-form");
+    // Shows the inline «save style» form and hides its trigger (or the reverse).
     const toggleSaveForm = (open) => {
       saveForm.classList.toggle("hidden", !open);
       $("btn-preset-save").classList.toggle("hidden", open);
@@ -2812,7 +3672,7 @@
     });
     renderCustomChips();
 
-    // Karaoke global (apagado por defecto, se recuerda entre sesiones).
+    // Global karaoke toggle (off by default, remembered across sessions).
     const syncKaraoke = () => {
       invalidateStyleCache();
       const on = $("st-karaoke").checked;
@@ -2829,8 +3689,9 @@
       if (state.activePreset) applyStylePreset(state.activePreset);
     });
 
-    // Fondo de prueba del monitor (útil para evaluar transparencias).
+    // Monitor test background (useful to judge transparency).
     const STAGE_BGS = ["black", "gray", "light", "checker"];
+    // Applies a stage-bg-* class and syncs the swatch buttons' aria-pressed.
     const setStageBg = (bg, persist = true) => {
       const value = STAGE_BGS.includes(bg) ? bg : "black";
       const stage = $("preview-stage");
@@ -2850,6 +3711,8 @@
     setStageBg(savedBg, false);
 
     wireMachinePanel();
+    // Every style control re-renders through onStyleControlChanged: "input" for
+    // live slider feedback, "change" for selects, checkboxes and color pickers.
     ["st-weight", "st-ascii-fold", "st-size", "st-posy", "st-fill", "st-highlight", "st-outline", "st-outline-w", "st-shadow", "st-box", "st-box-color", "cfg-uppercase",
      "st-fill-a", "st-highlight-a", "st-outline-a", "st-shadow-a", "st-box-a", "st-anim-mode"]
       .forEach((id) => {
@@ -2858,6 +3721,7 @@
       });
     $("st-font").addEventListener("change", updatePresetStatus);
 
+    /** Shows the Text+ template field only for the "textplus" push mode. */
     function syncPushModeVisibility() {
       $("template-field").classList.toggle("hidden", $("push-mode").value !== "textplus");
     }
@@ -2866,7 +3730,7 @@
     syncPushModeVisibility();
     updateStyleTargetHint();
 
-    // Push a DaVinci Resolve 20
+    // Push to DaVinci Resolve 20
     $("btn-push-resolve").addEventListener("click", async () => {
       try {
         const res = await apiJson("/api/resolve/push", {
@@ -2896,7 +3760,8 @@
       }
     });
 
-    // Exportación de archivos y modo independiente
+    // File exports and standalone mode. The server returns the file content,
+    // downloaded through a temporary Blob URL.
     document.querySelectorAll(".export-btn").forEach((btn) => {
       btn.addEventListener("click", async () => {
         try {
@@ -2969,7 +3834,7 @@
       });
     }
 
-    // Atajo espacio para reproducir/pausar fuera de inputs
+    // Space toggles play/pause unless the focus is in a form field
     document.addEventListener("keydown", (ev) => {
       if (ev.code === "Space" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) {
         ev.preventDefault();
@@ -2977,7 +3842,7 @@
       }
     });
 
-    // Sincronización de tema entre pestañas y con el sistema
+    // Theme sync across tabs and with the OS setting
     window.addEventListener("storage", (e) => {
       if (e.key === "autosubs-theme") {
         const t = e.newValue;
@@ -2996,10 +3861,18 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Startup
+  // ---------------------------------------------------------------------------
+  // Order matters: handlers first, then the theme, then a default preset so the
+  // preview has a style before /api/status (and fonts) arrive. refreshStatus()
+  // re-applies that preset once fonts are known, unless the user changed it.
   wireEvents();
   let initialTheme = null;
   try { initialTheme = localStorage.getItem("autosubs-theme"); } catch (_) {}
   applyTheme(initialTheme, false);
+  // Fallback for engines without accent-color: exposes each slider's fill as
+  // --progress (no rule in styles.css consumes it at the moment).
   if (typeof CSS !== "undefined" && !CSS.supports("accent-color: #8367c7")) {
     document.querySelectorAll('input[type="range"]').forEach((slider) => {
       const updateProgress = () => {

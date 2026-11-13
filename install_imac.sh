@@ -1,6 +1,33 @@
 #!/usr/bin/env bash
+#
+# Installs MTTN AutoSubs Tool on macOS (Intel iMac 2017 and Apple Silicon).
+#
+# Steps, all idempotent so the script can be re-run safely:
+#   1. Installs whisper-cpp, ffmpeg, and ffmpeg-full via Homebrew if present.
+#   2. Creates the app data tree under ~/Library/Application Support/AutoSubsES
+#      (models/, fonts/, bridge/inbox/, bridge/outbox/, cache/).
+#   3. Copies the three Lua scripts into Resolve's Fusion/Scripts/Utility
+#      (Workspace > Scripts menu) and the five Text+ .setting templates into
+#      Fusion/Templates/Edit/Titles/MTTN AutoSubs (Effects > Titles).
+#   4. Downloads the selected Whisper GGML model from Hugging Face, resuming a
+#      partial ".part" download when possible.
+#   5. Creates an isolated venv with the optional pywebview native window.
+#   6. On macOS, generates ~/Applications/MTTN AutoSubs Tool.app.
+#
+# Usage:
+#   ./install_imac.sh [--skip-model] [--model=MODEL_ID]
+#
+# Flags:
+#   --skip-model      Do not download a Whisper model (it can be fetched later
+#                     from the app).
+#   --model=MODEL_ID  One of turbo-q8 (default), large-v3-q5, turbo-q5,
+#                     small-q8, base-q8.
+#
+# User-facing messages are in Spanish; exits non-zero on bad flags or a failed
+# model download.
 set -euo pipefail
 
+# Paths: repo checkout, app data, and Resolve's per-user Fusion folders.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DATA_DIR="${HOME}/Library/Application Support/AutoSubsES"
 RESOLVE_FUSION_DIR="${HOME}/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion"
@@ -9,6 +36,7 @@ RESOLVE_TEMPLATES_DIR="${RESOLVE_FUSION_DIR}/Templates/Edit/Titles/MTTN AutoSubs
 MODEL_ID="turbo-q8"
 SKIP_MODEL=false
 
+# --- Argument parsing ---
 for arg in "$@"; do
   case "${arg}" in
     --skip-model) SKIP_MODEL=true ;;
@@ -20,6 +48,8 @@ for arg in "$@"; do
   esac
 done
 
+# Model IDs must match hardware_imac2017.MODEL_CATALOG. Sizes are the download
+# sizes shown to the user, not RAM usage.
 case "${MODEL_ID}" in
   turbo-q8) MODEL_FILE="ggml-large-v3-turbo-q8_0.bin" ; MODEL_SIZE="~834 MB" ;;
   large-v3-q5) MODEL_FILE="ggml-large-v3-q5_0.bin" ; MODEL_SIZE="~1080 MB" ;;
@@ -40,6 +70,8 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "Aviso: este script está diseñado para macOS. Creando solo estructura local."
 fi
 
+# --- Homebrew dependencies ---
+# Intel Homebrew lives in /usr/local, Apple Silicon in /opt/homebrew.
 BREW_BIN=""
 if [[ -x "/usr/local/bin/brew" ]]; then
   BREW_BIN="/usr/local/bin/brew"
@@ -66,11 +98,14 @@ else
   echo "  brew install whisper-cpp ffmpeg ffmpeg-full"
 fi
 
+# --- App data and Resolve assets ---
 echo "Creando directorios de puente, fuentes y modelos en: ${APP_DATA_DIR}"
 mkdir -p "${APP_DATA_DIR}/models" "${APP_DATA_DIR}/fonts" "${APP_DATA_DIR}/bridge/inbox" "${APP_DATA_DIR}/bridge/outbox" "${APP_DATA_DIR}/cache"
 
 echo "Instalando scripts Lua en DaVinci Resolve 20: ${RESOLVE_SCRIPTS_DIR}"
 mkdir -p "${RESOLVE_SCRIPTS_DIR}"
+# The installed names ("1 - MTTN AutoSubs - ...") are what users see in
+# Workspace > Scripts and are referenced by the docs and server messages.
 cp "${SCRIPT_DIR}/lua/1_AutoSubs_ES_Exportar_Audio.lua" "${RESOLVE_SCRIPTS_DIR}/1 - MTTN AutoSubs - Exportar Audio.lua"
 cp "${SCRIPT_DIR}/lua/2_AutoSubs_ES_Insertar_Subtitulos.lua" "${RESOLVE_SCRIPTS_DIR}/2 - MTTN AutoSubs - Insertar Subtitulos.lua"
 cp "${SCRIPT_DIR}/lua/3_AutoSubs_ES_Ir_A_Tiempo.lua" "${RESOLVE_SCRIPTS_DIR}/3 - MTTN AutoSubs - Ir a Tiempo.lua"
@@ -81,16 +116,24 @@ cp "${SCRIPT_DIR}/templates/"*.setting "${RESOLVE_TEMPLATES_DIR}/"
 
 chmod +x "${SCRIPT_DIR}/install_imac.sh" "${SCRIPT_DIR}/Iniciar AutoSubs ES.command"
 
+# --- Whisper model download ---
 if [[ "${SKIP_MODEL}" == "false" ]]; then
   TARGET_MODEL="${APP_DATA_DIR}/models/${MODEL_FILE}"
   if [[ -f "${TARGET_MODEL}" ]]; then
     echo "✓ Modelo español recomendado ya instalado: ${TARGET_MODEL}"
   else
     echo "Descargando modelo español recomendado (${MODEL_FILE}, ${MODEL_SIZE})..."
+    # Download to ".part" and rename only on success so an interrupted run
+    # never leaves a truncated model that the app would treat as installed.
+    # "-C -" resumes an earlier partial download.
     CURL_RC=0
     curl -fL -C - "${MODEL_URL}" -o "${TARGET_MODEL}.part" || CURL_RC=$?
     if [[ "${CURL_RC}" -ne 0 ]]; then
+      # curl exit 22 (HTTP error, e.g. 416 Range Not Satisfiable) or 33 (range
+      # not supported) usually means the ".part" is already complete or the
+      # resume failed. Compare sizes; otherwise restart from scratch.
       if [[ -f "${TARGET_MODEL}.part" && ( "${CURL_RC}" -eq 22 || "${CURL_RC}" -eq 33 ) ]]; then
+        # Last Content-Length after redirects (-L) is the real file size.
         REMOTE_SIZE="$(curl -fsIL "${MODEL_URL}" | awk 'tolower($1)=="content-length:"{len=$2} END{gsub(/\r/,"",len); print len+0}')"
         LOCAL_SIZE="$(stat -f%z "${TARGET_MODEL}.part" 2>/dev/null || echo 0)"
         if [[ "${REMOTE_SIZE}" -gt 0 && "${LOCAL_SIZE}" -eq "${REMOTE_SIZE}" ]]; then
@@ -110,7 +153,9 @@ else
   echo "Descarga del modelo omitida (--skip-model). Puedes descargarlo desde la app."
 fi
 
-# Python aislado para la ventana nativa (pywebview); no toca el Python del sistema.
+# --- Optional native window (pywebview) ---
+# Isolated Python for the native window (pywebview); never touches the system
+# Python. The server itself stays stdlib-only and works without this venv.
 VENV_DIR="${APP_DATA_DIR}/venv"
 HOST_PYTHON=""
 for cand in /opt/homebrew/bin/python3 /usr/local/bin/python3 "$(command -v python3 || true)"; do
@@ -130,10 +175,36 @@ else
   echo "Aviso: no se encontró python3; instala Python con: brew install python"
 fi
 
+# --- macOS app bundle ---
+
+#######################################
+# Writes a minimal macOS .app bundle that launches MTTN AutoSubs Tool.
+# The generated Contents/MacOS/AutoSubsES launcher hardcodes this checkout's
+# path (SCRIPT_DIR) and the app data dir at install time; escaped \${...}
+# variables in the heredoc are expanded later, when the app runs. At runtime
+# it prefers the pywebview venv (--desktop, server lives with the window);
+# otherwise it starts the server in the background on 127.0.0.1:55120 if it
+# is not already up and opens it as a Chrome/Brave app window or in the
+# default browser.
+# Globals:
+#   SCRIPT_DIR
+#   APP_DATA_DIR
+# Arguments:
+#   $1: Absolute path of the bundle to create, e.g.
+#       "${HOME}/Applications/MTTN AutoSubs Tool.app". Overwrites files in an
+#       existing bundle.
+# Outputs:
+#   Writes Info.plist, the launcher script, and AppIcon.icns (when
+#   assets/AppIcon.icns exists) inside the bundle.
+# Returns:
+#   0 on success; any failing command aborts the script (set -e).
+#######################################
 create_macos_app_bundle() {
   local bundle_path="$1"
   local contents_dir="${bundle_path}/Contents"
   mkdir -p "${contents_dir}/MacOS" "${contents_dir}/Resources"
+  # Unquoted heredoc delimiters: ${...} expands now (install time); \${...}
+  # is written literally and expands when the launcher runs.
   cat > "${contents_dir}/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -199,7 +270,7 @@ LAUNCHER
   if [[ -f "${SCRIPT_DIR}/assets/AppIcon.icns" ]]; then
     cp "${SCRIPT_DIR}/assets/AppIcon.icns" "${contents_dir}/Resources/AppIcon.icns"
   fi
-  # Refresca el icono en Finder/Dock si la app ya existía.
+  # Touch the bundle so Finder/Dock refresh the icon if the app already existed.
   touch "${bundle_path}"
 }
 

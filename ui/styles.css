@@ -1,3 +1,19 @@
+/* ==========================================================================
+   MTTN AutoSubs Tool: stylesheet of ui/index.html, served by the local
+   Python server. macOS-native look, dark by default.
+   Theme switching: the token blocks below react to three sources that
+   app.js keeps in sync (applyTheme): the data-theme attribute on <html>,
+   the <meta name="color-scheme"> content (matched with :has()), and the
+   OS prefers-color-scheme setting.
+   Order: tokens and themes, base elements, topbar, workspace, form
+   controls, left panel, center panel (monitor, waveform, editor), right
+   panel (style, exports), shared utilities, style card details, monitor
+   backgrounds, user presets, machine dialog.
+   Brand purple (--mttn-purple) is reserved for primary actions and
+   active states (AGENTS.md).
+   ========================================================================== */
+
+/* Brand, radius and font tokens shared by every theme. */
 :root {
   color-scheme: light dark;
 
@@ -29,6 +45,9 @@
 /* ==========================================================================
    THEME TOKENS: MACOS DARK MODE (DEFAULT)
    ========================================================================== */
+/* Dark is the base (plain :root always matches). The light media query
+   below excludes explicit dark choices with :not(), and :has() lets the
+   color-scheme meta tag select a theme on its own. */
 :root,
 :root[data-theme="dark"],
 :root:has(> head > meta[name="color-scheme"][content="dark"]) {
@@ -78,6 +97,7 @@
 /* ==========================================================================
    THEME TOKENS: MACOS LIGHT MODE (SYSTEM AUTO)
    ========================================================================== */
+/* Only when the OS is light and the user has not forced dark. */
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]):not(:has(> head > meta[name="color-scheme"][content="dark"])) {
     color-scheme: light;
@@ -127,6 +147,8 @@
 /* ==========================================================================
    THEME TOKENS: MACOS LIGHT MODE (EXPLICIT OVERRIDE)
    ========================================================================== */
+/* User forced light (data-theme or meta tag), whatever the OS says.
+   Values duplicate the system-light block above; keep both in sync. */
 :root[data-theme="light"],
 :root:has(> head > meta[name="color-scheme"][content="light"]) {
   color-scheme: light;
@@ -172,6 +194,8 @@
   scrollbar-color: #b0b0b8 var(--surface-inset);
 }
 
+/* Forced colors (high-contrast modes): map tokens to system colors and keep
+   brand-filled controls readable with Highlight / HighlightText. */
 @media (forced-colors: active) {
   :root {
     --bg: Canvas;
@@ -199,6 +223,9 @@
   }
 }
 
+/* ==========================================================================
+   BASE ELEMENTS
+   ========================================================================== */
 ::selection {
   background-color: var(--mttn-purple);
   color: #ffffff;
@@ -334,8 +361,9 @@ code {
   gap: 4px;
 }
 
-/* Botón de estado: CPU · GPU · Resolve en texto discreto. Solo se colorea lo
-   que pide atención (pill-warn / pill-danger); el «todo bien» queda neutro. */
+/* Status button: CPU · GPU · Resolve as discreet text. Only what needs
+   attention is colored (pill-warn / pill-danger); "all good" stays neutral.
+   It opens the «Esta Mac» dialog. */
 .status-btn {
   display: inline-flex;
   align-items: center;
@@ -425,6 +453,8 @@ code {
   display: inline-flex;
 }
 
+/* The toggle shows the action ("switch to light/dark"), so its visible label
+   flips with the effective theme, from any of the three theme sources. */
 :root[data-theme="light"] .theme-state-to-light,
 :root:has(> head > meta[name="color-scheme"][content="light"]) .theme-state-to-light {
   display: none;
@@ -444,6 +474,8 @@ code {
   }
 }
 
+/* Pills: CPS badges, topbar status and warnings. Colored variants mark
+   states that need attention; neutral is the default. */
 .badge, .pill {
   display: inline-flex;
   align-items: center;
@@ -488,6 +520,8 @@ code {
    WORKSPACE LAYOUT
    ========================================================================== */
 
+/* Three columns: source and settings (320px), monitor + editor (fluid,
+   min 440px), style and exports (310px). 62px is about the topbar height. */
 .workspace {
   display: grid;
   grid-template-columns: 320px minmax(440px, 1fr) 310px;
@@ -498,6 +532,7 @@ code {
   min-height: calc(100vh - 62px);
 }
 
+/* Medium windows: the right panel moves below as an auto-fit card grid. */
 @media (max-width: 1220px) {
   .workspace {
     grid-template-columns: 300px 1fr;
@@ -509,6 +544,7 @@ code {
   }
 }
 
+/* Narrow windows: single column. */
 @media (max-width: 840px) {
   .workspace {
     grid-template-columns: 1fr;
@@ -538,7 +574,8 @@ code {
   color: var(--card-header);
 }
 
-/* Tarjeta que no aplica al modo actual: se pliega a su título y una nota. */
+/* Card that does not apply to the current mode: collapses to its title and
+   a note (class toggled by setAppMode() in app.js). */
 .card-muted > :not(h2, .card-collapsed-note) {
   display: none;
 }
@@ -558,6 +595,7 @@ code {
   display: block;
 }
 
+/* Card holding the primary action of the current mode (setAppMode). */
 .card-highlight {
   border-color: var(--mttn-purple-border);
   box-shadow: 0 0 0 1px rgba(131, 103, 199, 0.25);
@@ -770,6 +808,10 @@ button:focus-visible,
   flex: 1;
 }
 
+/* ==========================================================================
+   LEFT PANEL: SOURCE TABS, DROPZONE, JOB PROGRESS, GLOSSARY
+   ========================================================================== */
+
 /* Tabs */
 .tabs {
   display: grid;
@@ -844,6 +886,7 @@ button:focus-visible,
   background: rgba(131, 103, 199, 0.06);
 }
 
+/* Native file input stays hidden; the surrounding label is the target. */
 .dropzone input {
   display: none;
 }
@@ -924,6 +967,7 @@ button:focus-visible,
   gap: 4px;
 }
 
+/* The monitor stays dark in both themes, like a video viewer. */
 .stage-wrap {
   display: flex;
   justify-content: center;
@@ -956,11 +1000,13 @@ button:focus-visible,
   max-width: 480px;
 }
 
+/* Vertical (Reels) preview, kept narrow so the card does not grow tall. */
 .preview-stage.aspect-9-16 {
   aspect-ratio: 9 / 16;
   max-width: 180px;
 }
 
+/* Title-safe guide (7% inset); never intercepts pointer events. */
 .stage-grid {
   position: absolute;
   inset: 7%;
@@ -968,6 +1014,8 @@ button:focus-visible,
   pointer-events: none;
 }
 
+/* Caption overlay. renderPreviewAtMs() in app.js sets font, size, bottom %,
+   colors, stroke and transform inline on every frame; these are defaults. */
 .preview-caption {
   position: absolute;
   left: 6%;
@@ -1001,6 +1049,7 @@ button:focus-visible,
   width: 70px;
 }
 
+/* Second .transport rule: lets the transport controls wrap. */
 .transport {
   flex-wrap: wrap;
 }
@@ -1017,6 +1066,9 @@ button:focus-visible,
   text-align: center;
 }
 
+/* Sized in CSS px; app.js scales the backing store by devicePixelRatio and
+   assumes 96px before layout (waveSize). touch-action and user-select stop
+   pointer drags from panning the page or selecting text. */
 #waveform-canvas {
   width: 100%;
   height: 96px;
@@ -1078,6 +1130,8 @@ input[type="color"]:disabled {
   width: 110px;
 }
 
+/* Scrolls internally; app.js scrolls only this box (scrollCueIntoList) so
+   the page and the waveform never move under the pointer. */
 .cue-list {
   display: flex;
   flex-direction: column;
@@ -1087,6 +1141,7 @@ input[type="color"]:disabled {
   padding-right: 4px;
 }
 
+/* No per-cue Resolve jump button in standalone mode. */
 .cue-list.mode-standalone .cue-btn-resolve {
   display: none;
 }
@@ -1128,8 +1183,8 @@ input[type="color"]:disabled {
   font-size: 11px;
 }
 
-/* Los milisegundos editables solo aparecen en el subtítulo activo o con foco;
-   en el resto basta la lectura «00:04.22 → 00:09.16». */
+/* Editable milliseconds only appear on the active or focused cue; elsewhere
+   the readable «00:04.22 → 00:09.16» is enough. */
 .cue-item:not(.active, :focus-within) .cue-times input {
   display: none;
 }
@@ -1148,6 +1203,7 @@ input[type="color"]:disabled {
   transition: opacity 0.15s ease;
 }
 
+/* Dim cue tools only where hover exists; touch screens always show them. */
 @media (hover: hover) {
   .cue-item:not(.active, :hover, :focus-within) .cue-tools {
     opacity: 0.25;
@@ -1159,6 +1215,7 @@ input[type="color"]:disabled {
   color: var(--muted);
 }
 
+/* Middle-dot separator between consecutive stats. */
 .stats-row .stat + .stat::before {
   content: "·";
   margin-inline-end: 6px;
@@ -1295,6 +1352,9 @@ input[type="color"]:disabled {
   margin-bottom: 4px;
 }
 
+/* ==========================================================================
+   SHARED: EMPTY STATE, TOAST, UTILITIES
+   ========================================================================== */
 .empty-state {
   padding: 24px 16px;
   text-align: center;
@@ -1303,6 +1363,8 @@ input[type="color"]:disabled {
   border-radius: var(--radius);
 }
 
+/* z-index 999 keeps it above page content; an open modal <dialog> lives in
+   the top layer and still covers it. */
 .toast {
   position: fixed;
   right: 18px;
@@ -1318,6 +1380,8 @@ input[type="color"]:disabled {
   z-index: 999;
 }
 
+/* Visibility utility toggled from app.js; !important beats any component
+   display rule. */
 .hidden {
   display: none !important;
 }
@@ -1326,6 +1390,7 @@ input[type="color"]:disabled {
    STYLE CARD: PRESET STATUS, SECTIONS, COLOR + OPACITY ROWS
    ========================================================================== */
 
+/* Screen-reader-only text (standard clip pattern). */
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -1347,6 +1412,7 @@ input[type="color"]:disabled {
   margin: -4px 0 10px;
 }
 
+/* Lets the reset/save links wrap under the status text. */
 .preset-status {
   flex-wrap: wrap;
 }
@@ -1391,6 +1457,7 @@ input[type="color"]:disabled {
   margin-top: 6px;
 }
 
+/* Custom disclosure chevron (::before) replaces the native marker. */
 .style-section > summary {
   cursor: pointer;
   list-style: none;
@@ -1422,6 +1489,7 @@ input[type="color"]:disabled {
   transform: rotate(45deg);
 }
 
+/* Columns: label 74px | color 34px | opacity slider | readout 62px. */
 .color-grid-head,
 .color-row {
   display: grid;
@@ -1473,6 +1541,7 @@ input:disabled {
   cursor: not-allowed;
 }
 
+/* 82px = 74px label column + 8px gap, aligned with the color rows. */
 .field-indent {
   padding-left: 82px;
 }
@@ -1487,7 +1556,8 @@ input:disabled {
   color: var(--text-secondary);
 }
 
-/* Muestra con cuadrícula: deja ver la transparencia real del color. */
+/* Checkerboard: reveals the real transparency of the color. Also a monitor
+   test background (with larger squares, see .stage-bg-checker below). */
 .alpha-chip,
 .bg-checker,
 .preview-stage.stage-bg-checker {
@@ -1511,6 +1581,7 @@ input:disabled {
   flex-shrink: 0;
 }
 
+/* Color layer over the checkerboard; app.js sets its rgba() background. */
 .alpha-chip i {
   position: absolute;
   inset: 0;
@@ -1553,6 +1624,7 @@ input:disabled {
 .bg-gray { background: #6b6b73; }
 .bg-light { background: #e8e8ec; }
 
+/* Monitor test backgrounds (classes set by setStageBg in app.js). */
 .preview-stage.stage-bg-black { background: #0a0a0c; }
 .preview-stage.stage-bg-gray { background: #6b6b73; }
 .preview-stage.stage-bg-light { background: #e8e8ec; }
@@ -1628,6 +1700,7 @@ input:disabled {
   color: var(--ok);
 }
 
+/* Hidden when there is nothing to report (data-level is set by app.js). */
 .contrast-badge:empty,
 .contrast-badge[data-level="ok"] {
   display: none;
@@ -1646,8 +1719,9 @@ input:disabled {
 }
 
 /* ==========================================================================
-   RENDIMIENTO DE ESTA MAC (diálogo modal nativo)
+   MACHINE PERFORMANCE («Esta Mac» native modal dialog)
    ========================================================================== */
+/* Card 2 summary line: mode pill + effective settings (ellipsized). */
 .perf-summary {
   display: flex;
   align-items: center;
@@ -1676,7 +1750,7 @@ input:disabled {
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
 }
 
-/* Evita que el scroll dentro del diálogo o sobre el fondo mueva la página. */
+/* Keeps scrolling inside the dialog or over the backdrop from moving the page. */
 .machine-dialog:modal {
   overscroll-behavior: contain;
 }
@@ -1687,6 +1761,8 @@ input:disabled {
   overscroll-behavior: contain;
 }
 
+/* Header and footer stay pinned while the dialog body scrolls; z-index 1
+   keeps them above the scrolling sections. */
 .machine-head,
 .machine-foot {
   display: flex;
@@ -1769,6 +1845,7 @@ input:disabled {
   accent-color: var(--mttn-purple);
 }
 
+/* The selected profile card highlights from the radio state (no JS). */
 .mode-card:has(input:checked) {
   border-color: var(--mttn-purple);
   background: color-mix(in srgb, var(--mttn-purple) 12%, transparent);
@@ -1812,6 +1889,7 @@ input:disabled {
   margin-top: 2px;
 }
 
+/* Native file input hidden inside a styled label button. */
 .file-btn input {
   display: none;
 }
@@ -1823,6 +1901,7 @@ input:disabled {
   text-align: right;
 }
 
+/* Small windows: single-column dialog grids. */
 @media (max-width: 560px) {
   .mode-cards,
   .machine-grid {

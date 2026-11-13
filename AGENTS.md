@@ -10,6 +10,7 @@ Contexto rápido para asistentes de código que trabajen en `la-matatena/mttn-au
 - **100 % local y cero dependencias `pip` obligatorias**: biblioteca estándar de Python 3.10+ en el servidor (`pywebview` es opcional en el venv del instalador para ventana nativa de macOS). No añadas servicios en la nube.
 - **Hardware y VRAM**: mantén la seguridad en iMac 2017 Intel (`--no-gpu` / `-ng` y `libx264` para proteger 2 GB VRAM AMD Polaris) y la aceleración en Apple Silicon (`Metal` + `h264_videotoolbox`), cediendo núcleos cuando DaVinci Resolve 20 está abierto.
 - **DaVinci Resolve 20 Free y Studio**: conserva compatibilidad mediante los tres scripts Lua (`1 - MTTN AutoSubs - ...`) y las cinco plantillas `AutoSubs_ES_*.setting` bajo `Effects > Titles > MTTN AutoSubs`.
+- **Estilo y documentación del código**: sigue las convenciones de [`docs/design-doc.md#code-style-and-documentation-conventions`](docs/design-doc.md#code-style-and-documentation-conventions) (docstrings estilo Google en Python, JSDoc en `ui/app.js`, LuaDoc en `lua/`, Google Shell Style, comentarios en inglés y textos de interfaz en español, marcadores `shortcut:`); los commits solo de documentación no deben cambiar el comportamiento.
 
 ## Verificación antes de terminar
 
