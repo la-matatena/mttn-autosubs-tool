@@ -67,6 +67,9 @@
   --border: #2e2e34;
   --border-control: #3a3a44;
   --border-focus: var(--mttn-purple);
+  /* Hovered control borders: buttons, and the stronger one for chips. */
+  --border-hover: #4c4c58;
+  --border-hover-strong: #555562;
 
   /* Typography Colors */
   --text: #f4f4f6;
@@ -116,6 +119,8 @@
     --border: #d4d4d8;
     --border-control: #c4c4c8;
     --border-focus: var(--mttn-purple);
+    --border-hover: #a1a1aa;
+    --border-hover-strong: #94949e;
 
     /* Typography Colors */
     --text: #18181b;
@@ -167,6 +172,8 @@
   --border: #d4d4d8;
   --border-control: #c4c4c8;
   --border-focus: var(--mttn-purple);
+  --border-hover: #a1a1aa;
+  --border-hover-strong: #94949e;
 
   /* Typography Colors */
   --text: #18181b;
@@ -727,7 +734,7 @@ button:focus-visible,
 
 .btn:hover {
   background: var(--surface-hover);
-  border-color: #4c4c58;
+  border-color: var(--border-hover);
 }
 
 .btn:active {
@@ -1031,8 +1038,10 @@ button:focus-visible,
   margin: 0 auto;
 }
 
+/* flex-wrap lets the transport controls wrap on narrow panels. */
 .transport {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin: 8px 0 6px;
@@ -1047,11 +1056,6 @@ button:focus-visible,
 
 .rate-select {
   width: 70px;
-}
-
-/* Second .transport rule: lets the transport controls wrap. */
-.transport {
-  flex-wrap: wrap;
 }
 
 .zoom-group {
@@ -1276,7 +1280,7 @@ input[type="color"]:disabled {
 }
 
 .chip:hover {
-  border-color: #555562;
+  border-color: var(--border-hover-strong);
   color: var(--text);
 }
 
@@ -1403,18 +1407,15 @@ input[type="color"]:disabled {
   border: 0;
 }
 
+/* flex-wrap lets the reset/save links wrap under the status text. */
 .preset-status {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   min-height: 18px;
   margin: -4px 0 10px;
-}
-
-/* Lets the reset/save links wrap under the status text. */
-.preset-status {
-  flex-wrap: wrap;
 }
 
 .preset-status .hint {
