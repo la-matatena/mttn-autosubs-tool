@@ -538,7 +538,9 @@ class AppState:
                   total_size = int(hresp.headers.get("Content-Length") or 0)
               except Exception:  # pylint: disable=broad-except
                 total_size = 0
-            if total_size > 0 and existing >= total_size:
+            # Only an exact size match means the .part is complete; a larger
+            # file means the upstream model changed, so restart from zero.
+            if total_size > 0 and existing == total_size:
               part.replace(dest)
               self.update_job(
                   job_id,
