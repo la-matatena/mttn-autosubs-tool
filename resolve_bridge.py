@@ -1,4 +1,28 @@
-"""DaVinci Resolve 20 dual-mode bridge, audio converter, and waveform peaks."""
+"""DaVinci Resolve 20 dual-mode bridge, audio converter, and waveform peaks.
+
+Resolve integration works in two modes:
+
+  * Studio direct: DaVinci Resolve Studio exposes an external scripting API
+    (DaVinciResolveScript, loaded from Resolve's Developer/Scripting/Modules
+    folder). When it connects, this module renders timeline audio, imports
+    subtitles and moves the playhead itself.
+  * File mailbox (Free and Studio): Resolve Free blocks external scripting,
+    so the user runs our Lua scripts from Workspace > Scripts inside
+    Resolve. They exchange files with this server through
+    `<app_data_dir>/bridge/`:
+      - inbox/  <- written by Resolve: timeline_audio.wav and
+        timeline_meta.json (fps, start frame, resolution, audio path).
+        If Resolve's Lua sandbox has no io.open, the metadata is stored in
+        Fusion.prefs instead (Global.AutoSubsES.Meta) and read from there.
+      - outbox/ -> read by Resolve: SRT/ASS/FCPXML exports, push_payload.lua
+        (+ .table twin for bmd.readfile) and jump_tc.lua (+ .table).
+
+The module also prepares 16 kHz mono PCM16 WAVs for whisper.cpp, computes
+waveform peaks for the editor UI and synthesizes a demo WAV.
+
+Main entry points: ResolveBridge, prepare_wav_16k, extract_waveform_peaks,
+generate_demo_wav. Time units: ms for cues, frames/SMPTE for Resolve.
+"""
 
 from __future__ import annotations
 
@@ -27,7 +51,15 @@ SubtitleCue = spanish_nlp.SubtitleCue
 StyleConfig = exporters.StyleConfig
 
 
+# --- Audio preparation ---
+
+
 def _is_16k_mono_wav(path: str | Path) -> bool:
+  """Returns True if `path` is already the WAV format whisper.cpp expects.
+
+  That is 1 channel, 16 000 Hz, 2-byte (PCM16) samples; any unreadable or
+  non-WAV file returns False.
+  """
   try:
     with wave.open(str(path), "rb") as wf:
       return (
@@ -45,7 +77,22 @@ def prepare_wav_16k(
     ffmpeg_bin: str | None = None,
     enhance_voice: bool = True,
 ) -> None:
-  """Extracts 16 kHz mono PCM16 WAV using ffmpeg or direct copy if ready."""
+  """Extracts 16 kHz mono PCM16 WAV using ffmpeg or direct copy if ready.
+
+  whisper.cpp only accepts 16 kHz mono 16-bit PCM. Without ffmpeg, an input
+  that already has that format is copied as-is; anything else is an error.
+
+  Args:
+    input_media_path: Any audio/video file ffmpeg can read.
+    output_wav_path: Destination WAV (parent folders are created).
+    ffmpeg_bin: ffmpeg path, or None if not installed.
+    enhance_voice: Apply the speech clean-up filter chain (see below).
+
+  Raises:
+    FileNotFoundError: If the input does not exist.
+    RuntimeError: If ffmpeg is missing for a non-ready file or fails
+      (Spanish message shown in the UI).
+  """
   src = Path(input_media_path)
   dst = Path(output_wav_path)
   dst.parent.mkdir(parents=True, exist_ok=True)
@@ -80,6 +127,10 @@ def prepare_wav_16k(
       "pcm_s16le",
   ]
   if enhance_voice:
+    # highpass 80 Hz removes rumble/handling noise; lowpass 7.8 kHz sits just
+    # below the 8 kHz Nyquist limit of 16 kHz audio (anti-aliasing);
+    # dynaudnorm (150 ms frames, gauss window 15, peak 0.9) evens out quiet
+    # and loud speakers so whisper hears both clearly.
     cmd.extend([
         "-af",
         "highpass=f=80,lowpass=f=7800,dynaudnorm=f=150:g=15:p=0.9",
@@ -97,6 +148,9 @@ def prepare_wav_16k(
     raise RuntimeError(f"FFmpeg falló al convertir audio: {res.stderr.strip()}")
 
 
+# --- Waveform peaks ---
+
+
 def extract_waveform_peaks(
     wav_path: str, num_buckets: int | None = None
 ) -> dict[str, Any]:
@@ -104,6 +158,28 @@ def extract_waveform_peaks(
 
   By default uses ~25 peaks per second (40 ms, 900–60,000 buckets) so the
   editor waveform stays detailed when zoomed in.
+
+  The file is read bucket by bucket (never fully loaded), and each peak is
+  max(|sample|) / full scale for that sample width:
+    * 1 byte: unsigned 8-bit, silence = 128, so |b - 128| / 128.
+    * 2 bytes: signed 16-bit, / 32768. Fast path via array("h").
+    * 3 bytes: signed 24-bit. Fast path: each 3-byte sample is copied into
+      the top 3 bytes of a little-endian int32 slot (byte 0 left zero), i.e.
+      value << 8, read with array("i"), then shifted back (>> 8) and divided
+      by 8388608 (2**23). Slow path (no 4-byte C int): int.from_bytes.
+    * 4 bytes: signed 32-bit, / 2147483648 (2**31); fast or slow path.
+  Multi-channel audio uses only the first channel (fast paths stride by
+  `channels`; the 24/32-bit slow paths stride by whole frames). WAV data is
+  little-endian, so big-endian hosts byteswap the arrays.
+
+  Args:
+    wav_path: PCM WAV file.
+    num_buckets: Number of peaks; None = duration_ms // 40 clamped to
+      900..60000. Always clamped to 16..total_frames.
+
+  Returns:
+    {"peaks": [float rounded to 4 decimals], "duration_ms": int,
+    "sample_rate": Hz}; empty peaks if the file is missing or empty.
   """
   path = Path(wav_path)
   if not path.is_file():
@@ -125,6 +201,8 @@ def extract_waveform_peaks(
     peaks: list[float] = []
 
     for i in range(buckets):
+      # Integer bucket bounds spread rounding evenly; frames are read
+      # sequentially, so each bucket continues where the previous ended.
       start_idx = (i * total_frames) // buckets
       end_idx = ((i + 1) * total_frames) // buckets
       n_frames = end_idx - start_idx
@@ -143,6 +221,7 @@ def extract_waveform_peaks(
         max_amp = max(abs(min(samples)), abs(max(samples))) if samples else 0
         peaks.append(round(min(1.0, max_amp / 32768.0), 4))
       elif sampwidth == 3 and array("i").itemsize == 4:
+        # 24-bit fast path: widen to int32 with C-speed slice copies.
         frame_stride = channels * 3
         usable = (len(raw) // frame_stride) * frame_stride
         if usable <= 0:
@@ -151,6 +230,8 @@ def extract_waveform_peaks(
           n_samples = usable // frame_stride
           buf = bytearray(n_samples * 4)
           mv = memoryview(raw)[:usable]
+          # buf[0::4] stays 0, so each int32 equals the 24-bit sample << 8
+          # with its sign bit landing in bit 31 (sign extension for free).
           buf[1::4] = mv[0::frame_stride]
           buf[2::4] = mv[1::frame_stride]
           buf[3::4] = mv[2::frame_stride]
@@ -188,6 +269,7 @@ def extract_waveform_peaks(
             max_amp = amp
         peaks.append(round(min(1.0, max_amp / 2147483648.0), 4))
       else:
+        # 8-bit WAV is unsigned with silence at 128.
         max_b = max((abs(b - 128) for b in raw[::channels]), default=0)
         peaks.append(round(min(1.0, max_b / 128.0), 4))
 
@@ -203,7 +285,19 @@ def generate_demo_wav(
     cue_windows_ms: list[tuple[int, int]] | None = None,
     duration_ms: int = 18500,
 ) -> None:
-  """Generates a gentle speech-envelope 16 kHz WAV for offline Demo mode."""
+  """Generates a gentle speech-envelope 16 kHz WAV for offline Demo mode.
+
+  Inside each cue window it writes a 175 Hz + 350 Hz tone (voice-like
+  fundamental + harmonic) modulated by |sin| "syllables"; outside windows a
+  very quiet 90-amplitude hum, so the waveform shows clear speech blocks.
+  Pure Python, ~300k samples for the default length.
+
+  Args:
+    output_wav_path: Destination WAV (16 kHz mono PCM16).
+    cue_windows_ms: (start_ms, end_ms) speech windows; defaults match the
+      built-in demo cues.
+    duration_ms: Total length in ms.
+  """
   dst = Path(output_wav_path)
   dst.parent.mkdir(parents=True, exist_ok=True)
   rate = 16000
@@ -239,10 +333,30 @@ def generate_demo_wav(
     wf.writeframes(samples.tobytes())
 
 
+# --- Resolve bridge ---
+
+
 class ResolveBridge:
-  """Manages Studio Direct API and Free/Studio file-mailbox integration."""
+  """Manages Studio Direct API and Free/Studio file-mailbox integration.
+
+  Every public method works in both modes: it always writes the mailbox
+  files, then additionally acts through the Studio API when it connects.
+  The Studio connection is retried on each call (cheap, and Resolve may be
+  opened or closed at any time).
+
+  Attributes:
+    app_dir: AutoSubs ES app data folder.
+    inbox_dir: `bridge/inbox`, files written by Resolve for this server.
+    outbox_dir: `bridge/outbox`, files written here for the Lua scripts.
+  """
 
   def __init__(self, app_data_dir: Path | None = None) -> None:
+    """Creates the mailbox folders.
+
+    Args:
+      app_data_dir: App data folder; defaults to
+        hardware_imac2017.get_app_data_dir(create=True).
+    """
     self.app_dir = app_data_dir or hardware_imac2017.get_app_data_dir(
         create=True
     )
@@ -250,10 +364,22 @@ class ResolveBridge:
     self.outbox_dir = self.app_dir / "bridge" / "outbox"
     self.inbox_dir.mkdir(parents=True, exist_ok=True)
     self.outbox_dir.mkdir(parents=True, exist_ok=True)
+    # Last Studio `Resolve` object, or None (Free, closed, or no module).
     self._resolve_obj: Any = None
 
   def try_studio_connection(self) -> Any:
-    """Attempts connection to DaVinci Resolve Studio external scripting API."""
+    """Attempts connection to DaVinci Resolve Studio external scripting API.
+
+    Adds Resolve's scripting Modules folder to sys.path (macOS install
+    location) and calls DaVinciResolveScript.scriptapp("Resolve"). This only
+    returns an object for Studio with external scripting enabled
+    (Preferences > System > General > "External scripting using: Local");
+    Free returns None. Any exception from the native module counts as "not
+    connected".
+
+    Returns:
+      The Resolve scripting object, or None.
+    """
     if sys.platform == "darwin":
       module_dir = Path(
           "/Library/Application Support/Blackmagic Design/DaVinci Resolve/"
@@ -274,7 +400,22 @@ class ResolveBridge:
     return None
 
   def read_timeline_meta(self) -> dict[str, Any]:
-    """Reads timeline metadata exported by Resolve Lua script or Fusion.prefs."""
+    """Reads timeline metadata exported by Resolve Lua script or Fusion.prefs.
+
+    Sources, in order:
+      1. inbox/timeline_meta.json, written by the export Lua script (or by
+         export_timeline_audio_studio).
+      2. Fusion.prefs (Profiles/Default under the Fusion user folder): when
+         the Lua sandbox lacks io.open, the script stores the same JSON via
+         fusion:SetPrefs("Global.AutoSubsES.Meta", json). Prefs are saved
+         as a Lua table, so the JSON appears as an escaped Lua string
+         `AutoSubsES = { Meta = "..." }` that is unescaped (\\\\ and \\")
+         before json.loads.
+
+    Returns:
+      Dict with keys such as project_name, timeline_name, fps, start_frame,
+      width, height, audio_path; {} if nothing valid is found.
+    """
     meta_file = self.inbox_dir / "timeline_meta.json"
     if meta_file.is_file():
       try:
@@ -310,7 +451,12 @@ class ResolveBridge:
     return {}
 
   def get_inbox_audio_path(self) -> Path | None:
-    """Finds the latest timeline WAV exported into bridge/inbox."""
+    """Finds the latest timeline WAV exported into bridge/inbox.
+
+    Returns:
+      meta["audio_path"] if that file exists, else the newest *.wav in the
+      inbox by mtime, else None.
+    """
     meta = self.read_timeline_meta()
     audio_from_meta = meta.get("audio_path")
     if audio_from_meta and Path(audio_from_meta).is_file():
@@ -323,7 +469,15 @@ class ResolveBridge:
     return wavs[0] if wavs else None
 
   def list_installed_templates(self) -> list[str]:
-    """Lists installed MTTN AutoSubs Fusion .setting templates plus defaults."""
+    """Lists installed MTTN AutoSubs Fusion .setting templates plus defaults.
+
+    Looks in Templates/Edit/Titles/"MTTN AutoSubs" (current name), then
+    "AutoSubs ES" (legacy folder name); the first non-empty folder wins.
+
+    Returns:
+      Sorted template names (file stems), or the five bundled template
+      names when none are installed.
+    """
     titles_root = (
         hardware_imac2017.get_resolve_user_fusion_dir()
         / "Templates"
@@ -348,7 +502,17 @@ class ResolveBridge:
     return names
 
   def get_status(self, resolve_running: bool | None = None) -> dict[str, Any]:
-    """Returns bridge mode, timeline metadata, and available Resolve scripts."""
+    """Returns bridge mode, timeline metadata, and available Resolve scripts.
+
+    Modes: "studio_direct" (Studio API connected), "lua_bridge_ready" (Lua
+    scripts installed or timeline metadata present) or "standalone".
+
+    Args:
+      resolve_running: Precomputed process check; None runs it here.
+
+    Returns:
+      JSON-ready status dict for the UI (mode_label is Spanish UI text).
+    """
     studio = self.try_studio_connection()
     meta = self.read_timeline_meta()
     inbox_audio = self.get_inbox_audio_path()
@@ -356,6 +520,7 @@ class ResolveBridge:
     scripts_dir = (
         hardware_imac2017.get_resolve_user_fusion_dir() / "Scripts" / "Utility"
     )
+    # Current script name first, then the legacy "AutoSubs ES" name.
     lua_installed = (
         scripts_dir / "1 - MTTN AutoSubs - Exportar Audio.lua"
     ).is_file() or (
@@ -390,7 +555,19 @@ class ResolveBridge:
     }
 
   def export_timeline_audio_studio(self) -> dict[str, Any]:
-    """Triggers non-blocking Deliver WAV export via Studio scripting API."""
+    """Triggers non-blocking Deliver WAV export via Studio scripting API.
+
+    Queues a Deliver job (audio only, WAV LinearPCM 48 kHz / 16-bit, whole
+    timeline) rendering to inbox/timeline_audio.wav and starts it without
+    waiting; the WAV appears once Resolve finishes rendering. Timeline
+    metadata is written to inbox/timeline_meta.json right away. Note: this
+    changes the project's current render settings.
+
+    Returns:
+      {"ok": True, "job_id", "timeline_meta"} on success; otherwise
+      {"ok": False, "message"} and, on Free, "requires_lua": True telling
+      the UI to ask for the Lua export script instead.
+    """
     resolve = self.try_studio_connection()
     if resolve is None:
       return {
@@ -455,7 +632,27 @@ class ResolveBridge:
       cues: list[SubtitleCue],
       push_cfg: dict[str, Any] | None = None,
   ) -> dict[str, Any]:
-    """Writes bridge/outbox payloads and pushes directly if Studio is active."""
+    """Writes bridge/outbox payloads and pushes directly if Studio is active.
+
+    Always writes, in outbox/: autosubs_es.srt (times from 0),
+    autosubs_es_resolve_tc.srt (absolute timeline timecode),
+    autosubs_es.ass (karaoke styling), autosubs_es.fcpxml, and the Lua
+    payload twice: push_payload.lua ("return {...}", for loadfile) and
+    push_payload.table (bare table for bmd.readfile when the sandbox
+    blocks loadfile/io). Then, if Studio connects, inserts directly.
+
+    Args:
+      cues: Subtitle cues (times in ms from the start of the audio).
+      push_cfg: Options: mode ("subtitle_srt" | "textplus" | "fcpxml"),
+        track_name, template_name, fps, timeline_start_frame, width,
+        height, style. Missing values come from timeline_meta, then from
+        defaults (24 fps, start frame 86400 = 01:00:00:00 at 24 fps,
+        1920x1080).
+
+    Returns:
+      Dict with ok, mode, pushed_directly, cue_count, file paths and a
+      Spanish message (next manual step when not pushed directly).
+    """
     cfg = push_cfg or {}
     meta = self.read_timeline_meta()
     mode = str(cfg.get("mode", "subtitle_srt"))
@@ -562,7 +759,21 @@ class ResolveBridge:
     }
 
   def _find_template_item(self, folder: Any, template_name: str) -> Any:
-    """Recursively looks for a Text+ or AutoSubs template in Media Pool."""
+    """Recursively looks for a Text+ or AutoSubs template in Media Pool.
+
+    Match priority within each folder: exact name or case-insensitive
+    substring among its own clips first, then subfolders depth-first, then
+    the first own clip whose name contains "autosubs" or "text+" as a
+    fallback. Caveat: a subfolder's fallback is returned as soon as it is
+    found, so it can win over an exact match in a later sibling folder.
+
+    Args:
+      folder: Resolve MediaPool Folder object.
+      template_name: Desired template clip name.
+
+    Returns:
+      A MediaPoolItem, or None.
+    """
     candidates = []
     for clip in folder.GetClipList() or []:
       name = str(clip.GetClipProperty("Clip Name") or clip.GetName() or "")
@@ -589,6 +800,32 @@ class ResolveBridge:
       start_frame: int,
       style: StyleConfig,
   ) -> tuple[bool, str]:
+    """Inserts subtitles into the current timeline through the Studio API.
+
+    Modes:
+      * subtitle_srt: adds a new subtitle track, imports the 0-based SRT
+        and appends it at the timeline start frame.
+      * fcpxml: imports the FCPXML as a new timeline.
+      * textplus: adds a video track and places one copy of the Text+
+        template per cue, then styles each clip's Fusion comp.
+    Cue ms are converted to frames with exporters.effective_fps (handles
+    NTSC rates such as 23.976).
+
+    Args:
+      resolve: Connected Resolve scripting object.
+      cues: Subtitle cues (ms).
+      mode: "subtitle_srt", "fcpxml" or "textplus".
+      track_name: Name for the new track.
+      template_name: Text+ template clip to find in the Media Pool.
+      srt_path: 0-based SRT file to import.
+      fcpxml_path: FCPXML file to import.
+      fps: Timeline frame rate.
+      start_frame: Fallback timeline start frame.
+      style: Subtitle style applied to Text+ clips.
+
+    Returns:
+      (success, Spanish status message for the UI).
+    """
     project = resolve.GetProjectManager().GetCurrentProject()
     if not project:
       return False, "No hay proyecto abierto en Resolve."
@@ -650,6 +887,7 @@ class ResolveBridge:
       clip_infos.append({
           "mediaPoolItem": template_item,
           "startFrame": 0,
+          # endFrame is treated as inclusive by AppendToTimeline, hence "- 1".
           "endFrame": max(1, e_frame - s_frame - 1),
           "recordFrame": tl_start + s_frame,
           "trackIndex": target_track,
@@ -683,9 +921,34 @@ class ResolveBridge:
       cue_text: str,
       style: StyleConfig,
   ) -> bool:
-    """Populates primary TextPlus node plus multi-variant flipbook nodes."""
+    """Populates primary TextPlus node plus multi-variant flipbook nodes.
+
+    Text+ exposes its style through numbered inputs, one number per shading
+    element: 1 = fill (Red1/Green1/Blue1/Alpha1), 2 = outline (Enabled2,
+    Thickness2, Red2..Alpha2), 3 = shadow, 4 = background box (Red4..Alpha4).
+    Shadow transparency is set through "Opacity3", not "Alpha3": the
+    templates key their shadow strength on Opacity3, and the tests assert
+    that Alpha3 is never written. Center uses normalized 0..1 coordinates
+    ({1: x, 2: y}, y up from the bottom).
+
+    The Anitype template has TextPlus1 (the visible text) plus TextPlus2..5
+    whose text/position follow TextPlus1 by expression; only their Font and
+    Style are set here, cycling through up to 5 font variants when a
+    font-cycle animation is active. The template's macro tool exposes
+    HoldFrames, VariantCount and BoilJitter controls for that animation.
+
+    Args:
+      comp: Fusion composition of a timeline Text+ clip.
+      cue_text: Final subtitle text (line breaks already applied).
+      style: Subtitle style (colors as hex, alphas 0..1, size, pos_y 0..1).
+
+    Returns:
+      True if a TextPlus tool was found and styled.
+    """
     if comp is None:
       return False
+    # Templates name the main node TextPlus1; otherwise take the first
+    # TextPlus in the comp (GetToolList returns a 1-based dict or a list).
     tp1 = comp.FindTool("TextPlus1")
     if tp1 is None:
       tools = comp.GetToolList(False, "TextPlus")
@@ -753,7 +1016,19 @@ class ResolveBridge:
     return True
 
   def jump_playhead(self, ms: int) -> dict[str, Any]:
-    """Moves Resolve playhead directly in Studio or stages jump_tc.lua."""
+    """Moves Resolve playhead directly in Studio or stages jump_tc.lua.
+
+    The target timecode is start_frame + ms converted to frames, formatted
+    as SMPTE. jump_tc.lua / jump_tc.table are always written so the
+    "3 - Ir a Tiempo" Lua script can apply it on Free.
+
+    Args:
+      ms: Offset from the start of the timeline audio, in milliseconds.
+
+    Returns:
+      {"ok": True, "timecode", "jumped_directly"} plus a Spanish "message"
+      when the Lua script has to be run manually.
+    """
     meta = self.read_timeline_meta()
     fps = float(meta.get("fps") or 24.0)
     raw_start_frame = meta.get("start_frame")

@@ -1,4 +1,29 @@
-"""Local HTTP server and orchestration backend for AutoSubs ES."""
+"""Local HTTP server and orchestration backend for AutoSubs ES.
+
+This module is the backend of MTTN AutoSubs Tool. It serves the single-page
+Studio UI from `ui/` and a small JSON API on loopback (default
+http://127.0.0.1:55120). It orchestrates the offline Spanish subtitle
+pipeline:
+
+  media upload / Resolve inbox WAV -> ffmpeg 16 kHz mono WAV -> whisper-cli
+  (whisper.cpp, JSON "OJF" output) -> `spanish_nlp` (RAE rules, segmentation,
+  line wrapping) -> `exporters` (SRT/VTT/ASS/FCPXML/...) or ffmpeg burn-in.
+
+Long-running work (model download, transcription, benchmark, MP4 burn-in) runs
+in daemon threads tracked as "jobs" in `AppState.jobs`; the UI polls
+`GET /api/jobs/<id>` for progress and can cancel via
+`POST /api/jobs/<id>/cancel`.
+
+Entry points:
+  * `main()`: CLI argument parsing. Default mode serves HTTP and optionally
+    opens a browser tab or a chromeless Chrome app window.
+  * `run_desktop_app()`: native macOS window via pywebview (`--desktop`).
+  * `run_cli_transcription()`: headless one-shot transcription (`--cli`).
+  * `create_server()`: used by tests to build a server bound to any port.
+
+DaVinci Resolve integration goes through `resolve_bridge` (Lua scripts drop a
+WAV in an inbox folder and call `POST /api/resolve/notify-export`).
+"""
 
 from __future__ import annotations
 
@@ -25,6 +50,8 @@ import urllib.request
 import uuid
 import webbrowser
 
+# Prefer the monorepo (Blaze) package path; fall back to flat sibling imports
+# when running from the standalone repo / macOS bundle.
 try:
   from google3.experimental.users.joseluiszapata.autosubs_es import exporters
   from google3.experimental.users.joseluiszapata.autosubs_es import font_manager
@@ -41,8 +68,20 @@ except ImportError:
   import spanish_nlp  # type: ignore[no-redef]
 
 
+# --- Module constants and process helpers ---
+
+
 def _find_ui_dir() -> Path:
-  """Locates the ui/ directory across standalone macOS and Blaze runfiles."""
+  """Locates the ui/ directory across standalone macOS and Blaze runfiles.
+
+  Candidates are tried in order: next to this file, next to the resolved
+  (symlink-free) file, the monorepo path relative to CWD, and (first, when
+  set) the Blaze `TEST_SRCDIR` runfiles tree.
+
+  Returns:
+    The first candidate containing `index.html`, or the first candidate when
+    none match (static requests will then 404 instead of crashing at import).
+  """
   candidates = [
       Path(__file__).parent / "ui",
       Path(__file__).resolve().parent / "ui",
@@ -73,14 +112,27 @@ def _find_ui_dir() -> Path:
 
 UI_DIR = _find_ui_dir()
 
+# Containers ffmpeg can burn subtitles into (input side of /api/export-video).
 _VIDEO_EXTENSIONS = frozenset({".mp4", ".mov", ".webm", ".m4v", ".mkv"})
+# Subset the WebKit/Chromium <video> element can preview (.mkv is excluded).
 _BROWSER_VIDEO_EXTENSIONS = frozenset({".mp4", ".mov", ".webm", ".m4v"})
+# Host/Origin values accepted by the DNS-rebinding / CSRF guard.
 _ALLOWED_LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+# Upper bound on jobs kept in RAM; finished jobs beyond it are pruned.
 _MAX_RETAINED_JOBS = 100
 
 
 def _terminate_process(proc: subprocess.Popen[Any]) -> None:
-  """Stops a child process group (nice + whisper-cli/ffmpeg) cleanly."""
+  """Stops a child process group (nice + whisper-cli/ffmpeg) cleanly.
+
+  Children are started with `start_new_session=True` on POSIX, so the whole
+  process group (the `nice` wrapper plus the real tool) gets SIGTERM. A
+  daemon thread then waits up to ~1 s and escalates to SIGKILL, so the caller
+  (often an HTTP handler holding no lock) never blocks.
+
+  Args:
+    proc: The child process to stop. No-op if it already exited.
+  """
   if proc.poll() is not None:
     return
   try:
@@ -92,6 +144,7 @@ def _terminate_process(proc: subprocess.Popen[Any]) -> None:
     return
 
   def _reap() -> None:
+    """Polls 10 x 100 ms for exit, then force-kills the process group."""
     for _ in range(10):
       if proc.poll() is not None:
         return
@@ -107,10 +160,67 @@ def _terminate_process(proc: subprocess.Popen[Any]) -> None:
   threading.Thread(target=_reap, daemon=True).start()
 
 
+# --- Application state and background jobs ---
+
+
 class AppState:
-  """Thread-safe application state shared across HTTP handler threads."""
+  """Thread-safe application state shared across HTTP handler threads.
+
+  One instance lives for the whole server process. `ThreadingHTTPServer`
+  runs each request on its own thread and every job runs on a daemon worker
+  thread, so all mutable session and job fields below must be read/written
+  while holding `self.lock` (a non-reentrant `threading.Lock`; never call
+  `session_snapshot()` or `update_job()` while already holding it). Slow work
+  (ffmpeg, whisper-cli, file I/O on large media, network) is done outside the
+  lock; results are swapped in with a short critical section.
+
+  Attributes:
+    app_dir: Per-user data root (`~/Library/Application Support/...`).
+    cache_dir: Uploads, 16 kHz working WAVs, temp whisper/ASS/MP4 outputs.
+    models_dir: Downloaded whisper.cpp GGML models.
+    bridge: `resolve_bridge.ResolveBridge` (inbox WAV, timeline metadata,
+      pushing cues to DaVinci Resolve). Not guarded by `lock`.
+    fonts: `font_manager.FontManager` for subtitle fonts. Not guarded.
+    settings: `machine_settings.MachineSettings` persisted per-machine
+      performance preferences (has its own internal synchronization).
+    lock: Guards every attribute listed below.
+    jobs: job_id -> job dict with keys `job_id`, `kind` ("download",
+      "transcribe", "benchmark", "burnin"), `status` ("running", "done",
+      "error", "cancelled"), `progress` (0..100), `stage` (Spanish UI text),
+      `error`, `started_at`/`finished_at` (epoch seconds), `result`.
+      Guarded by `lock`; at most `_MAX_RETAINED_JOBS` finished jobs are kept.
+    active_procs: job_id -> running child `Popen`, so `cancel_job()` can kill
+      it. Guarded by `lock`.
+    cancel_flags: job_id -> True once the user cancels. Workers poll it at
+      stage boundaries and inside read loops. Guarded by `lock`.
+    _active_downloads: model_id -> job_id of the in-flight download, used to
+      dedupe repeated download clicks. Guarded by `lock`.
+    media_path: Active source media (uploaded file, inbox WAV, or demo WAV).
+    wav_path: 16 kHz mono WAV used for the waveform/preview; None when the
+      upload is a non-WAV file that has not been transcribed yet.
+    exported_video_path: Last burned-in MP4, served by
+      `/api/exported-video`. Cleared whenever the media changes.
+    _last_inbox_sig: (path, mtime_ns, size) of the last Resolve inbox WAV
+      that was loaded, so repeated notify calls do not wipe edited cues.
+    media_generation: Monotonic counter bumped every time the active media
+      is replaced (upload, demo, inbox). A transcription job records it at
+      start and discards its result if it changed meanwhile (stale job).
+    media_name: Display name of the active media.
+    duration_ms: Active media duration in milliseconds.
+    peaks: Normalized 0..1 waveform peaks for the UI waveform.
+    words: Word-level timings from whisper (source of truth for resegment).
+    cues: Current subtitle cues (possibly hand-edited via PUT /api/cues).
+    format_config: `spanish_nlp.SpanishFormatConfig` used for segmentation.
+    demo_mode: True while the built-in demo session is loaded.
+  """
 
   def __init__(self, app_dir: Path | None = None) -> None:
+    """Creates data directories and initializes an empty session.
+
+    Args:
+      app_dir: Override for the data root (tests pass a temp dir). Defaults
+        to the per-user application-support directory.
+    """
     self.app_dir = app_dir or hardware_imac2017.get_app_data_dir(create=True)
     self.cache_dir = self.app_dir / "cache"
     self.models_dir = self.app_dir / "models"
@@ -121,6 +231,7 @@ class AppState:
     self.fonts = font_manager.FontManager(app_dir=self.app_dir)
     self.settings = machine_settings.MachineSettings(self.app_dir)
     self.lock = threading.Lock()
+    # Everything below is guarded by self.lock.
     # shortcut: single local user session in RAM (<=100 jobs retained), persist to SQLite if multi-project history is needed
     self.jobs: dict[str, dict[str, Any]] = {}
     self.active_procs: dict[str, subprocess.Popen[Any]] = {}
@@ -141,6 +252,20 @@ class AppState:
     self.demo_mode: bool = False
 
   def session_snapshot(self, include_peaks: bool = True) -> dict[str, Any]:
+    """Returns a JSON-serializable copy of the current session for the UI.
+
+    Acquires `self.lock`; callers must not already hold it.
+
+    Args:
+      include_peaks: Whether to include the waveform peaks list. PUT
+        /api/cues passes False to keep frequent autosave responses small.
+
+    Returns:
+      Dict with media flags/URLs, duration, peaks, cues and format config.
+      `media_rev` is "<name>:<mtime_ns>:<size>" of the active file (or None);
+      the UI uses it as a cache-buster for `/api/media` so the <audio>/<video>
+      element reloads only when the underlying file actually changes.
+    """
     with self.lock:
       is_video = bool(
           self.media_path
@@ -182,7 +307,22 @@ class AppState:
   def load_demo(
       self, format_raw: dict[str, Any] | None = None
   ) -> dict[str, Any]:
-    """Populates a Spanish board-game + Resolve demo session."""
+    """Populates a Spanish board-game + Resolve demo session.
+
+    Generates a synthetic demo WAV (tones aligned to the cue windows) and a
+    hard-coded list of deliberately misspelled anglicisms ("eurogueim",
+    "mipels") so the user can see the Spanish NLP corrections without having
+    whisper or a model installed. Replaces the active media and bumps
+    `media_generation`, which invalidates any running transcription.
+
+    Args:
+      format_raw: Optional `SpanishFormatConfig` dict from the UI; when None
+        the current `format_config` is reused.
+
+    Returns:
+      The new `session_snapshot()`.
+    """
+    # (text, start_ms, end_ms) word timings, as whisper would emit them.
     demo_specs: list[tuple[str, int, int]] = [
         ("Hola,", 320, 680),
         ("hoy", 700, 960),
@@ -273,6 +413,15 @@ class AppState:
     return self.session_snapshot()
 
   def create_job(self, kind: str, detail: str = "") -> str:
+    """Registers a new running job and prunes old finished jobs.
+
+    Args:
+      kind: Job type shown to the UI ("transcribe", "benchmark", "burnin").
+      detail: Initial Spanish stage text; defaults to "Iniciando...".
+
+    Returns:
+      The new 10-hex-char job id.
+    """
     job_id = uuid.uuid4().hex[:10]
     with self.lock:
       self.jobs[job_id] = {
@@ -288,6 +437,8 @@ class AppState:
       }
       self.cancel_flags[job_id] = False
       if len(self.jobs) > _MAX_RETAINED_JOBS:
+        # Dicts keep insertion order, so this drops the oldest finished jobs
+        # first. Running jobs are never pruned.
         stale_ids = [
             jid for jid, j in self.jobs.items() if j.get("status") != "running"
         ]
@@ -297,11 +448,29 @@ class AppState:
     return job_id
 
   def update_job(self, job_id: str, **updates: Any) -> None:
+    """Merges `updates` into a job dict under the lock (no-op if pruned).
+
+    Args:
+      job_id: Job to update.
+      **updates: Job keys to overwrite (status, progress, stage, ...).
+    """
     with self.lock:
       if job_id in self.jobs:
         self.jobs[job_id].update(updates)
 
   def cancel_job(self, job_id: str) -> bool:
+    """Flags a job as cancelled and kills its child process, if any.
+
+    The job is marked "cancelled" immediately; the worker thread notices
+    `cancel_flags[job_id]` at its next check and returns without writing a
+    result. The child is terminated outside the lock.
+
+    Args:
+      job_id: Job to cancel.
+
+    Returns:
+      False if the job id is unknown, True otherwise.
+    """
     with self.lock:
       if job_id not in self.jobs:
         return False
@@ -317,7 +486,18 @@ class AppState:
   def settings_payload(
       self, resolve_running: bool | None = None
   ) -> dict[str, Any]:
-    """This Mac's profile, saved settings and the resulting parameters."""
+    """This Mac's profile, saved settings and the resulting parameters.
+
+    Args:
+      resolve_running: Whether DaVinci Resolve is running (it changes the
+        effective thread count / GPU use). Detected via process list when
+        None.
+
+    Returns:
+      Dict with `settings` (saved), `effective` (resolved performance
+      parameters), `profile` (detected hardware), `recommended_model_id` and
+      `settings_path`.
+    """
     profile = hardware_imac2017.detect_hardware_profile()
     data = self.settings.snapshot()
     is_running = (
@@ -337,10 +517,24 @@ class AppState:
     }
 
   def effective_performance(self) -> dict[str, Any]:
+    """Returns the effective performance parameters (model, threads, GPU)."""
     return self.settings_payload()["effective"]
 
   def _make_benchmark_wav(self, out_wav: Path, ffmpeg_bin: str | None) -> float:
-    """Builds ~30 s of Spanish speech (macOS `say`), or falls back to tones."""
+    """Builds ~30 s of Spanish speech (macOS `say`), or falls back to tones.
+
+    Tries Spanish voices (Paulina, Mónica, then the system default) and
+    converts the AIFF to 16 kHz mono with ffmpeg. Without `say` or ffmpeg a
+    synthetic 30 s tone WAV is used, which still times whisper but less
+    realistically.
+
+    Args:
+      out_wav: Destination WAV path.
+      ffmpeg_bin: ffmpeg executable, or None if not installed.
+
+    Returns:
+      Audio duration in seconds.
+    """
     text = (
         "Hola, hoy reseñamos un juego de mesa con mucha estrategia. Cada"
         " jugador coloca sus trabajadores, junta recursos y construye su"
@@ -376,7 +570,28 @@ class AppState:
     return 30.0
 
   def start_benchmark(self, payload: dict[str, Any]) -> str:
-    """Times whisper-cli on ~30 s of speech with this Mac's settings."""
+    """Times whisper-cli on ~30 s of speech with this Mac's settings.
+
+    Validation runs synchronously so errors surface as HTTP 400; the work
+    runs on a daemon thread. Stages: build test WAV (progress 0) ->
+    cancellation check -> run whisper-cli at progress 20 (nice 0 so the
+    timing is not skewed) -> cancellation check -> compute real-time factor
+    (audio seconds / wall seconds), store it via
+    `settings.record_benchmark()` and finish at 100. Temp WAV/JSON files are
+    always removed. Does not touch the active session.
+
+    Args:
+      payload: Optional overrides `model_id`, `threads`, `force_no_gpu`;
+        missing keys fall back to the effective settings.
+
+    Returns:
+      The job id to poll.
+
+    Raises:
+      ValueError: Unknown model id.
+      FileNotFoundError: Model not downloaded.
+      RuntimeError: whisper-cli not installed.
+    """
     effective = self.effective_performance()
     model_id = str(payload.get("model_id") or effective["model_id"])
     spec = hardware_imac2017.MODEL_CATALOG.get(model_id)
@@ -398,6 +613,7 @@ class AppState:
     job_id = self.create_job("benchmark", "Preparando audio de prueba...")
 
     def _worker() -> None:
+      """Runs the benchmark stages and writes the job result/error."""
       bench_wav = self.cache_dir / f"bench_{job_id}.wav"
       out_prefix = self.cache_dir / f"bench_{job_id}"
       try:
@@ -429,6 +645,7 @@ class AppState:
         with self.lock:
           self.active_procs[job_id] = proc
         rc = proc.wait()
+        # Floor avoids division by zero if whisper exits instantly.
         elapsed = max(0.01, time.monotonic() - started)
         with self.lock:
           self.active_procs.pop(job_id, None)
@@ -473,6 +690,29 @@ class AppState:
     return job_id
 
   def start_model_download(self, model_id: str) -> str:
+    """Starts (or joins) a resumable download of a whisper GGML model.
+
+    Repeated calls for a model whose download is still running return the
+    existing job id (tracked in `_active_downloads`). The job dict is created
+    inline rather than via `create_job()` so the dedupe check and insertion
+    happen atomically under one lock acquisition.
+
+    Worker stages: skip if the model file already exists (> 1 MiB) ->
+    request with `Range: bytes=<part size>-` to resume a `.part` file ->
+    handle HTTP 416 (the `.part` may already be complete) -> stream 256 KiB
+    chunks, checking `cancel_flags` before each chunk and reporting progress
+    capped at 99 -> atomically rename `.part` to the final file -> done.
+    On cancellation the `.part` file is kept so the next attempt resumes.
+
+    Args:
+      model_id: Key in `hardware_imac2017.MODEL_CATALOG`.
+
+    Returns:
+      The job id to poll.
+
+    Raises:
+      ValueError: Unknown model id.
+    """
     spec = hardware_imac2017.MODEL_CATALOG.get(model_id)
     if not spec:
       raise ValueError(f"Modelo desconocido: {model_id}")
@@ -499,9 +739,11 @@ class AppState:
       self._active_downloads[model_id] = job_id
 
     def _worker() -> None:
+      """Downloads into `<model>.part`, then renames it into place."""
       dest = self.models_dir / spec.filename
       part = self.models_dir / f"{spec.filename}.part"
       try:
+        # Anything over 1 MiB is treated as a complete model (no checksum).
         if dest.is_file() and dest.stat().st_size > 1024 * 1024:
           self.update_job(
               job_id,
@@ -522,6 +764,9 @@ class AppState:
         try:
           resp = urllib.request.urlopen(req, timeout=30)
         except urllib.error.HTTPError as exc:
+          # 416 Range Not Satisfiable: the resume offset is at/after EOF.
+          # Learn the real size from Content-Range ("bytes */<total>") or a
+          # HEAD request to decide whether the .part is already complete.
           if exc.code == 416 and existing > 0:
             total_size = 0
             cr = exc.headers.get("Content-Range", "") if exc.headers else ""
@@ -559,11 +804,14 @@ class AppState:
             raise
 
         with resp:
+          # Append only if the server honored the Range (206); a plain 200
+          # means it sent the whole file, so restart the .part from zero.
           status_code = getattr(resp, "status", 200)
           mode = "ab" if (existing > 0 and status_code == 206) else "wb"
           if mode == "wb":
             existing = 0
           content_len = int(resp.headers.get("Content-Length") or 0)
+          # Fall back to the catalog size when Content-Length is missing.
           total = (
               (existing + content_len)
               if content_len > 0
@@ -573,6 +821,7 @@ class AppState:
 
           with open(part, mode) as fp:
             while True:
+              # Cancellation point: checked before every 256 KiB chunk.
               with self.lock:
                 if self.cancel_flags.get(job_id):
                   return
@@ -581,6 +830,7 @@ class AppState:
                 break
               fp.write(chunk)
               downloaded += len(chunk)
+              # Capped at 99 so "100" always means installed.
               pct = min(99, int((downloaded * 100) / max(1, total)))
               mb_done = downloaded / (1024 * 1024)
               mb_tot = total / (1024 * 1024)
@@ -611,6 +861,7 @@ class AppState:
             finished_at=time.time(),
         )
       finally:
+        # Release the dedupe slot only if it still points at this job.
         with self.lock:
           if self._active_downloads.get(model_id) == job_id:
             self._active_downloads.pop(model_id, None)
@@ -619,6 +870,43 @@ class AppState:
     return job_id
 
   def start_transcription(self, payload: dict[str, Any]) -> str:
+    """Validates inputs and starts an offline Spanish transcription job.
+
+    Input resolution (synchronous, errors become HTTP 400): pick the model
+    (payload, else the saved model if downloaded, else the best installed),
+    locate whisper-cli/ffmpeg, and resolve the source: `source == "inbox"`
+    uses the Resolve inbox WAV; `media_path` must lie inside `app_dir` (path
+    traversal guard); otherwise the active `media_path` is used.
+
+    Worker stages and progress: ffmpeg -> 16 kHz mono WAV (0..15) ->
+    cancellation check -> waveform peaks -> whisper-cli with a Spanish
+    initial prompt (15..94, scaled from whisper's own "progress = N%" lines,
+    cancellation checked per output line) -> cancellation check -> parse the
+    JSON (OJF) output and run `segment_and_wrap_spanish` (96) -> done (100).
+
+    State written on success: media_path, wav_path, exported_video_path
+    (cleared), media_name, duration_ms, peaks, words, cues, format_config,
+    demo_mode. Skipped (job still reports done) if `media_generation`
+    changed since the job started, i.e. the user loaded other media.
+
+    Temp files: the whisper JSON is always deleted; the new working WAV is
+    kept only if it became the session WAV, in which case the previous
+    `working_*_16k.wav` in the cache dir is deleted.
+
+    Args:
+      payload: UI request; optional keys `source`, `media_path`, `model_id`,
+        `format_config`, `threads`, `fast_beam`, `enhance_voice`,
+        `force_no_gpu`.
+
+    Returns:
+      The job id to poll.
+
+    Raises:
+      ValueError: Unknown model id.
+      FileNotFoundError: Missing model, inbox audio, or source file.
+      PermissionError: `media_path` outside the app data directory.
+      RuntimeError: whisper-cli not installed.
+    """
     source = str(payload.get("source", "uploaded"))
     effective = self.effective_performance()
     model_id = str(payload.get("model_id") or "")
@@ -656,6 +944,8 @@ class AppState:
             " Workspace > Scripts > 1 - MTTN AutoSubs - Exportar Audio."
         )
     elif payload.get("media_path"):
+      # Security: only files under the app data dir may be transcribed by
+      # path, so a web page cannot make the server read arbitrary files.
       candidate = Path(str(payload["media_path"])).expanduser().resolve()
       if not candidate.is_relative_to(self.app_dir.resolve()):
         raise PermissionError(
@@ -681,10 +971,12 @@ class AppState:
     accel_label = "CPU, GPU libre" if force_no_gpu else "GPU Metal"
 
     with self.lock:
+      # Snapshot used later to detect that the media changed mid-job.
       expected_generation = self.media_generation
     job_id = self.create_job("transcribe", "Preparando audio 16 kHz mono...")
 
     def _worker() -> None:
+      """Runs ffmpeg -> whisper-cli -> Spanish NLP and swaps in the result."""
       working_wav = self.cache_dir / f"working_{job_id}_16k.wav"
       out_prefix = self.cache_dir / f"whisper_{job_id}"
       ojf_json = Path(f"{out_prefix}.json")
@@ -743,6 +1035,7 @@ class AppState:
                 break
             match = progress_re.search(line)
             if match:
+              # Map whisper's 0..100% onto the job's 15..93 band.
               wpct = int(match.group(1))
               scaled = 15 + int(wpct * 0.78)
               self.update_job(
@@ -774,6 +1067,7 @@ class AppState:
 
         stale = False
         with self.lock:
+          # Discard the result if the user loaded other media meanwhile.
           if self.media_generation != expected_generation:
             stale = True
           else:
@@ -812,6 +1106,8 @@ class AppState:
         if not completed_ok:
           working_wav.unlink(missing_ok=True)
         elif (
+            # Only delete the previous WAV if it is one of our own temp
+            # working files (never a user upload or the Resolve inbox WAV).
             old_wav is not None
             and old_wav != working_wav
             and old_wav.parent == self.cache_dir
@@ -824,7 +1120,31 @@ class AppState:
     return job_id
 
   def start_video_burnin(self, payload: dict[str, Any]) -> str:
-    """Burns styled .ass subtitles onto local video using CPU libx264."""
+    """Burns styled .ass subtitles onto local video using CPU libx264.
+
+    Uses the hardware profile's encoder (h264_videotoolbox on supported
+    Macs) when the libass-capable ffmpeg supports it, else libx264.
+    Validation is synchronous (errors become HTTP 400); the cue list and
+    source path are snapshotted under the lock so later edits do not affect
+    a running render.
+
+    Worker stages: write the karaoke ASS file -> encode (progress 25,
+    cancellation checked per ffmpeg output line) -> cancellation check ->
+    on success set `exported_video_path` and finish at 100 with a download
+    URL. The temp ASS file is always deleted; the MP4 stays in the cache dir.
+
+    Args:
+      payload: Optional `style` (exporters.StyleConfig dict), `width`,
+        `height` (ASS play resolution, px, default 1920x1080), `threads`.
+
+    Returns:
+      The job id to poll.
+
+    Raises:
+      FileNotFoundError: No local media loaded.
+      ValueError: Active media is audio-only, or there are no cues.
+      RuntimeError: ffmpeg missing or built without libass.
+    """
     with self.lock:
       src_video = self.media_path
       cues = list(self.cues)
@@ -875,6 +1195,7 @@ class AppState:
     )
 
     def _worker() -> None:
+      """Writes the ASS file, runs ffmpeg and publishes the MP4."""
       ass_file = self.cache_dir / f"burnin_{job_id}.ass"
       base_stem = _safe_filename(Path(media_name).stem)
       out_mp4 = self.cache_dir / f"{base_stem}_subtitulado_{job_id}.mp4"
@@ -906,6 +1227,8 @@ class AppState:
         with self.lock:
           self.active_procs[job_id] = proc
         if proc.stdout:
+          # Output is drained (not parsed) so the pipe never fills up and
+          # blocks ffmpeg; each line is also a cancellation point.
           for _ in proc.stdout:
             with self.lock:
               if self.cancel_flags.get(job_id):
@@ -949,27 +1272,84 @@ class AppState:
 
 
 def _safe_filename(raw_name: str) -> str:
+  """Sanitizes a client-supplied filename for use inside the cache dir.
+
+  Security: URL-decodes, keeps only the basename (dropping any directory
+  components such as "../"), and replaces every character outside ASCII
+  alphanumerics, ".", "_", "-" and Latin-1/Latin Extended-A letters
+  (U+00C0..U+017F, so Spanish accents survive) with "_".
+
+  Args:
+    raw_name: Possibly URL-encoded filename (e.g. the X-Filename header).
+
+  Returns:
+    A safe basename; "media_upload.bin" if nothing usable remains.
+  """
   decoded = urllib.parse.unquote(raw_name or "media.wav")
   base = Path(decoded).name
   cleaned = re.sub(r"[^A-Za-z0-9._\-\u00C0-\u017F]", "_", base)
   return cleaned or "media_upload.bin"
 
 
-class AutoSubsHandler(BaseHTTPRequestHandler):
-  """HTTP request handler serving static Studio UI and JSON APIs."""
+# --- HTTP request handler ---
 
+
+class AutoSubsHandler(BaseHTTPRequestHandler):
+  """HTTP request handler serving static Studio UI and JSON APIs.
+
+  A new instance is created per request (on its own thread) by
+  `ThreadingHTTPServer`; shared data lives in `self.state`. Every verb
+  first runs `_check_request_origin()`. API errors are returned as JSON
+  `{"error": "<Spanish message>"}` so the UI can show them verbatim.
+
+  Attributes:
+    state: The process-wide `AppState`, injected via `functools.partial`.
+  """
+
+  # HTTP/1.1 enables keep-alive; every response must set Content-Length.
   protocol_version = "HTTP/1.1"
 
   def __init__(self, *args: Any, state: AppState, **kwargs: Any) -> None:
+    """Stores the shared state, then lets the base class handle the request.
+
+    Args:
+      *args: Forwarded to `BaseHTTPRequestHandler` (request, address,
+        server).
+      state: Shared application state.
+      **kwargs: Forwarded to `BaseHTTPRequestHandler`.
+    """
+    # Must be set before super().__init__, which processes the request.
     self.state = state
     super().__init__(*args, **kwargs)
 
   def log_message(self, format: str, *args: Any) -> None:  # pylint: disable=redefined-builtin
+    """Disables the base class's per-request stderr access log."""
     # Suppress noisy per-request access logs in interactive terminal.
     return
 
+  # --- Security guard ---
+
   def _check_request_origin(self, mutating: bool) -> bool:
+    """Rejects requests that did not come from this machine's own UI.
+
+    Security: the server listens on loopback but any web page the user
+    visits could still target it. Two defenses:
+      * DNS rebinding: the Host header must be a loopback name/IP
+        (`_ALLOWED_LOCAL_HOSTS`), for every verb.
+      * CSRF (mutating verbs only): reject `Sec-Fetch-Site: cross-site`, an
+        `Origin: null` (sandboxed iframes, file://), or any Origin whose host
+        is not loopback. Requests without Origin (curl, Resolve Lua scripts)
+        are allowed.
+    On rejection a 403 JSON response is sent and the connection is closed.
+
+    Args:
+      mutating: True for POST/PUT, enabling the Origin checks.
+
+    Returns:
+      True if the request may proceed; False if a 403 was already sent.
+    """
     host_hdr = (self.headers.get("Host") or "").strip()
+    # Bracketed IPv6 literal ("[::1]:55120") vs "host:port".
     if host_hdr.startswith("[") and "]" in host_hdr:
       host_only = host_hdr[1 : host_hdr.index("]")]
     else:
@@ -995,7 +1375,17 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
           return False
     return True
 
+  # --- Response and body helpers ---
+
   def _send_json(self, status: int, payload: Any) -> None:
+    """Sends `payload` as UTF-8 JSON with no-store caching.
+
+    Client disconnects (broken pipe/reset) are silently ignored.
+
+    Args:
+      status: HTTP status code.
+      payload: Any `json.dumps`-serializable value.
+    """
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     try:
       self.send_response(status)
@@ -1008,6 +1398,14 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       return
 
   def _read_json_body(self) -> dict[str, Any]:
+    """Reads and parses a JSON object request body.
+
+    Returns:
+      The parsed object; {} when the body is empty or not a JSON object.
+
+    Raises:
+      json.JSONDecodeError: Body is not valid JSON.
+    """
     length = int(self.headers.get("Content-Length") or 0)
     if length <= 0:
       return {}
@@ -1017,7 +1415,17 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     parsed = json.loads(raw.decode("utf-8"))
     return parsed if isinstance(parsed, dict) else {}
 
+  # --- Static files and media streaming ---
+
   def _serve_static(self, rel_path: str) -> None:
+    """Serves a file from `UI_DIR` with explicit UTF-8 content types.
+
+    Security: absolute paths and any ".." component are rejected with 403.
+    `do_GET` additionally only forwards a fixed allowlist of paths.
+
+    Args:
+      rel_path: URL path such as "/app.js"; "/" maps to index.html.
+    """
     safe = rel_path.lstrip("/") or "index.html"
     if safe in ("", "/"):
       safe = "index.html"
@@ -1054,6 +1462,23 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       cache_control: str = "no-store",
       attachment_name: str | None = None,
   ) -> None:
+    """Streams a file with single-range HTTP Range support.
+
+    Range streaming lets the <audio>/<video> elements seek in large media
+    without downloading it all (WebKit requires 206 support to scrub
+    video). Supported forms: "bytes=start-", "bytes=start-end" (end clamped
+    to EOF) and the suffix form "bytes=-N" (last N bytes). Only the first
+    range of a multi-range header is honored. Unparseable or
+    unsatisfiable ranges fall back to a full 200 response rather than 416.
+    The body is sent in 128 KiB chunks so memory use stays flat.
+
+    Args:
+      target: File to send.
+      content_type: Value of the Content-Type header.
+      cache_control: Value of the Cache-Control header.
+      attachment_name: If set, adds `Content-Disposition: attachment` with
+        this filename (double quotes stripped to keep the header valid).
+    """
     total = target.stat().st_size
     range_hdr = self.headers.get("Range")
     start = 0
@@ -1108,6 +1533,12 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       return
 
   def _serve_media(self) -> None:
+    """Streams the active media for the UI preview player (/api/media).
+
+    Prefers the original upload; if its container is not playable in the
+    browser (e.g. .mkv, .flac) and a 16 kHz preview WAV exists, the WAV is
+    served instead. Responds 404 when no media is loaded.
+    """
     with self.state.lock:
       media = self.state.media_path or self.state.wav_path
       if (
@@ -1130,20 +1561,32 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       )
     self._stream_file(media, content_type=ctype, cache_control="no-store")
 
+  # --- GET routes ---
+
   def do_GET(self) -> None:
+    """Dispatches GET requests: static UI files, media streams, JSON reads.
+
+    GET routes are read-only (no state mutation), so only the Host check of
+    the origin guard applies. Unknown paths return a 404 JSON error.
+    """
     if not self._check_request_origin(mutating=False):
       return
     parsed = urllib.parse.urlparse(self.path)
     path = parsed.path
 
+    # GET / | /index.html | /styles.css | /app.js -> static Studio UI files.
+    # Fixed allowlist: no other file under ui/ is reachable.
     if path in ("/", "/index.html", "/styles.css", "/app.js"):
       self._serve_static(path)
       return
 
+    # GET /api/media -> Range-capable stream of the active media (or 404).
     if path == "/api/media":
       self._serve_media()
       return
 
+    # GET /api/exported-video -> last burned-in MP4 as a download
+    # (Content-Disposition: attachment), Range-capable; 404 if none.
     if path == "/api/exported-video":
       with self.state.lock:
         out_vid = self.state.exported_video_path
@@ -1158,6 +1601,9 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       )
       return
 
+    # GET /api/status -> {environment, bridge, presets, dialects, domains,
+    # fonts, session, machine}: everything the UI needs at startup and on
+    # its periodic refresh. Probes tools/processes, so it is not free.
     if path == "/api/status":
       env = hardware_imac2017.detect_environment()
       resolve_running = bool(env.get("resolve_running"))
@@ -1187,18 +1633,24 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       )
       return
 
+    # GET /api/settings -> settings_payload() (saved + effective + profile).
     if path == "/api/settings":
       self._send_json(HTTPStatus.OK, self.state.settings_payload())
       return
 
+    # GET /api/settings/export -> portable preferences JSON for backup.
     if path == "/api/settings/export":
       self._send_json(HTTPStatus.OK, self.state.settings.export_preferences())
       return
 
+    # GET /api/fonts -> list of available subtitle fonts.
     if path == "/api/fonts":
       self._send_json(HTTPStatus.OK, self.state.fonts.list_fonts())
       return
 
+    # GET /api/fonts/file/<font_id> -> font binary for CSS @font-face
+    # previews (cacheable for 1 h). FontManager resolves the id, so the
+    # URL cannot point at arbitrary files.
     if path.startswith("/api/fonts/file/"):
       font_id = urllib.parse.unquote(
           path.split("/api/fonts/file/", 1)[1].strip("/")
@@ -1213,6 +1665,8 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       )
       return
 
+    # GET /api/jobs/<job_id> -> copy of the job dict (polled by the UI for
+    # progress/stage/result); 404 JSON if unknown or pruned.
     if path.startswith("/api/jobs/"):
       job_id = path.split("/api/jobs/", 1)[1].strip("/")
       with self.state.lock:
@@ -1228,12 +1682,31 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
 
     self._send_json(HTTPStatus.NOT_FOUND, {"error": "Ruta no encontrada"})
 
+  # --- POST routes ---
+
   def do_POST(self) -> None:
+    """Dispatches POST requests (uploads, job starts, session mutations).
+
+    The two upload routes read a raw binary body and are handled first; all
+    other routes expect a JSON object body (400 on invalid JSON). Job routes
+    return 202 `{"ok": true, "job_id": ...}` and do the work in background
+    threads. Unknown paths return a 404 JSON error.
+    """
     if not self._check_request_origin(mutating=True):
       return
     parsed = urllib.parse.urlparse(self.path)
     path = parsed.path
 
+    # POST /api/upload
+    #   Body: raw media bytes; headers X-Filename (URL-encoded) and
+    #   Content-Length (required).
+    #   Response: {ok, media_path, filename, size_bytes, duration_ms,
+    #   session}; 400 on bad/empty/incomplete upload.
+    #   Side effects: writes <cache_dir>/<sanitized name> (overwriting a
+    #   same-named file), replaces the active media, clears words/cues and
+    #   the exported video, bumps media_generation (invalidating running
+    #   transcriptions). Peaks are computed only for .wav uploads; other
+    #   formats get them after transcription.
     if path == "/api/upload":
       raw_name = urllib.parse.unquote(
           self.headers.get("X-Filename", "media.wav")
@@ -1255,6 +1728,7 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
         return
       dest = self.state.cache_dir / safe_name
       remaining = length
+      # Stream to disk in 1 MiB chunks so large videos never sit in RAM.
       with open(dest, "wb") as fp:
         while remaining > 0:
           chunk = self.rfile.read(min(1048576, remaining))
@@ -1300,6 +1774,14 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       )
       return
 
+    # POST /api/fonts/upload
+    #   Body: raw font bytes (<= font_manager.MAX_UPLOAD_BYTES, 64 MB);
+    #   headers X-Filename, X-Install-Macos ("0"/"false"/"no" to skip
+    #   installing into ~/Library/Fonts).
+    #   Response: FontManager.install_upload() result; 400 on empty, too
+    #   large, or invalid font.
+    #   Side effects: copies the font into the app fonts dir (used by the
+    #   burn-in) and optionally into the user's macOS fonts.
     if path == "/api/fonts/upload":
       raw_name = self.headers.get("X-Filename", "custom_font.otf")
       decoded_name = urllib.parse.unquote(raw_name)
@@ -1313,6 +1795,8 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
         )
         return
       if length > font_manager.MAX_UPLOAD_BYTES:
+        # Body is left unread, so drop keep-alive to avoid parsing it as
+        # the next request.
         self.close_connection = True
         self._send_json(
             HTTPStatus.BAD_REQUEST,
@@ -1331,6 +1815,7 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
       return
 
+    # All routes below take a JSON object body.
     try:
       body = self._read_json_body()
     except json.JSONDecodeError as exc:
@@ -1339,6 +1824,10 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       )
       return
 
+    # POST /api/models/download
+    #   Body: {model_id?} (defaults to the best model for this Mac).
+    #   Response: 202 {ok, job_id}; 400 on unknown model.
+    #   Side effects: starts/joins a resumable download job into models_dir.
     if path == "/api/models/download":
       try:
         default_id = hardware_imac2017.choose_default_model_id(
@@ -1352,11 +1841,18 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
       return
 
+    # POST /api/settings/reset
+    #   Body: ignored. Response: settings_payload().
+    #   Side effects: resets saved performance settings to auto defaults.
     if path == "/api/settings/reset":
       self.state.settings.reset_performance()
       self._send_json(HTTPStatus.OK, self.state.settings_payload())
       return
 
+    # POST /api/settings/import
+    #   Body: JSON produced by GET /api/settings/export.
+    #   Response: settings_payload(); 400 if the file is invalid.
+    #   Side effects: overwrites saved preferences on disk.
     if path == "/api/settings/import":
       try:
         self.state.settings.import_preferences(body)
@@ -1366,6 +1862,10 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       self._send_json(HTTPStatus.OK, self.state.settings_payload())
       return
 
+    # POST /api/benchmark
+    #   Body: {model_id?, threads?, force_no_gpu?}.
+    #   Response: 202 {ok, job_id}; 400 if model/whisper-cli is missing.
+    #   Side effects: benchmark job; stores the result in settings.
     if path == "/api/benchmark":
       try:
         job_id = self.state.start_benchmark(body)
@@ -1374,6 +1874,11 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
       return
 
+    # POST /api/transcribe
+    #   Body: see AppState.start_transcription (source, model_id,
+    #   format_config, threads, ...).
+    #   Response: 202 {ok, job_id}; 400 on validation errors.
+    #   Side effects: transcription job; replaces session words/cues.
     if path == "/api/transcribe":
       try:
         job_id = self.state.start_transcription(body)
@@ -1382,6 +1887,10 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
       return
 
+    # POST /api/export-video
+    #   Body: {style?, width?, height?, threads?}.
+    #   Response: 202 {ok, job_id}; 400 if no video/cues/ffmpeg+libass.
+    #   Side effects: burn-in job; sets exported_video_path on success.
     if path == "/api/export-video":
       try:
         job_id = self.state.start_video_burnin(body)
@@ -1390,18 +1899,30 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
       return
 
+    # POST /api/jobs/<job_id>/cancel
+    #   Body: ignored. Response: {ok} (false if the job id is unknown).
+    #   Side effects: marks the job cancelled and kills its child process.
     if path.startswith("/api/jobs/") and path.endswith("/cancel"):
+      # "/api/jobs/<id>/cancel".split("/") -> ["", "api", "jobs", id, ...]
       parts = path.split("/")
       job_id = parts[3] if len(parts) >= 5 else ""
       ok = self.state.cancel_job(job_id)
       self._send_json(HTTPStatus.OK, {"ok": ok})
       return
 
+    # POST /api/demo
+    #   Body: {format_config?}. Response: {ok, session}.
+    #   Side effects: replaces the active media with the demo session.
     if path == "/api/demo":
       snap = self.state.load_demo(body.get("format_config"))
       self._send_json(HTTPStatus.OK, {"ok": True, "session": snap})
       return
 
+    # POST /api/resegment
+    #   Body: {format_config}. Response: {ok, session}; 400 if there are no
+    #   transcribed words.
+    #   Side effects: rebuilds cues from `words` with the new config,
+    #   discarding manual cue edits.
     if path == "/api/resegment":
       cfg = spanish_nlp.SpanishFormatConfig.from_dict(body.get("format_config"))
       with self.state.lock:
@@ -1420,6 +1941,13 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       )
       return
 
+    # POST /api/export
+    #   Body: {format ("srt", "vtt", "ass", "fcpxml", ...), style?, fps?,
+    #   timeline_start_frame?}. Missing fps/start frame/size come from the
+    #   last Resolve timeline metadata (defaults 24 fps, frame 86400 =
+    #   01:00:00:00 at 24 fps, 1920x1080).
+    #   Response: {ok, filename, mime_type, content} (file text; the UI
+    #   saves it); 400 on unknown format. No server-side state change.
     if path == "/api/export":
       fmt = str(body.get("format", "srt")).lower()
       style = exporters.StyleConfig.from_dict(body.get("style"))
@@ -1468,11 +1996,25 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       )
       return
 
+    # POST /api/resolve/export-audio
+    #   Body: ignored. Response: bridge result dict ({ok: false,
+    #   requires_lua: true, message} when the external scripting API is
+    #   unavailable, e.g. Resolve Free).
+    #   Side effects: starts a non-blocking Deliver WAV render of the
+    #   current timeline via the Resolve Studio scripting API.
     if path == "/api/resolve/export-audio":
       res = self.state.bridge.export_timeline_audio_studio()
       self._send_json(HTTPStatus.OK, res)
       return
 
+    # POST /api/resolve/notify-export
+    #   Called (fire-and-forget curl) by the Resolve Lua export script and by
+    #   the UI after a new inbox WAV is written. Body: ignored. Response:
+    #   {ok, bridge, session}.
+    #   Side effects: if the inbox WAV's (path, mtime, size) signature
+    #   differs from `_last_inbox_sig`, loads it as the active media, clears
+    #   words/cues/exported video and bumps media_generation. Unchanged
+    #   signatures are a no-op so repeated calls keep the user's edits.
     if path == "/api/resolve/notify-export":
       inbox_wav = self.state.bridge.get_inbox_audio_path()
       if inbox_wav and inbox_wav.is_file():
@@ -1481,6 +2023,7 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
         with self.state.lock:
           changed = sig != self.state._last_inbox_sig
         if changed:
+          # Peaks are computed outside the lock (file I/O).
           wave_info = resolve_bridge.extract_waveform_peaks(str(inbox_wav))
           with self.state.lock:
             self.state._last_inbox_sig = sig
@@ -1504,6 +2047,12 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       )
       return
 
+    # POST /api/resolve/push
+    #   Body: push options forwarded to ResolveBridge (mode, track_name,
+    #   template_name, fps, ...).
+    #   Response: bridge result; 400 if there are no cues.
+    #   Side effects: writes bridge/outbox payloads for the Lua import
+    #   script and pushes directly if Resolve Studio is reachable.
     if path == "/api/resolve/push":
       with self.state.lock:
         cues = list(self.state.cues)
@@ -1517,6 +2066,10 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       self._send_json(HTTPStatus.OK, res)
       return
 
+    # POST /api/resolve/jump
+    #   Body: {ms} (media time in milliseconds). Response: bridge result.
+    #   Side effects: moves the Resolve playhead (Studio API) or writes
+    #   outbox/jump_tc.lua with the target timecode for the Lua script.
     if path == "/api/resolve/jump":
       res = self.state.bridge.jump_playhead(int(body.get("ms", 0)))
       self._send_json(HTTPStatus.OK, res)
@@ -1524,7 +2077,13 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
 
     self._send_json(HTTPStatus.NOT_FOUND, {"error": "Ruta no encontrada"})
 
+  # --- PUT routes ---
+
   def do_PUT(self) -> None:
+    """Dispatches PUT requests that replace a whole resource (cues/settings).
+
+    Unknown paths get 404 before the body is read; invalid JSON gets 400.
+    """
     if not self._check_request_origin(mutating=True):
       return
     parsed = urllib.parse.urlparse(self.path)
@@ -1539,6 +2098,9 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       )
       return
 
+    # PUT /api/settings
+    #   Body: partial settings object. Response: settings_payload().
+    #   Side effects: merges and persists this Mac's saved settings.
     if parsed.path == "/api/settings":
       if not isinstance(body, dict):
         self._send_json(
@@ -1549,6 +2111,12 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       self._send_json(HTTPStatus.OK, self.state.settings_payload())
       return
 
+    # PUT /api/cues
+    #   Body: {cues: [SubtitleCue dict, ...]} — the full edited cue list from
+    #   the cue editor (autosave).
+    #   Response: {ok, session} without peaks; 400 if `cues` is not a list.
+    #   Side effects: replaces `state.cues` (words are untouched, so
+    #   /api/resegment can still rebuild from the original transcription).
     raw_cues = body.get("cues", [])
     if not isinstance(raw_cues, list):
       self._send_json(
@@ -1561,6 +2129,8 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       updated: list[spanish_nlp.SubtitleCue] = []
       for idx, item in enumerate(raw_cues, start=1):
         cue = spanish_nlp.SubtitleCue.from_dict(item)
+        # Renumber 1..N and push overlapping cues forward so cues never
+        # overlap; keep at least 80 ms on screen and re-spread word timings.
         cue.index = idx
         if updated and cue.start_ms < updated[-1].end_ms:
           cue.start_ms = updated[-1].end_ms
@@ -1581,12 +2151,31 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     )
 
 
+# --- Server factory and desktop entry points ---
+
+
 def create_server(
     host: str = "127.0.0.1",
     port: int = 55120,
     app_dir: Path | None = None,
 ) -> tuple[ThreadingHTTPServer, AppState]:
-  """Creates the AutoSubs ES ThreadingHTTPServer bound to host:port."""
+  """Creates the AutoSubs ES ThreadingHTTPServer bound to host:port.
+
+  The socket is bound immediately but not served; call `serve_forever()`.
+  Handler threads are daemons so a hung request never blocks exit.
+
+  Args:
+    host: Interface to bind; keep it on loopback (the origin guard rejects
+      non-loopback Host headers anyway).
+    port: TCP port; 0 picks a free port (used by tests).
+    app_dir: Optional data root override for `AppState`.
+
+  Returns:
+    (server, state) so callers/tests can inspect the shared state.
+
+  Raises:
+    OSError: The port is already in use.
+  """
   state = AppState(app_dir=app_dir)
   handler_cls = partial(AutoSubsHandler, state=state)
   server = ThreadingHTTPServer((host, port), handler_cls)
@@ -1595,7 +2184,15 @@ def create_server(
 
 
 def open_standalone_window(url: str) -> None:
-  """Opens AutoSubs ES in a chromeless macOS app window when possible."""
+  """Opens AutoSubs ES in a chromeless macOS app window when possible.
+
+  On macOS, launches the first installed Chromium browser (Chrome, Brave,
+  Edge) as a new instance with `--app=<url>` (no tabs/address bar).
+  Otherwise, or if launching fails, opens the default browser.
+
+  Args:
+    url: Server base URL, e.g. "http://127.0.0.1:55120".
+  """
   if sys.platform == "darwin":
     chromium_apps = (
         "/Applications/Google Chrome.app",
@@ -1613,6 +2210,11 @@ def open_standalone_window(url: str) -> None:
 
 
 def _server_already_running(url: str) -> bool:
+  """Returns True if an AutoSubs server already answers /api/status at url.
+
+  Used by the desktop app to reuse an existing instance instead of failing
+  to bind the port. 1.5 s timeout keeps startup snappy.
+  """
   try:
     with urllib.request.urlopen(f"{url}/api/status", timeout=1.5) as resp:
       return resp.status == 200
@@ -1621,7 +2223,14 @@ def _server_already_running(url: str) -> bool:
 
 
 def _brand_macos_app(icon_path: Path) -> None:
-  """Shows the app name and icon in the Dock/menu bar instead of "Python"."""
+  """Shows the app name and icon in the Dock/menu bar instead of "Python".
+
+  Needs PyObjC (AppKit/Foundation, bundled with pywebview on macOS); a
+  silent no-op when unavailable. Must run before the Cocoa app starts.
+
+  Args:
+    icon_path: PNG used as the Dock icon (skipped if missing).
+  """
   try:
     import AppKit  # pylint: disable=import-outside-toplevel
     import Foundation  # pylint: disable=import-outside-toplevel
@@ -1642,6 +2251,16 @@ def run_desktop_app(host: str = "127.0.0.1", port: int = 55120) -> int:
   The local server lives only as long as the window: closing it stops the
   server. Exports open a native "Save as…" panel. Falls back to the Chrome
   app-window mode when pywebview is not installed.
+
+  The HTTP server runs on a daemon thread; `webview.start()` must own the
+  main thread (Cocoa requirement) and blocks until the window closes.
+
+  Args:
+    host: Interface to bind / connect to.
+    port: TCP port.
+
+  Returns:
+    Process exit code (0 on normal window close).
   """
   url = f"http://{host}:{port}"
   try:
@@ -1694,6 +2313,9 @@ def run_desktop_app(host: str = "127.0.0.1", port: int = 55120) -> int:
   return 0
 
 
+# --- CLI entry points ---
+
+
 def run_cli_transcription(
     media_file: str,
     output_path: str | None = None,
@@ -1711,7 +2333,36 @@ def run_cli_transcription(
     karaoke: bool = False,
     app_dir: Path | None = None,
 ) -> int:
-  """Runs standalone offline Spanish transcription directly from CLI."""
+  """Runs standalone offline Spanish transcription directly from CLI.
+
+  Same pipeline as `AppState.start_transcription` but synchronous and
+  without the HTTP server: ffmpeg -> 16 kHz WAV, whisper-cli (output shown
+  in the terminal), Spanish NLP segmentation, then `exporters.render_export`
+  to a file. Temp WAV/JSON files in the cache dir are always removed.
+
+  Args:
+    media_file: Input audio/video path.
+    output_path: Output file; defaults to the input path with the export
+      format's extension.
+    fmt: Export format id (see `--format` choices in `main`).
+    model_id: Model catalog id; defaults to the best installed model.
+    domain: Vocabulary/glossary domain key in `spanish_nlp.DOMAIN_PROFILES`.
+    dialect: Key in `spanish_nlp.SPANISH_DIALECT_PROMPTS`.
+    preset_id: Line-length/layout preset key in `FORMAT_PRESETS`.
+    glossary: Comma-separated user terms (exact casing enforced; also fed
+      to the whisper prompt).
+    threads: whisper threads; None uses this Mac's effective settings.
+    fast_beam: Smaller beam search (2 instead of 5): faster, slightly less
+      accurate.
+    enhance_voice: Apply ffmpeg voice filters before transcription.
+    force_no_gpu: Disable Metal; None uses the effective settings.
+    remove_muletillas: Drop hesitation fillers ("eh", "em", "mm", ...).
+    karaoke: Add per-word \\kf karaoke tags to .ass output.
+    app_dir: Data root override (models/ and cache/).
+
+  Returns:
+    Process exit code: 0 on success, 1 on any error (message on stderr).
+  """
   src = Path(media_file).expanduser()
   if not src.is_file():
     print(f"[AutoSubs ES] Error: no existe el archivo {src}", file=sys.stderr)
@@ -1837,6 +2488,19 @@ def run_cli_transcription(
 
 
 def main(argv: list[str] | None = None) -> int:
+  """Parses CLI flags and runs the selected mode.
+
+  Modes, in priority order: `--cli FILE` (headless transcription),
+  `--desktop` (native pywebview window), otherwise the HTTP server in the
+  foreground, opening a browser tab (or a Chromium app window with
+  `--app-window`) ~0.6 s after start unless `--no-browser`. Ctrl+C stops it.
+
+  Args:
+    argv: Argument list without the program name; None reads sys.argv.
+
+  Returns:
+    Process exit code.
+  """
   parser = argparse.ArgumentParser(
       description=(
           "MTTN AutoSubs Tool (La Matatena) — App independiente y puente para"
@@ -1932,6 +2596,7 @@ def main(argv: list[str] | None = None) -> int:
       f" {profile.threads_standalone} hilos)"
   )
   if not args.no_browser:
+    # Delay so the browser connects after serve_forever() is running.
     opener = open_standalone_window if args.app_window else webbrowser.open
     threading.Timer(0.6, lambda: opener(url)).start()
 

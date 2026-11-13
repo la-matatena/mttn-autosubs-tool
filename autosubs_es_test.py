@@ -1,4 +1,11 @@
-"""Unit and HTTP integration tests for AutoSubs ES."""
+"""Unit and HTTP integration tests for AutoSubs ES.
+
+Run the whole suite with `python3 -B autosubs_es_test.py -v`. Every test is
+offline: whisper-cli is replaced by small shell stubs, fonts are synthesized in
+memory by `_make_test_sfnt`, and the HTTP suite talks to a real server bound
+to an ephemeral loopback port inside a temporary app directory. No Resolve,
+ffmpeg, or GGML model downloads are required.
+"""
 
 from __future__ import annotations
 
@@ -45,7 +52,20 @@ def _make_test_sfnt(
     full_name: str = "",
     ps_name: str = "",
 ) -> bytes:
-  """Builds a minimal valid OpenType/TrueType font with name + cmap Format 4."""
+  """Builds a minimal valid OpenType/TrueType font with name + cmap Format 4.
+
+  Args:
+    sfnt_tag: SFNT version tag: b"OTTO" for CFF OpenType, or
+      b"\\x00\\x01\\x00\\x00" for TrueType outlines.
+    family: Name ID 1 (font family).
+    subfamily: Name ID 2 (style, e.g. "Regular" or a flipbook index "1").
+    codepoint_ranges: Inclusive (start, end) Unicode ranges mapped in cmap.
+    full_name: Name ID 4; defaults to "<family> <subfamily>".
+    ps_name: Name ID 6; defaults to the alphanumeric family + subfamily.
+
+  Returns:
+    Raw font bytes with only the "cmap" and "name" tables (checksums zeroed).
+  """
   # 1. Build name table (Windows Unicode BMP)
   entries = [
       (1, family),
@@ -102,8 +122,15 @@ def _make_test_sfnt(
 
 
 class HardwareIMac2017Test(unittest.TestCase):
+  """Hardware profiles and whisper-cli / ffmpeg command builders.
+
+  Covers the iMac 2017 Intel profile (CPU-only Whisper, libx264), Apple
+  Silicon profiles (Metal, h264_videotoolbox), GGML model discovery, and
+  whisper-cli flag probing.
+  """
 
   def test_profile_and_command_flags(self) -> None:
+    """iMac 2017 profile forces CPU (-ng) and builds the Whisper flags."""
     prof = hardware_imac2017.IMAC_2017_PROFILE
     self.assertEqual(prof.cpu_arch, "x86_64")
     self.assertEqual(prof.physical_cores, 4)
@@ -135,6 +162,7 @@ class HardwareIMac2017Test(unittest.TestCase):
     )
 
   def test_installed_model_detection(self) -> None:
+    """Default model is turbo-q8 unless only another model is installed."""
     with tempfile.TemporaryDirectory() as tmp:
       models_dir = Path(tmp) / "models"
       models_dir.mkdir()
@@ -160,6 +188,7 @@ class HardwareIMac2017Test(unittest.TestCase):
       )
 
   def test_carry_initial_prompt_flag_and_ffmpeg_burnin_command(self) -> None:
+    """Probed --carry-initial-prompt adds -mc; burn-in escapes ':' and '['."""
     with tempfile.TemporaryDirectory() as tmp:
       fake_whisper = Path(tmp) / "whisper-cli"
       fake_whisper.write_text(
@@ -198,6 +227,7 @@ class HardwareIMac2017Test(unittest.TestCase):
       self.assertIn(r"\[", vf_arg)
 
   def test_apple_silicon_profile_metal_and_videotoolbox(self) -> None:
+    """Apple Silicon enables GPU, scales threads, uses h264_videotoolbox."""
     prof = hardware_imac2017.build_apple_silicon_profile(
         "Apple M4 Pro", perf_cores=10, total_cores=14, ram_gb=48
     )
@@ -237,8 +267,10 @@ class HardwareIMac2017Test(unittest.TestCase):
 
 
 class MachineSettingsTest(unittest.TestCase):
+  """Per-machine performance modes, persisted preferences, and benchmarks."""
 
   def test_intel_profile_from_real_specs(self) -> None:
+    """Intel profiles from CPU brand strings force CPU Whisper and libx264."""
     imac = hardware_imac2017.build_intel_profile(
         "Intel(R) Core(TM) i5-7500 CPU @ 3.40GHz", 4, 4, 32, "Radeon Pro 555", 2048
     )
@@ -253,6 +285,7 @@ class MachineSettingsTest(unittest.TestCase):
     self.assertEqual(big.gpu_name, "GPU integrada")
 
   def test_modes_persistence_and_portable_preferences(self) -> None:
+    """Modes resolve and persist; preference import/export is whitelisted."""
     prof = hardware_imac2017.IMAC_2017_PROFILE
     with tempfile.TemporaryDirectory() as tmp:
       store = machine_settings.MachineSettings(Path(tmp))
@@ -292,6 +325,7 @@ class MachineSettingsTest(unittest.TestCase):
       self.assertEqual(store.snapshot()["preferences"]["dialect"], "es_mx")
 
   def test_benchmark_recommendations(self) -> None:
+    """Benchmark speed ratios recommend a faster, larger, or same model."""
     self.assertEqual(
         machine_settings.recommend_from_benchmark("turbo-q8", 0.8)["model_id"], "turbo-q5"
     )
@@ -304,8 +338,10 @@ class MachineSettingsTest(unittest.TestCase):
 
 
 class SpanishNlpTest(unittest.TestCase):
+  """Whisper -ojf parsing, Spanish cleanup, RAE wrapping, and alignment."""
 
   def test_align_words_keeps_timings_after_text_edits(self) -> None:
+    """Edited cue text keeps untouched Whisper word timings, in order."""
     words = [
         spanish_nlp.WordTiming("Hoy", 1000, 1300),
         spanish_nlp.WordTiming("jugamos", 1300, 1900),
@@ -340,6 +376,7 @@ class SpanishNlpTest(unittest.TestCase):
     self.assertEqual(synth[-1].end_ms, 900)
 
   def test_parse_whisper_ojf_bpe_utf8_recovery_and_hallucinations(self) -> None:
+    """Split UTF-8 BPE tokens are rejoined; silence hallucinations dropped."""
     ojf = {
         "transcription": [
             {
@@ -418,6 +455,7 @@ class SpanishNlpTest(unittest.TestCase):
     self.assertGreater(words[3].end_ms, words[3].start_ms)
 
   def test_parse_whisper_ojf_strips_timestamp_tokens(self) -> None:
+    """Special [_BEG_] and [_TT_n] timestamp tokens never become words."""
     ojf = {
         "transcription": [{
             "offsets": {"from": 0, "to": 1000},
@@ -433,9 +471,11 @@ class SpanishNlpTest(unittest.TestCase):
     }
     texts = [w.text for w in spanish_nlp.parse_whisper_ojf(ojf)]
     self.assertEqual(texts, ["Hola", "mundo."])
+
   def test_clean_spanish_words_glossary_muletillas_and_inverted_punct(
       self,
   ) -> None:
+    """Filler removal, glossary casing, and ¿/¡ repair work together."""
     raw_words = [
         spanish_nlp.WordTiming("eh", 100, 300),
         spanish_nlp.WordTiming("Oye,", 500, 750),
@@ -475,6 +515,7 @@ class SpanishNlpTest(unittest.TestCase):
     )
 
   def test_rae_line_wrapping_avoids_weak_endings(self) -> None:
+    """RAE wrapping never ends the first line on a weak word (de, en...)."""
     words = [
         "Configura",
         "el",
@@ -493,6 +534,7 @@ class SpanishNlpTest(unittest.TestCase):
     self.assertNotIn(last_word_l1, spanish_nlp.SPANISH_WEAK_LINE_ENDINGS)
 
   def test_segmentation_presets_and_non_overlapping_cues(self) -> None:
+    """Reels preset yields more cues than YouTube, and none overlap."""
     words = [
         spanish_nlp.WordTiming("Bienvenidos", 200, 650),
         spanish_nlp.WordTiming("al", 660, 800),
@@ -520,6 +562,7 @@ class SpanishNlpTest(unittest.TestCase):
       self.assertLessEqual(cues_reels[i].end_ms, cues_reels[i + 1].start_ms)
 
   def test_boardgame_domain_anglicisms_and_hesitation_punct(self) -> None:
+    """juegos_mesa fixes board-game anglicisms; ¿ skips hesitations."""
     prompt = spanish_nlp.build_spanish_initial_prompt(
         "es_es", ["Catan", "Devir"], domain="juegos_mesa"
     )
@@ -585,6 +628,7 @@ class SpanishNlpTest(unittest.TestCase):
 
   def test_align_words_never_overlaps(self) -> None:
     # Short neighbours (<20ms) + multiple inserted words in a tight gap.
+    """Aligned words stay inside the cue span and never overlap."""
     words = [
         spanish_nlp.WordTiming("Hola", 100, 110),
         spanish_nlp.WordTiming("mundo", 120, 130),
@@ -614,8 +658,10 @@ class SpanishNlpTest(unittest.TestCase):
 
 
 class ExportersTest(unittest.TestCase):
+  """Subtitle serializers (SRT/VTT/ASS/TXT/FCPXML/Lua) and NDF timecodes."""
 
   def _sample_cues(self) -> list[spanish_nlp.SubtitleCue]:
+    """Returns one two-line Spanish cue with word timings (500-2500 ms)."""
     return [
         spanish_nlp.SubtitleCue(
             index=1,
@@ -633,6 +679,7 @@ class ExportersTest(unittest.TestCase):
     ]
 
   def test_srt_vtt_ass_fcpxml_and_lua_payload(self) -> None:
+    """Each exporter emits correct timings, styles, and Lua escaping."""
     cues = self._sample_cues()
     style = exporters.StyleConfig()
 
@@ -689,6 +736,7 @@ class ExportersTest(unittest.TestCase):
     self.assertIn("¿Cómo estás\\nen Resolve 20?", lua_code)
 
   def test_style_opacity_across_exporters(self) -> None:
+    """Alpha values are clamped and mapped into ASS, FCPXML, and Lua."""
     cues = self._sample_cues()
 
     # Clamping and safe fallbacks for malformed input.
@@ -754,6 +802,7 @@ class ExportersTest(unittest.TestCase):
     self.assertIn("shadow_a = 0.3000", lua_code)
 
   def test_ndf_23976_timecode_ass_escaping_and_burnin_fontsdir(self) -> None:
+    """23.976 NDF stays drift-free; ASS, fontsdir, and quotes are safe."""
     self.assertEqual(
         exporters.ms_to_timeline_tc_ms(0, start_frame=86400, fps=23.976),
         3_600_000,
@@ -836,6 +885,7 @@ class ExportersTest(unittest.TestCase):
     self.assertEqual(norm, ["—¿Sabías", "“meeples”?"])
 
   def test_ass_back_colour_black_and_timeline_start_frame_zero(self) -> None:
+    """ASS BackColour stays black; start_frame=0 survives every exporter."""
     cues = self._sample_cues()
     style = exporters.StyleConfig(
         box_hex="#FF3366",
@@ -881,8 +931,10 @@ class ExportersTest(unittest.TestCase):
 
 
 class FontManagerAndAnitypeTest(unittest.TestCase):
+  """Font parsing, Spanish glyph checks, pack grouping, and ASCII folding."""
 
   def _make_anitype_zip_bytes(self) -> bytes:
+    """Returns a ZIP with five Anitype Journal OTF faces plus macOS junk."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
       for i in range(1, 6):
@@ -903,6 +955,7 @@ class FontManagerAndAnitypeTest(unittest.TestCase):
   def test_zip_anitype_pack_detection_spanish_glyphs_and_macos_sync(
       self,
   ) -> None:
+    """ZIP install groups a 5-face pack, flags glyph gaps, syncs to macOS."""
     with tempfile.TemporaryDirectory() as tmp:
       tmp_p = Path(tmp)
       fm = font_manager.FontManager(
@@ -937,6 +990,7 @@ class FontManagerAndAnitypeTest(unittest.TestCase):
       )
 
   def test_trailing_index_family_and_complete_spanish_ttf(self) -> None:
+    """Families ending in an index form one animated, Spanish-ready pack."""
     with tempfile.TemporaryDirectory() as tmp:
       tmp_p = Path(tmp)
       fm = font_manager.FontManager(
@@ -962,6 +1016,7 @@ class FontManagerAndAnitypeTest(unittest.TestCase):
       self.assertEqual(packs[0]["missing_spanish_chars"], [])
 
   def test_fold_spanish_and_animated_exporters(self) -> None:
+    """ASCII folding and font-cycle animation reach FCPXML slices and Lua."""
     self.assertEqual(
         exporters.fold_spanish_to_ascii("¿Qué año mágico, Pingüino? ¡Órale!"),
         "Que ano magico, Pinguino? Orale!",
@@ -1020,6 +1075,7 @@ class FontManagerAndAnitypeTest(unittest.TestCase):
     self.assertIn("Ano nuevo\\nen Espana!", lua_code)
 
   def test_group_font_packs_variant_count_and_atomic_zip_install(self) -> None:
+    """Style variants are not animated; a bad ZIP entry rolls back all."""
     faces = [
         font_manager.FontFaceInfo(
             font_id="f1",
@@ -1080,8 +1136,22 @@ class FontManagerAndAnitypeTest(unittest.TestCase):
 
 
 class BridgeAndServerIntegrationTest(unittest.TestCase):
+  """End-to-end HTTP tests against a real loopback AutoSubs ES server.
+
+  Each test gets a fresh temporary app dir (wired through the
+  AUTOSUBS_* environment variables) and a server bound to an ephemeral
+  port on 127.0.0.1, served from a daemon thread.
+
+  Attributes:
+    tmp_path: Root of the per-test temporary directory.
+    server: The running HTTP server instance.
+    state: Shared AppState backing the server (guard with state.lock).
+    port: Ephemeral TCP port the server listens on.
+    thread: Daemon thread running server.serve_forever.
+  """
 
   def setUp(self) -> None:
+    """Points AUTOSUBS_* dirs at a temp tree and starts a loopback server."""
     self._tmp = tempfile.TemporaryDirectory()
     self.tmp_path = Path(self._tmp.name)
     self._orig_home = os.environ.get("AUTOSUBS_ES_HOME")
@@ -1101,6 +1171,7 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
     self.thread.start()
 
   def tearDown(self) -> None:
+    """Stops the server, restores AUTOSUBS_* env vars, removes temp files."""
     self.server.shutdown()
     self.server.server_close()
     if self._orig_home is None:
@@ -1124,6 +1195,20 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
       body: bytes | dict | None = None,
       headers: dict[str, str] | None = None,
   ) -> tuple[int, dict[str, str], bytes]:
+    """Sends an HTTP request to the test server.
+
+    Args:
+      path: URL path (plus query) relative to the server root.
+      method: HTTP method.
+      body: Raw bytes, a dict sent as JSON, or None for no body.
+      headers: Extra request headers (e.g. Range, Origin, X-Filename).
+
+    Returns:
+      Tuple of (status code, response headers, response body bytes).
+
+    Raises:
+      urllib.error.HTTPError: For any 4xx/5xx response.
+    """
     url = f"http://127.0.0.1:{self.port}{path}"
     hdrs = dict(headers or {})
     raw_body: bytes | None = None
@@ -1140,6 +1225,7 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
 
   def test_full_studio_http_workflow(self) -> None:
     # 1. Static UI & Status
+    """Demo, resegment, edit, export, Resolve push/jump, and upload."""
     st_html, _, html = self._request("/")
     self.assertEqual(st_html, 200)
     html_txt = html.decode("utf-8")
@@ -1271,6 +1357,7 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
 
   def test_security_origin_guard_video_range_and_upload_reset(self) -> None:
     # 1. Cross-origin mutating POST blocked with 403.
+    """Origin/Host/path guards reject; uploads reset cues; MP4 Range works."""
     with self.assertRaises(urllib.error.HTTPError) as ctx_origin:
       self._request(
           "/api/demo",
@@ -1346,6 +1433,7 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
     )
 
   def test_standalone_cli_transcription_with_boardgame_domain(self) -> None:
+    """--cli runs a stub whisper-cli, repairs jargon, and cleans cache."""
     fake_bin_dir = self.tmp_path / "bin"
     fake_bin_dir.mkdir()
     fake_whisper = fake_bin_dir / "whisper-cli"
@@ -1421,6 +1509,7 @@ EOF
     self.assertIn("deckbuilding.", srt_text)
 
   def test_font_upload_serving_and_anitype_resolve_push(self) -> None:
+    """Uploaded font packs are listed, served, and drive an animated push."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
       for i in range(1, 6):
@@ -1488,6 +1577,7 @@ EOF
   def test_notify_export_skips_unchanged_and_upload_decodes_filename(
       self,
   ) -> None:
+    """notify-export skips unchanged WAVs; upload decodes %-encoded names."""
     inbox_wav = self.state.bridge.inbox_dir / "timeline_export.wav"
     inbox_wav.parent.mkdir(parents=True, exist_ok=True)
     resolve_bridge.generate_demo_wav(str(inbox_wav), duration_ms=800)
@@ -1496,6 +1586,7 @@ EOF
     orig_extract = resolve_bridge.extract_waveform_peaks
 
     def _counting_extract(path: str, num_buckets: int | None = None):
+      """Counts calls, then delegates to the real extract_waveform_peaks."""
       nonlocal call_count
       call_count += 1
       return orig_extract(path, num_buckets=num_buckets)
@@ -1535,8 +1626,10 @@ EOF
 
 
 class ResolveTemplatesAndBundleTest(unittest.TestCase):
+  """Resolve Lua scripts, Fusion templates, UI IDs, ZIP bundle, WAV peaks."""
 
   def test_lua_bridges_templates_and_zip_bundle(self) -> None:
+    """Lua loaders, Fusion macros, UI element IDs, and ZIP contents."""
     root = package_bundle.find_project_root()
 
     lua_insert = (
@@ -1644,6 +1737,7 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
     )
 
   def test_extract_waveform_peaks_covers_tail_frames(self) -> None:
+    """Frames left over after even bucketing still count in the last peak."""
     with tempfile.TemporaryDirectory() as tmp:
       wav_path = Path(tmp) / "tail_test.wav"
       total_frames = 1005
@@ -1662,6 +1756,7 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
       self.assertGreater(res["peaks"][-1], 0.4)
 
   def test_extract_waveform_peaks_24bit_pcm(self) -> None:
+    """24-bit stereo PCM peaks are decoded and normalized to 0..1."""
     with tempfile.TemporaryDirectory() as tmp:
       wav_path = Path(tmp) / "test_24bit.wav"
       # 32 stereo frames (64 samples total):
@@ -1690,16 +1785,21 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
       self.assertEqual(res["peaks"][-1], 1.0)
 
   def test_resolve_bridge_uses_opacity3_for_shadow(self) -> None:
+    """Studio styling sets the Text+ shadow via Opacity3, never Alpha3."""
     recorded: dict[str, object] = {}
 
     class _FakeTextPlus:
+      """Records SetInput calls like a Fusion Text+ tool."""
 
       def SetInput(self, key: str, val: object) -> None:
+        """Stores the value under its input name."""
         recorded[key] = val
 
     class _FakeComp:
+      """Minimal Fusion comp that only exposes TextPlus1."""
 
       def FindTool(self, name: str) -> object | None:
+        """Returns a fake Text+ for TextPlus1, else None."""
         return _FakeTextPlus() if name == "TextPlus1" else None
 
     with tempfile.TemporaryDirectory() as tmp:

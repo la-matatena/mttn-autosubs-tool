@@ -1,4 +1,19 @@
-"""Packages AutoSubs ES source, resolve scripts, templates, and docs to ZIP."""
+"""Packages AutoSubs ES source, resolve scripts, templates, and docs to ZIP.
+
+Run from the project folder to produce the distributable bundle:
+
+  python3 package_bundle.py --output MTTN_AutoSubs_Tool.zip
+
+Every entry is stored under the AutoSubs_ES/ prefix. The archive is
+deterministic: files are added in sorted order with a fixed timestamp
+(_ZIP_TIMESTAMP) and fixed UNIX modes (0755 for the launcher scripts, 0644
+otherwise), so identical sources give a byte-identical ZIP and the same
+SHA-256. After building, the bundle is verified (CRC, required files, no
+__pycache__/__init__.py, executable bits) before it is written to disk.
+
+Main entry points: `write_bundle_zip` / `main` (CLI), plus
+`build_zip_bytes` and `verify_zip_bytes`, which the tests call directly.
+"""
 
 from __future__ import annotations
 
@@ -12,13 +27,18 @@ from typing import Any
 import zipfile
 
 ARCHIVE_PREFIX = "AutoSubs_ES"
+# Fixed mtime for every entry (ZIP stores local time, 2-second resolution);
+# using real mtimes would make the SHA-256 change on every checkout.
 _ZIP_TIMESTAMP = (2026, 1, 1, 0, 0, 0)
 
+# Paths (relative to the project root) that must keep the executable bit so
+# they can be double-clicked / run right after unzipping on macOS.
 EXECUTABLE_REL_PATHS = frozenset({
     "install_imac.sh",
     "Iniciar AutoSubs ES.command",
 })
 
+# Entries verify_zip_bytes() insists on; a missing one fails the build.
 REQUIRED_BUNDLE_ENTRIES = (
     f"{ARCHIVE_PREFIX}/.gitignore",
     f"{ARCHIVE_PREFIX}/BUILD",
@@ -75,7 +95,17 @@ REQUIRED_BUNDLE_ENTRIES = (
 
 
 def find_project_root() -> Path:
-  """Locates the autosubs_es directory across macOS and Blaze runfiles."""
+  """Locates the autosubs_es directory across macOS and Blaze runfiles.
+
+  Candidates are tried in order: Blaze test/runfiles trees (TEST_SRCDIR,
+  RUNFILES_DIR, <argv0>.runfiles), this file's folder (symlinked and
+  resolved), a google3 checkout below the cwd, and the cwd itself. A folder
+  qualifies when it contains README.md, autosubs_server.py,
+  docs/user-guide.md and ui/index.html.
+
+  Returns:
+    The first qualifying folder, else this file's parent folder.
+  """
   candidates: list[Path] = []
   for env_var in ("TEST_SRCDIR", "RUNFILES_DIR"):
     val = os.environ.get(env_var)
@@ -115,6 +145,7 @@ def find_project_root() -> Path:
   return Path(__file__).parent
 
 
+# Whitelist of file types shipped in the bundle (see _should_skip_entry).
 _ALLOWED_EXTENSIONS = (
     ".py",
     ".md",
@@ -133,6 +164,21 @@ _ALLOWED_EXTENSIONS = (
 
 
 def _should_skip_entry(rel_parts: tuple[str, ...], filename: str) -> bool:
+  """Decides whether a project file is left out of the bundle.
+
+  Rules, in order: anything under __pycache__, .git, .citc, .github, site
+  (the marketing website) or a *.runfiles tree is skipped; .DS_Store,
+  __init__.py (google3-only) and AGENTS.md (agent instructions) are
+  skipped; BUILD, .gitignore and LICENSE are always kept despite having no
+  allowed extension; everything else must end in _ALLOWED_EXTENSIONS.
+
+  Args:
+    rel_parts: Path components relative to the project root.
+    filename: Basename of the file.
+
+  Returns:
+    True to exclude the file.
+  """
   if any(
       part in ("__pycache__", ".git", ".citc", ".github", "site")
       or part.endswith(".runfiles")
@@ -147,7 +193,19 @@ def _should_skip_entry(rel_parts: tuple[str, ...], filename: str) -> bool:
 
 
 def collect_bundle_files(source_root: Path | None = None) -> dict[str, bytes]:
-  """Collects sorted relative paths and file contents for MTTN_AutoSubs_Tool.zip."""
+  """Collects sorted relative paths and contents for MTTN_AutoSubs_Tool.zip.
+
+  Walks the tree following symlinks (Blaze runfiles are symlink farms).
+  Pruned directories are removed from `dirnames` in place so os.walk never
+  descends into them, and both directories and files are visited in sorted
+  order for determinism.
+
+  Args:
+    source_root: Project folder; defaults to find_project_root().
+
+  Returns:
+    {posix relative path: bytes}, sorted by path.
+  """
   root = source_root or find_project_root()
   collected: dict[str, bytes] = {}
   for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
@@ -168,7 +226,19 @@ def collect_bundle_files(source_root: Path | None = None) -> dict[str, bytes]:
 
 
 def build_zip_bytes(source_root: Path | None = None) -> bytes:
-  """Packages AutoSubs ES files into a deterministic UNIX-mode ZIP buffer."""
+  """Packages AutoSubs ES files into a deterministic UNIX-mode ZIP buffer.
+
+  Each entry gets a hand-built ZipInfo (instead of ZipFile.write) so the
+  timestamp and permissions do not depend on the local filesystem.
+  external_attr holds the UNIX st_mode in its high 16 bits: 0o100000 is the
+  regular-file type, plus 0755/0644 permission bits.
+
+  Args:
+    source_root: Project folder; defaults to find_project_root().
+
+  Returns:
+    The complete ZIP archive as bytes (DEFLATE compressed).
+  """
   files = collect_bundle_files(source_root=source_root)
   buf = io.BytesIO()
   with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -184,8 +254,22 @@ def build_zip_bytes(source_root: Path | None = None) -> bytes:
 
 
 def verify_zip_bytes(zip_bytes: bytes) -> dict[str, Any]:
-  """Validates CRC integrity, required files, and macOS executable modes."""
+  """Validates CRC integrity, required files, and macOS executable modes.
+
+  Args:
+    zip_bytes: Archive produced by build_zip_bytes().
+
+  Returns:
+    Dict with file_count, size_bytes, sha256 (hex of the whole archive) and
+    the sorted entry names.
+
+  Raises:
+    ValueError: On a CRC error, a missing REQUIRED_BUNDLE_ENTRIES item,
+      leftover __pycache__/__init__.py/.pyc entries, or a launcher without
+      all three execute bits.
+  """
   with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
+    # testzip() returns the first entry whose CRC does not match, else None.
     corrupt = zf.testzip()
     if corrupt is not None:
       raise ValueError(f"Archivo ZIP corrupto en entrada: {corrupt}")
@@ -219,7 +303,22 @@ def verify_zip_bytes(zip_bytes: bytes) -> dict[str, Any]:
 def write_bundle_zip(
     output_path: str | Path, source_root: Path | None = None
 ) -> dict[str, Any]:
-  """Builds, validates, and writes AutoSubs_ES.zip to output_path."""
+  """Builds, validates, and writes AutoSubs_ES.zip to output_path.
+
+  The file is written only after verification succeeds, so a broken bundle
+  never replaces a good one.
+
+  Args:
+    output_path: Destination .zip path ("~" is expanded; parent folders are
+      created).
+    source_root: Project folder; defaults to find_project_root().
+
+  Returns:
+    verify_zip_bytes() metadata plus "output_path".
+
+  Raises:
+    ValueError: If verification fails.
+  """
   dest = Path(output_path).expanduser()
   dest.parent.mkdir(parents=True, exist_ok=True)
   zip_bytes = build_zip_bytes(source_root=source_root)
@@ -230,6 +329,14 @@ def write_bundle_zip(
 
 
 def main(argv: list[str] | None = None) -> int:
+  """CLI entry point: builds the bundle and prints a one-line summary.
+
+  Args:
+    argv: Arguments without the program name; None reads sys.argv.
+
+  Returns:
+    Process exit code (0 on success; failures raise).
+  """
   parser = argparse.ArgumentParser(
       description=(
           "Empaqueta MTTN AutoSubs Tool y su documentación en un archivo .zip"
