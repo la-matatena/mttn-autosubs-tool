@@ -9,6 +9,7 @@ ffmpeg, or GGML model downloads are required.
 
 from __future__ import annotations
 
+import http.client
 import io
 import json
 import os
@@ -17,6 +18,8 @@ import re
 import struct
 import tempfile
 import threading
+import time
+from typing import Any
 import unittest
 import urllib.error
 import urllib.request
@@ -265,6 +268,172 @@ class HardwareIMac2017Test(unittest.TestCase):
     self.assertNotIn("libx264", vt_cmd)
     self.assertNotIn("-crf", vt_cmd)
 
+  @staticmethod
+  def _av_get_token(buf: str, term: str) -> tuple[str, str]:
+    """Python port of libavutil av_get_token(), used by both escaping levels.
+
+    Skips leading whitespace, stops at an unescaped/unquoted char in `term`,
+    a backslash copies the next char literally, '...' copies its content
+    literally, and unprotected trailing whitespace is trimmed.
+
+    Args:
+      buf: Text to parse.
+      term: Terminator characters.
+
+    Returns:
+      (token, unparsed rest starting at the terminator).
+    """
+    ws = " \n\t\r"
+    i = 0
+    while i < len(buf) and buf[i] in ws:
+      i += 1
+    out: list[str] = []
+    end = 0
+    while i < len(buf) and buf[i] not in term:
+      c = buf[i]
+      i += 1
+      if c == "\\" and i < len(buf):
+        out.append(buf[i])
+        i += 1
+        end = len(out)
+      elif c == "'":
+        while i < len(buf) and buf[i] != "'":
+          out.append(buf[i])
+          i += 1
+        if i < len(buf):
+          i += 1
+          end = len(out)
+      else:
+        out.append(c)
+    while len(out) > end and out[-1] in ws:
+      out.pop()
+    return "".join(out), buf[i:]
+
+  def test_burnin_filter_paths_with_apostrophe_colon_comma(self) -> None:
+    """ass=/fontsdir= paths with ', :, comma, [], \\ round-trip ffmpeg rules."""
+    ass_path = "/tmp/José's clips: v2, [final]/sub\\títulos; ñ .ass"
+    fonts_dir = "/tmp/it's fonts:1, [x] "
+    burn_cmd = hardware_imac2017.build_ffmpeg_burnin_command(
+        ffmpeg_bin="/usr/local/bin/ffmpeg",
+        input_video_path="/tmp/in.mp4",
+        ass_path=ass_path,
+        output_mp4_path="/tmp/out.mp4",
+        fonts_dir=fonts_dir,
+        nice_level=0,
+    )
+    vf_arg = burn_cmd[burn_cmd.index("-vf") + 1]
+    # Level 2 (filtergraph): filter name, then its whole argument string.
+    name, rest = self._av_get_token(vf_arg, "=,;[")
+    self.assertEqual(name, "ass")
+    self.assertTrue(rest.startswith("="))
+    args, rest = self._av_get_token(rest[1:], "[],;")
+    self.assertEqual(rest, "", vf_arg)
+    # Level 1 (options): positional filename, then fontsdir=value.
+    filename, rest = self._av_get_token(args, ":")
+    self.assertEqual(filename, ass_path)
+    self.assertTrue(rest.startswith(":fontsdir="), rest)
+    fonts_val, rest = self._av_get_token(rest[len(":fontsdir="):], ":")
+    self.assertEqual(fonts_val, fonts_dir)
+    self.assertEqual(rest, "")
+
+    # End-to-end with the local ffmpeg when present. The "movie" source
+    # filter parses its filename option exactly like "ass" (av_get_token on
+    # both levels), so it validates the quoting even without libass.
+    ffmpeg_bin = hardware_imac2017.find_binary(["ffmpeg"])
+    if not ffmpeg_bin or not hardware_imac2017.ffmpeg_supports_filter(
+        ffmpeg_bin, "movie"
+    ):
+      return
+    real_subprocess = hardware_imac2017.subprocess
+    with tempfile.TemporaryDirectory() as tmp:
+      odd_dir = Path(tmp) / "José's clip: v1, [final] ñandú; x"
+      odd_dir.mkdir()
+      video = odd_dir / "it's a, test: [1].nut"
+      gen = real_subprocess.run(
+          [ffmpeg_bin, "-v", "error", "-y", "-f", "lavfi", "-i",
+           "color=c=black:s=32x32:d=0.2", "-c:v", "rawvideo", str(video)],
+          capture_output=True, text=True, check=False,
+      )
+      self.assertEqual(gen.returncode, 0, gen.stderr)
+      graph = f"movie={hardware_imac2017.quote_ffmpeg_filter_value(str(video))}"
+      probe = real_subprocess.run(
+          [ffmpeg_bin, "-v", "error", "-filter_complex", graph,
+           "-frames:v", "1", "-f", "null", "-"],
+          capture_output=True, text=True, check=False,
+      )
+      self.assertEqual(probe.returncode, 0, probe.stderr)
+
+      # Real libass burn-in when an ffmpeg with the "ass" filter exists
+      # (Homebrew ffmpeg-full); the slim formula lacks it.
+      burnin_bin = hardware_imac2017.find_burnin_ffmpeg()
+      if burnin_bin and hardware_imac2017.ffmpeg_supports_encoder(
+          burnin_bin, "libx264"
+      ):
+        ass_file = odd_dir / "sub's, 1: [es].ass"
+        ass_file.write_text(
+            "[Script Info]\nScriptType: v4.00+\nPlayResX: 32\nPlayResY: 32\n"
+            "\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize\n"
+            "Style: Default,Arial,8\n\n[Events]\n"
+            "Format: Layer, Start, End, Style, Text\n"
+            "Dialogue: 0,0:00:00.00,0:00:00.20,Default,Hola\n",
+            encoding="utf-8",
+        )
+        burn = hardware_imac2017.build_ffmpeg_burnin_command(
+            ffmpeg_bin=burnin_bin,
+            input_video_path=str(video),
+            ass_path=str(ass_file),
+            output_mp4_path=str(odd_dir / "out.mp4"),
+            fonts_dir=str(odd_dir),
+            nice_level=0,
+        )
+        res = real_subprocess.run(
+            burn, capture_output=True, text=True, check=False
+        )
+        self.assertEqual(res.returncode, 0, res.stderr[-500:])
+        self.assertGreater((odd_dir / "out.mp4").stat().st_size, 0)
+
+  def test_is_resolve_running_tries_next_pattern_after_error(self) -> None:
+    """A pgrep failure on the first pattern still checks the second one."""
+    real_subprocess = hardware_imac2017.subprocess
+    real_shutil = hardware_imac2017.shutil
+    calls: list[str] = []
+
+    class _Result:
+      """Minimal CompletedProcess stand-in."""
+
+      returncode = 0
+
+    class _FakeSubprocess:
+      """Times out on the first pgrep pattern and matches the second."""
+
+      DEVNULL = real_subprocess.DEVNULL
+      SubprocessError = real_subprocess.SubprocessError
+
+      @staticmethod
+      def run(cmd: list[str], **_: object) -> _Result:
+        """Records the pattern; raises TimeoutExpired on the first call."""
+        calls.append(cmd[-1])
+        if len(calls) == 1:
+          raise real_subprocess.TimeoutExpired(cmd, 1.5)
+        return _Result()
+
+    class _FakeShutil:
+      """Pretends pgrep is installed."""
+
+      @staticmethod
+      def which(_name: str) -> str:
+        """Returns a fixed pgrep path."""
+        return "/usr/bin/pgrep"
+
+    hardware_imac2017.subprocess = _FakeSubprocess
+    hardware_imac2017.shutil = _FakeShutil
+    try:
+      self.assertTrue(hardware_imac2017.is_resolve_running())
+    finally:
+      hardware_imac2017.subprocess = real_subprocess
+      hardware_imac2017.shutil = real_shutil
+    self.assertEqual(calls, ["DaVinci Resolve", "Resolve"])
+
 
 class MachineSettingsTest(unittest.TestCase):
   """Per-machine performance modes, persisted preferences, and benchmarks."""
@@ -335,6 +504,62 @@ class MachineSettingsTest(unittest.TestCase):
     self.assertEqual(
         machine_settings.recommend_from_benchmark("turbo-q8", 4)["model_id"], "turbo-q8"
     )
+
+  def test_update_validates_types_and_load_checks_version(self) -> None:
+    """Bad performance types are ignored; unknown versions merge safely."""
+    prof = hardware_imac2017.IMAC_2017_PROFILE
+    max_t = hardware_imac2017.MAX_WHISPER_THREADS
+    self.assertEqual(hardware_imac2017._MAX_WHISPER_THREADS, max_t)
+    # Direct callers with garbage must not crash either.
+    direct = machine_settings.resolve_performance(
+        prof, {"mode": "custom", "threads": "abc"}
+    )
+    self.assertEqual(direct["threads"], prof.threads_standalone)
+
+    with tempfile.TemporaryDirectory() as tmp:
+      store = machine_settings.MachineSettings(Path(tmp))
+      store.update({"performance": {
+          "mode": "custom", "threads": "abc", "force_no_gpu": "maybe",
+          "fast_beam": "true", "enhance_voice": 0, "model_id": 42,
+      }})
+      perf = store.snapshot()["performance"]
+      self.assertEqual(perf["mode"], "custom")
+      self.assertIsNone(perf["threads"])
+      self.assertIsNone(perf["force_no_gpu"])
+      self.assertIs(perf["fast_beam"], True)
+      self.assertIs(perf["enhance_voice"], False)
+      self.assertIsNone(perf["model_id"])
+      eff = machine_settings.resolve_performance(prof, perf)
+      self.assertEqual(eff["threads"], prof.threads_standalone)
+
+      store.update({"performance": {"threads": "3"}})
+      self.assertEqual(store.snapshot()["performance"]["threads"], 3)
+      store.update({"performance": {"threads": 99}})
+      self.assertEqual(store.snapshot()["performance"]["threads"], max_t)
+      store.update({"performance": {"threads": True, "mode": "turbo"}})
+      self.assertEqual(store.snapshot()["performance"]["threads"], max_t)
+      self.assertEqual(store.snapshot()["performance"]["mode"], "auto")
+
+      bench = {"turbo-q8:cpu": {"realtime_factor": 3.0}}
+      raw = {
+          "performance": {"threads": "abc", "mode": "bogus", "fast_beam": 1},
+          "preferences": {"dialect": "es_ar", "evil": 1},
+          "benchmarks": bench,
+      }
+      path = Path(tmp) / "settings.json"
+      for version, keeps_bench in ((None, False), (99, False), (1, True)):
+        doc = dict(raw)
+        if version is not None:
+          doc["version"] = version
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        data = machine_settings.MachineSettings(Path(tmp)).snapshot()
+        self.assertEqual(data["version"], machine_settings.SETTINGS_VERSION)
+        self.assertIsNone(data["performance"]["threads"])
+        self.assertEqual(data["performance"]["mode"], "auto")
+        self.assertIs(data["performance"]["fast_beam"], True)
+        self.assertEqual(data["preferences"], {"dialect": "es_ar"})
+        self.assertEqual(data["benchmarks"], bench if keeps_bench else {})
+        machine_settings.resolve_performance(prof, data["performance"])
 
 
 class SpanishNlpTest(unittest.TestCase):
@@ -656,6 +881,24 @@ class SpanishNlpTest(unittest.TestCase):
     for prev, cur in zip(rescaled, rescaled[1:]):
       self.assertLessEqual(prev.end_ms, cur.start_ms)
 
+  def test_unknown_preset_id_normalized_to_youtube(self) -> None:
+    """Unknown preset ids report the youtube_16_9 preset actually applied."""
+    cfg = spanish_nlp.SpanishFormatConfig.from_dict({"preset_id": "nope"})
+    self.assertEqual(cfg.preset_id, "youtube_16_9")
+    self.assertEqual(cfg.max_cpl, 42)
+    known = spanish_nlp.SpanishFormatConfig.from_dict(
+        {"preset_id": "reels_9_16"}
+    )
+    self.assertEqual(known.preset_id, "reels_9_16")
+
+  def test_refresh_cue_metrics_counts_joined_line_chars(self) -> None:
+    """CPS counts the lines joined by single spaces over the duration."""
+    cue = spanish_nlp.SubtitleCue(
+        index=1, start_ms=0, end_ms=1000, lines=["Hola", "mundo"]
+    )
+    spanish_nlp.refresh_cue_metrics(cue)
+    self.assertAlmostEqual(cue.cps, len("Hola mundo"))
+
 
 class ExportersTest(unittest.TestCase):
   """Subtitle serializers (SRT/VTT/ASS/TXT/FCPXML/Lua) and NDF timecodes."""
@@ -929,6 +1172,107 @@ class ExportersTest(unittest.TestCase):
       )
       self.assertIn("timeline_start_frame = 0,", pushed_lua)
 
+  def _karaoke_syllables(self, ass: str) -> list[tuple[int, int, str]]:
+    """Parses the first Dialogue into (start_cs, kf_cs, text) per \\kf word.
+
+    `start_cs` is the sum of every preceding \\k/\\kf value, i.e. when the
+    renderer starts that word's sweep relative to the event start.
+    """
+    dialogue = next(
+        ln for ln in ass.splitlines() if ln.startswith("Dialogue:")
+    ).split(",", 9)[9]
+    out: list[tuple[int, int, str]] = []
+    elapsed = 0
+    for m in re.finditer(r"\{\\k(f?)(\d+)\}([^{]*)", dialogue):
+      val = int(m.group(2))
+      if m.group(1):
+        out.append((elapsed, val, m.group(3).replace(r"\N", "").strip()))
+      elapsed += val
+    return out
+
+  def test_ass_karaoke_sweeps_start_at_word_start(self) -> None:
+    """Each \\kf sweep starts at its word's start_ms (gaps become spacers)."""
+    words = [
+        spanish_nlp.WordTiming("Hola", 1230, 1500),  # 230 ms lead-in.
+        spanish_nlp.WordTiming("a", 1755, 1755),  # Zero duration.
+        spanish_nlp.WordTiming("todos", 2105, 2600),
+        spanish_nlp.WordTiming("y", 2550, 2700),  # Overlaps previous.
+        spanish_nlp.WordTiming("todas", 3333, 9000),  # Ends past the cue.
+    ]
+    cue = spanish_nlp.SubtitleCue(
+        index=1,
+        start_ms=1000,
+        end_ms=4000,
+        lines=["Hola a todos", "y todas"],
+        words=words,
+    )
+    ass = exporters.export_ass_karaoke(
+        [cue], exporters.StyleConfig(karaoke_enabled=True)
+    )
+    self.assertIn(r"{\k23}{\kf27}Hola", ass)
+    self.assertIn(r"\N", ass)
+    sylls = self._karaoke_syllables(ass)
+    self.assertEqual([s[2] for s in sylls], [w.text for w in words])
+    for (start_cs, dur_cs, _), w in zip(sylls, words):
+      self.assertGreaterEqual(dur_cs, 0)
+      if w.text == "y":
+        # Overlap: starts when the previous sweep ends (never negative).
+        self.assertEqual(start_cs, (2600 - 1000) // 10)
+        continue
+      self.assertLessEqual(abs(start_cs - (w.start_ms - cue.start_ms) / 10), 1)
+    # Sweeps never run past the event end (300 cs).
+    self.assertLessEqual(sylls[-1][0] + sylls[-1][1], 300)
+
+    # Long cue: no cumulative rounding drift across many odd-ms words.
+    many = [
+        spanish_nlp.WordTiming(f"w{i}", 15 + i * 337, 15 + i * 337 + 205)
+        for i in range(60)
+    ]
+    long_cue = spanish_nlp.SubtitleCue(
+        index=1,
+        start_ms=7,
+        end_ms=many[-1].end_ms + 100,
+        lines=[" ".join(w.text for w in many)],
+        words=many,
+    )
+    long_ass = exporters.export_ass_karaoke(
+        [long_cue], exporters.StyleConfig(karaoke_enabled=True)
+    )
+    for (start_cs, _, _), w in zip(self._karaoke_syllables(long_ass), many):
+      self.assertLessEqual(
+          abs(start_cs - (w.start_ms - long_cue.start_ms) / 10), 1
+      )
+
+    # Word/token count mismatch falls back to static fill text.
+    broken = spanish_nlp.SubtitleCue(
+        index=1, start_ms=0, end_ms=1000, lines=["dos palabras"],
+        words=[spanish_nlp.WordTiming("dos", 0, 500)],
+    )
+    ass_broken = exporters.export_ass_karaoke(
+        [broken], exporters.StyleConfig(karaoke_enabled=True)
+    )
+    self.assertNotIn(r"\kf", ass_broken)
+    self.assertIn(r"\1c&H", ass_broken)
+
+  def test_fps_rational_common_rates(self) -> None:
+    """Common UI frame rates map to Resolve's exact rationals."""
+    ntsc24 = (24000, 1001, "1001/24000s")
+    expected = {
+        23.976: ntsc24,
+        23.98: ntsc24,
+        23.984: ntsc24,  # Only matched by the 23.98 table key.
+        24: (2400, 100, "100/2400s"),
+        25: (2500, 100, "100/2500s"),
+        29.97: (30000, 1001, "1001/30000s"),
+        30: (3000, 100, "100/3000s"),
+        50: (5000, 100, "100/5000s"),
+        59.94: (60000, 1001, "1001/60000s"),
+        60: (6000, 100, "100/6000s"),
+        12.5: (1250, 100, "100/1250s"),  # Generic /100 fallback.
+    }
+    for fps, rational in expected.items():
+      self.assertEqual(exporters._fps_rational(fps), rational, fps)
+
 
 class FontManagerAndAnitypeTest(unittest.TestCase):
   """Font parsing, Spanish glyph checks, pack grouping, and ASCII folding."""
@@ -1133,6 +1477,79 @@ class FontManagerAndAnitypeTest(unittest.TestCase):
         mgr.install_upload("mixed_pack.zip", buf.getvalue(), install_to_macos=True)
       self.assertEqual(list(mgr.app_fonts_dir.glob("*")), [])
       self.assertFalse(mac_dir.exists() and any(mac_dir.iterdir()))
+
+  def test_zip_basename_collisions_and_no_macos_overwrite(self) -> None:
+    """Same-name ZIP entries get _N names; user fonts are never clobbered."""
+    font_a = _make_test_sfnt(b"OTTO", "Alpha Sans", "Regular", [(0x20, 0x7E)])
+    font_b = _make_test_sfnt(b"OTTO", "Beta Serif", "Regular", [(0x20, 0x7E)])
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+      zf.writestr("OTF/Font.otf", font_a)
+      zf.writestr("TTF/Font.otf", font_b)
+      zf.writestr("copy/Font.otf", font_a)  # Byte-identical duplicate.
+    with tempfile.TemporaryDirectory() as tmp:
+      tmp_p = Path(tmp)
+      mac_dir = tmp_p / "mac_fonts"
+      mac_dir.mkdir()
+      other = _make_test_sfnt(b"OTTO", "Someone Else", "Bold", [(0x20, 0x7E)])
+      (mac_dir / "Font.otf").write_bytes(other)
+      mgr = font_manager.FontManager(tmp_p / "app", mac_dir)
+      res = mgr.install_upload("pack.zip", buf.getvalue(), True)
+
+      self.assertEqual(res["installed_count"], 2)
+      self.assertEqual((mgr.app_fonts_dir / "Font.otf").read_bytes(), font_a)
+      self.assertEqual((mgr.app_fonts_dir / "Font_2.otf").read_bytes(), font_b)
+      # The pre-existing, different macOS font is untouched.
+      self.assertEqual((mac_dir / "Font.otf").read_bytes(), other)
+      self.assertEqual((mac_dir / "Font_2.otf").read_bytes(), font_a)
+      self.assertEqual((mac_dir / "Font_2_2.otf").read_bytes(), font_b)
+      summary = [
+          (c["location"], c["action"], c["installed_as"])
+          for c in res["collisions"]
+      ]
+      self.assertEqual(summary, [
+          ("zip", "renamed", "Font_2.otf"),
+          ("zip", "skipped_identical", "Font.otf"),
+          ("macos", "renamed", "Font_2.otf"),
+          ("macos", "renamed", "Font_2_2.otf"),
+      ])
+
+      # Re-uploading the same font finds its identical copy: nothing new.
+      again = mgr.install_upload("Font.otf", font_a, install_to_macos=True)
+      self.assertEqual(
+          [(c["action"], c["installed_as"]) for c in again["collisions"]],
+          [("skipped_identical", "Font_2.otf")],
+      )
+      self.assertEqual(
+          sorted(p.name for p in mac_dir.iterdir()),
+          ["Font.otf", "Font_2.otf", "Font_2_2.otf"],
+      )
+
+  def test_cmap_format4_rejects_declared_length_too_short(self) -> None:
+    """A format 4 subtable whose length cannot hold its arrays is ignored."""
+    segs = [(0x41, 0x5A), (0xFFFF, 0xFFFF)]
+    body = (
+        b"".join(struct.pack(">H", e) for _, e in segs)
+        + struct.pack(">H", 0)
+        + b"".join(struct.pack(">H", s) for s, _ in segs)
+        + b"".join(struct.pack(">h", 1) for _ in segs)
+        + b"".join(struct.pack(">H", 0) for _ in segs)
+    )
+    full_len = 16 + 8 * len(segs)
+
+    def _subtable(length: int) -> bytes:
+      """Returns the subtable with `length` written in its header."""
+      header = struct.pack(
+          ">HHHHHHH", 4, length, 0, 2 * len(segs), 0, 0, 0
+      )
+      return header + body
+
+    check = font_manager._check_cmap_format4
+    self.assertEqual(check(_subtable(full_len), 0, {0x41, 0xF1}), {0x41})
+    # Lengths past the end of the file are clamped, not rejected.
+    self.assertEqual(check(_subtable(0xFFFF), 0, {0x41}), {0x41})
+    self.assertEqual(check(_subtable(20), 0, {0x41}), set())
+    self.assertEqual(check(_subtable(full_len)[:24], 0, {0x41}), set())
 
 
 class BridgeAndServerIntegrationTest(unittest.TestCase):
@@ -1624,6 +2041,427 @@ EOF
     up_json = json.loads(up_bytes.decode("utf-8"))
     self.assertEqual(up_json["filename"], "vídeo_final__es_.wav")
 
+  # --- Robustness regression tests (server bug-fix round) ---
+
+  def _raw_request(
+      self,
+      method: str,
+      path: str,
+      headers: dict[str, str],
+      body: bytes = b"",
+  ) -> tuple[int, dict[str, Any]]:
+    """Sends a request with verbatim headers (e.g. a bogus Content-Length).
+
+    urllib always computes Content-Length itself, so http.client is used to
+    exercise malformed headers.
+
+    Args:
+      method: HTTP method.
+      path: URL path.
+      headers: Headers sent exactly as given.
+      body: Raw body bytes sent after the headers.
+
+    Returns:
+      Tuple of (status code, parsed JSON body or {}).
+    """
+    conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+    try:
+      conn.putrequest(method, path)
+      for key, value in headers.items():
+        conn.putheader(key, value)
+      conn.endheaders()
+      if body:
+        conn.send(body)
+      resp = conn.getresponse()
+      raw = resp.read()
+      return resp.status, (json.loads(raw.decode("utf-8")) if raw else {})
+    finally:
+      conn.close()
+
+  def _expect_http_error(
+      self, path: str, method: str, body: bytes | dict | None, code: int
+  ) -> dict[str, Any]:
+    """Asserts that a request fails with `code` and returns its JSON body."""
+    with self.assertRaises(urllib.error.HTTPError) as ctx:
+      self._request(path, method=method, body=body)
+    try:
+      self.assertEqual(ctx.exception.code, code)
+      raw = ctx.exception.read()
+      return json.loads(raw.decode("utf-8")) if raw else {}
+    finally:
+      ctx.exception.close()
+
+  def _install_fake_whisper(self, sleep_s: float) -> Path:
+    """Creates a stub whisper-cli that sleeps, then writes a tiny OJF JSON.
+
+    Also writes a dummy turbo-q8 model so validation passes.
+
+    Args:
+      sleep_s: Seconds the stub sleeps, keeping its job in "running".
+
+    Returns:
+      Path to the executable stub.
+    """
+    fake_bin_dir = self.tmp_path / "bin"
+    fake_bin_dir.mkdir(exist_ok=True)
+    fake_whisper = fake_bin_dir / "whisper-cli"
+    fake_whisper.write_text(
+        f"""#!/bin/sh
+out_prefix=""
+prev=""
+for arg in "$@"; do
+  if [ "$arg" = "--help" ]; then
+    exit 0
+  fi
+  if [ "$prev" = "-of" ]; then
+    out_prefix="$arg"
+  fi
+  prev="$arg"
+done
+sleep {sleep_s}
+cat << 'EOF' > "${{out_prefix}}.json"
+{{"transcription": [{{
+  "offsets": {{"from": 0, "to": 1500}},
+  "text": " Hola a todos.",
+  "tokens": [
+    {{"text": " Hola", "offsets": {{"from": 100, "to": 500}}, "p": 0.95}},
+    {{"text": " a", "offsets": {{"from": 520, "to": 700}}, "p": 0.95}},
+    {{"text": " todos.", "offsets": {{"from": 720, "to": 1300}}, "p": 0.95}}
+  ]
+}}]}}
+EOF
+""",
+        encoding="utf-8",
+    )
+    fake_whisper.chmod(0o755)
+    models_dir = self.tmp_path / "app/models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    (models_dir / "ggml-large-v3-turbo-q8_0.bin").write_bytes(
+        b"0" * (2 * 1024 * 1024)
+    )
+    return fake_whisper
+
+  def _wait_job(self, job_id: str, timeout_s: float = 20.0) -> dict[str, Any]:
+    """Polls GET /api/jobs/<id> until the job leaves "running"."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+      _, _, raw = self._request(f"/api/jobs/{job_id}")
+      job = json.loads(raw.decode("utf-8"))
+      if job["status"] != "running":
+        return job
+      time.sleep(0.05)
+    self.fail(f"Job {job_id} did not finish in {timeout_s} s")
+
+  def _wait_transcription_slot_free(self) -> None:
+    """Waits until the transcription worker's finally block has run."""
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+      with self.state.lock:
+        if self.state._active_transcription is None:
+          return
+      time.sleep(0.02)
+    self.fail("Transcription dedupe slot was never released")
+
+  def test_upload_and_notify_survive_undecodable_wav_peaks(self) -> None:
+    """A WAV the wave module rejects (32-bit float) still activates."""
+    def _raise_wave_error(path: str, num_buckets: int | None = None):
+      """Simulates extract_waveform_peaks on a 32-bit float WAV."""
+      raise wave.Error("unknown format: 3")
+
+    inbox_wav = self.state.bridge.inbox_dir / "timeline_export.wav"
+    inbox_wav.parent.mkdir(parents=True, exist_ok=True)
+    resolve_bridge.generate_demo_wav(str(inbox_wav), duration_ms=500)
+    sample_wav = self.tmp_path / "float32.wav"
+    resolve_bridge.generate_demo_wav(str(sample_wav), duration_ms=500)
+    orig_extract = resolve_bridge.extract_waveform_peaks
+    resolve_bridge.extract_waveform_peaks = _raise_wave_error
+    try:
+      st_up, _, up_bytes = self._request(
+          "/api/upload",
+          method="POST",
+          body=sample_wav.read_bytes(),
+          headers={"X-Filename": "float32.wav"},
+      )
+      self.assertEqual(st_up, 200)
+      up_json = json.loads(up_bytes.decode("utf-8"))
+      self.assertEqual(up_json["duration_ms"], 0)
+      self.assertTrue(up_json["session"]["has_media"])
+      self.assertEqual(up_json["session"]["media_name"], "float32.wav")
+      self.assertEqual(up_json["session"]["peaks"], [])
+
+      st_n, _, n_bytes = self._request(
+          "/api/resolve/notify-export", method="POST", body={}
+      )
+      self.assertEqual(st_n, 200)
+      n_sess = json.loads(n_bytes.decode("utf-8"))["session"]
+      self.assertTrue(n_sess["has_media"])
+      self.assertEqual(n_sess["media_name"], "timeline_export.wav")
+      self.assertEqual(n_sess["peaks"], [])
+    finally:
+      resolve_bridge.extract_waveform_peaks = orig_extract
+
+  def test_upload_storage_cleanup_size_cap_and_single_decode(self) -> None:
+    """Uploads go to uploads/, replace old ones, are capped, decoded once."""
+    self._request("/api/demo", method="POST", body={})
+    cache_dir = self.tmp_path / "app/cache"
+    demo_wav = cache_dir / "demo_autosubs_es.wav"
+    demo_bytes = demo_wav.read_bytes()
+    inbox_wav = self.state.bridge.inbox_dir / "timeline_export.wav"
+    inbox_wav.parent.mkdir(parents=True, exist_ok=True)
+    resolve_bridge.generate_demo_wav(str(inbox_wav), duration_ms=400)
+    sample_wav = self.tmp_path / "clip.wav"
+    resolve_bridge.generate_demo_wav(str(sample_wav), duration_ms=500)
+    wav_bytes = sample_wav.read_bytes()
+
+    # A name equal to an internal cache file must not overwrite it.
+    _, _, b1 = self._request(
+        "/api/upload",
+        method="POST",
+        body=wav_bytes,
+        headers={"X-Filename": "demo_autosubs_es.wav"},
+    )
+    j1 = json.loads(b1.decode("utf-8"))
+    self.assertEqual(j1["filename"], "demo_autosubs_es.wav")
+    first_upload = Path(j1["media_path"])
+    self.assertEqual(first_upload.parent, cache_dir / "uploads")
+    self.assertEqual(demo_wav.read_bytes(), demo_bytes)
+
+    # "%2541" decodes once to "%41" (sanitized to "_41"), never to "A".
+    _, _, b2 = self._request(
+        "/api/upload",
+        method="POST",
+        body=wav_bytes,
+        headers={"X-Filename": "100%2541.wav"},
+    )
+    j2 = json.loads(b2.decode("utf-8"))
+    self.assertEqual(j2["filename"], "100_41.wav")
+    self.assertFalse(first_upload.exists())
+    self.assertTrue(Path(j2["media_path"]).is_file())
+    self.assertTrue(inbox_wav.is_file())
+    self.assertTrue(demo_wav.is_file())
+    self.assertEqual(
+        [p.name for p in (cache_dir / "uploads").iterdir()], ["100_41.wav"]
+    )
+
+    # ".." must not resolve to a directory outside uploads/.
+    _, _, b3 = self._request(
+        "/api/upload",
+        method="POST",
+        body=wav_bytes,
+        headers={"X-Filename": "%2E%2E"},
+    )
+    self.assertEqual(
+        json.loads(b3.decode("utf-8"))["filename"], "media_upload.bin"
+    )
+
+    orig_max = autosubs_server._MAX_UPLOAD_BYTES
+    autosubs_server._MAX_UPLOAD_BYTES = 16
+    try:
+      err = self._expect_http_error("/api/upload", "POST", wav_bytes, 413)
+      self.assertIn("límite", err["error"])
+    finally:
+      autosubs_server._MAX_UPLOAD_BYTES = orig_max
+
+  def test_malformed_requests_return_400(self) -> None:
+    """Bad Content-Length, non-UTF-8 JSON and bad numbers give JSON 400s."""
+    self._request("/api/demo", method="POST", body={})
+    for path in ("/api/demo", "/api/fonts/upload", "/api/upload"):
+      status, payload = self._raw_request(
+          "POST", path, {"Content-Length": "abc"}
+      )
+      self.assertEqual(status, 400, path)
+      self.assertIn("Content-Length", payload["error"])
+    status, payload = self._raw_request(
+        "POST",
+        "/api/demo",
+        {"Content-Length": "2", "Content-Type": "application/json"},
+        body=b"\xff\xfe",
+    )
+    self.assertEqual(status, 400)
+    self.assertIn("UTF-8", payload["error"])
+
+    for body in (
+        {"format": "srt", "fps": "abc"},
+        {"format": "srt", "fps": float("inf")},
+        {"format": "srt", "timeline_start_frame": "x"},
+    ):
+      self._expect_http_error("/api/export", "POST", body, 400)
+    for body in ({"ms": "abc"}, {"ms": None}):
+      self._expect_http_error("/api/resolve/jump", "POST", body, 400)
+    with self.state.lock:
+      cues_before = list(self.state.cues)
+    for body in (
+        {"cues": [1]},
+        {"cues": [{"start_ms": "x"}]},
+        {"cues": [{"start_ms": 0, "words": ["nope"]}]},
+    ):
+      self._expect_http_error("/api/cues", "PUT", body, 400)
+    with self.state.lock:
+      self.assertEqual(self.state.cues, cues_before)
+
+  def test_cancel_only_affects_active_jobs(self) -> None:
+    """Cancelling a finished job keeps its status; running jobs cancel."""
+    done_id = self.state.create_job("burnin")
+    self.state.update_job(done_id, status="done", result={"x": 1})
+    _, _, raw = self._request(
+        f"/api/jobs/{done_id}/cancel", method="POST", body={}
+    )
+    self.assertEqual(json.loads(raw), {"ok": True, "status": "done"})
+    with self.state.lock:
+      self.assertEqual(self.state.jobs[done_id]["status"], "done")
+      self.assertEqual(self.state.jobs[done_id]["result"], {"x": 1})
+
+    run_id = self.state.create_job("burnin")
+    _, _, raw = self._request(
+        f"/api/jobs/{run_id}/cancel", method="POST", body={}
+    )
+    self.assertEqual(json.loads(raw), {"ok": True, "status": "cancelled"})
+    _, _, raw = self._request("/api/jobs/nope/cancel", method="POST", body={})
+    self.assertEqual(json.loads(raw), {"ok": False, "status": None})
+
+  def test_transcription_and_benchmark_are_deduplicated(self) -> None:
+    """A second Transcribir/benchmark click joins the in-flight job."""
+    fake_whisper = self._install_fake_whisper(sleep_s=1)
+    inbox_wav = self.state.bridge.inbox_dir / "timeline_export.wav"
+    inbox_wav.parent.mkdir(parents=True, exist_ok=True)
+    resolve_bridge.generate_demo_wav(str(inbox_wav), duration_ms=1500)
+    self.state._make_benchmark_wav = (  # Skip macOS `say` (slow).
+        lambda out_wav, ffmpeg_bin: (
+            resolve_bridge.generate_demo_wav(str(out_wav), duration_ms=500),
+            0.5,
+        )[1]
+    )
+    orig_find = hardware_imac2017.find_binary
+    hardware_imac2017.find_binary = lambda cands: (
+        str(fake_whisper)
+        if "whisper-cli" in cands
+        else None if "ffmpeg" in cands else orig_find(cands)
+    )
+    try:
+      body = {"source": "inbox", "model_id": "turbo-q8"}
+      _, _, r1 = self._request("/api/transcribe", method="POST", body=body)
+      _, _, r2 = self._request("/api/transcribe", method="POST", body=body)
+      id1 = json.loads(r1)["job_id"]
+      self.assertEqual(json.loads(r2)["job_id"], id1)
+      self.assertEqual(self._wait_job(id1)["status"], "done")
+      self._wait_transcription_slot_free()
+
+      bench = {"model_id": "turbo-q8"}
+      _, _, b1 = self._request("/api/benchmark", method="POST", body=bench)
+      _, _, b2 = self._request("/api/benchmark", method="POST", body=bench)
+      bench_id = json.loads(b1)["job_id"]
+      self.assertEqual(json.loads(b2)["job_id"], bench_id)
+      self.assertEqual(self._wait_job(bench_id)["status"], "done")
+    finally:
+      hardware_imac2017.find_binary = orig_find
+
+  def test_inbox_transcription_survives_notify_and_stale_is_flagged(
+      self,
+  ) -> None:
+    """notify-export keeps inbox cues; a superseded job reports stale."""
+    fake_whisper = self._install_fake_whisper(sleep_s=0.5)
+    inbox_wav = self.state.bridge.inbox_dir / "timeline_export.wav"
+    inbox_wav.parent.mkdir(parents=True, exist_ok=True)
+    resolve_bridge.generate_demo_wav(str(inbox_wav), duration_ms=1500)
+    orig_find = hardware_imac2017.find_binary
+    hardware_imac2017.find_binary = lambda cands: (
+        str(fake_whisper)
+        if "whisper-cli" in cands
+        else None if "ffmpeg" in cands else orig_find(cands)
+    )
+    body = {"source": "inbox", "model_id": "turbo-q8"}
+    try:
+      _, _, r1 = self._request("/api/transcribe", method="POST", body=body)
+      job = self._wait_job(json.loads(r1)["job_id"])
+      self.assertEqual(job["status"], "done")
+      self.assertFalse(job["result"]["stale"])
+      self.assertGreater(job["result"]["cue_count"], 0)
+      self._wait_transcription_slot_free()
+
+      _, _, n_bytes = self._request(
+          "/api/resolve/notify-export", method="POST", body={}
+      )
+      n_sess = json.loads(n_bytes.decode("utf-8"))["session"]
+      self.assertEqual(n_sess["cue_count"], job["result"]["cue_count"])
+
+      # Media replaced while the job runs -> result discarded and flagged.
+      _, _, r2 = self._request("/api/transcribe", method="POST", body=body)
+      sample_wav = self.tmp_path / "otra.wav"
+      resolve_bridge.generate_demo_wav(str(sample_wav), duration_ms=400)
+      self._request(
+          "/api/upload",
+          method="POST",
+          body=sample_wav.read_bytes(),
+          headers={"X-Filename": "otra.wav"},
+      )
+      stale_job = self._wait_job(json.loads(r2)["job_id"])
+      self.assertEqual(stale_job["status"], "done")
+      self.assertTrue(stale_job["result"]["stale"])
+      self.assertEqual(stale_job["result"]["media_name"], "otra.wav")
+      self._wait_transcription_slot_free()
+      with self.state.lock:
+        self.assertEqual(self.state.cues, [])
+      # The superseded working WAVs were cleaned out of the cache.
+      self.assertEqual(
+          list((self.tmp_path / "app/cache").glob("working_*_16k.wav")), []
+      )
+      self.assertTrue(inbox_wav.is_file())
+    finally:
+      hardware_imac2017.find_binary = orig_find
+
+  def test_put_cues_rejects_stale_media_rev(self) -> None:
+    """PUT /api/cues with an outdated media_rev returns 409, cues intact."""
+    _, _, demo_bytes = self._request("/api/demo", method="POST", body={})
+    sess = json.loads(demo_bytes.decode("utf-8"))["session"]
+    cues = sess["cues"]
+    cues[0]["text"] = "Editado"
+    cues[0]["lines"] = ["Editado"]
+
+    _, _, ok_bytes = self._request(
+        "/api/cues",
+        method="PUT",
+        body={"cues": cues, "media_rev": sess["media_rev"]},
+    )
+    ok_sess = json.loads(ok_bytes.decode("utf-8"))["session"]
+    self.assertEqual(ok_sess["cues"][0]["text"], "Editado")
+
+    cues[0]["text"] = "No debe aplicarse"
+    cues[0]["lines"] = ["No debe aplicarse"]
+    err = self._expect_http_error(
+        "/api/cues", "PUT", {"cues": cues, "media_rev": "otro:1:2"}, 409
+    )
+    self.assertIn("error", err)
+    self.assertEqual(err["session"]["cues"][0]["text"], "Editado")
+    self.assertIsNone(err["session"]["peaks"])
+
+    # Backward compatible: no media_rev -> no check.
+    _, _, legacy = self._request("/api/cues", method="PUT", body={"cues": cues})
+    self.assertEqual(
+        json.loads(legacy)["session"]["cues"][0]["text"], "No debe aplicarse"
+    )
+
+  def test_unsatisfiable_range_returns_416(self) -> None:
+    """Valid-but-unsatisfiable ranges get 416; invalid syntax gets 200."""
+    self._request("/api/demo", method="POST", body={})
+    total = (self.tmp_path / "app/cache/demo_autosubs_es.wav").stat().st_size
+    for rng in (f"bytes={total}-", "bytes=-0"):
+      with self.assertRaises(urllib.error.HTTPError) as ctx:
+        self._request("/api/media", headers={"Range": rng})
+      self.assertEqual(ctx.exception.code, 416, rng)
+      self.assertEqual(
+          ctx.exception.headers.get("Content-Range"), f"bytes */{total}"
+      )
+      ctx.exception.close()
+    for rng in ("bytes=5-2", "bytes=abc"):
+      st, _, data = self._request("/api/media", headers={"Range": rng})
+      self.assertEqual(st, 200, rng)
+      self.assertEqual(len(data), total)
+    st, hdrs, data = self._request(
+        "/api/media", headers={"Range": f"bytes={total - 10}-{total + 50}"}
+    )
+    self.assertEqual(st, 206)
+    self.assertEqual(len(data), 10)
+
 
 class ResolveTemplatesAndBundleTest(unittest.TestCase):
   """Resolve Lua scripts, Fusion templates, UI IDs, ZIP bundle, WAV peaks."""
@@ -1809,6 +2647,318 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
       self.assertTrue(ok)
       self.assertEqual(recorded.get("Opacity3"), 0.65)
       self.assertNotIn("Alpha3", recorded)
+
+  def test_extract_waveform_peaks_unsupported_wavs_return_empty(self) -> None:
+    """Float32, truncated and garbage WAVs yield empty peaks, not errors."""
+    empty = {"peaks": [], "duration_ms": 0, "sample_rate": 16000}
+    with tempfile.TemporaryDirectory() as tmp:
+      data = struct.pack("<4f", 0.0, 0.5, -0.5, 1.0)
+      # WAVE_FORMAT_IEEE_FLOAT (tag 3), mono, 16 kHz, 32-bit.
+      fmt = struct.pack("<HHIIHH", 3, 1, 16000, 64000, 4, 32)
+      float_wav = (
+          b"RIFF" + struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(data))
+          + b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt
+          + b"data" + struct.pack("<I", len(data)) + data
+      )
+      cases = {
+          "float32.wav": float_wav,
+          "truncated.wav": float_wav[:22],
+          "garbage.wav": b"RIFF\x00\x00",
+      }
+      for name, payload in cases.items():
+        path = Path(tmp) / name
+        path.write_bytes(payload)
+        with self.subTest(name=name):
+          self.assertEqual(
+              resolve_bridge.extract_waveform_peaks(str(path)), empty
+          )
+
+  def test_find_template_item_prefers_exact_match_anywhere(self) -> None:
+    """An exact template in a later folder beats an earlier fuzzy fallback."""
+
+    class _Clip:
+      """Media Pool clip double with a display name."""
+
+      def __init__(self, name: str) -> None:
+        """Stores the clip name."""
+        self.name = name
+
+      def GetClipProperty(self, _key: str) -> str:
+        """Returns the clip name for "Clip Name"."""
+        return self.name
+
+      def GetName(self) -> str:
+        """Returns the clip name."""
+        return self.name
+
+    class _Folder:
+      """Media Pool folder double."""
+
+      def __init__(self, clips: list[_Clip], subs: list["_Folder"]) -> None:
+        """Stores own clips and subfolders."""
+        self.clips = clips
+        self.subs = subs
+
+      def GetClipList(self) -> list[_Clip]:
+        """Returns own clips."""
+        return self.clips
+
+      def GetSubFolderList(self) -> list["_Folder"]:
+        """Returns subfolders."""
+        return self.subs
+
+    exact = _Clip("AutoSubs_ES_Cine_Netflix")
+    root = _Folder([], [
+        _Folder([_Clip("AutoSubs_Otro")], []),
+        _Folder([exact], []),
+    ])
+    with tempfile.TemporaryDirectory() as tmp:
+      bridge = resolve_bridge.ResolveBridge(app_data_dir=Path(tmp))
+      self.assertIs(
+          bridge._find_template_item(root, "AutoSubs_ES_Cine_Netflix"), exact
+      )
+      partial = _Clip("AutoSubs_ES_Cine_Netflix v2")
+      root2 = _Folder([_Clip("Text+ basico")], [_Folder([partial], [])])
+      self.assertIs(
+          bridge._find_template_item(root2, "AutoSubs_ES_Cine_Netflix"), partial
+      )
+      fallback = _Clip("Mi Text+")
+      root3 = _Folder([_Clip("Logo")], [_Folder([fallback], [])])
+      self.assertIs(bridge._find_template_item(root3, "Nada"), fallback)
+      self.assertIsNone(bridge._find_template_item(_Folder([], []), "Nada"))
+
+  def test_push_textplus_pairs_clips_by_start_frame(self) -> None:
+    """Text+ clips get the text of the cue at their start frame."""
+    cues = [
+        spanish_nlp.SubtitleCue(1, 0, 1000, ["Uno"]),
+        spanish_nlp.SubtitleCue(2, 1000, 2000, ["Dos"]),
+        spanish_nlp.SubtitleCue(3, 2000, 3000, ["Tres"]),
+    ]
+
+    class _Comp:
+      """Fusion comp double remembering which clip it belongs to."""
+
+      def __init__(self, start: int) -> None:
+        """Stores the owning clip's start frame."""
+        self.start = start
+
+    class _Item:
+      """Timeline item double returned by AppendToTimeline."""
+
+      def __init__(self, start: int) -> None:
+        """Stores the record start frame."""
+        self.start = start
+
+      def GetStart(self) -> int:
+        """Returns the record start frame."""
+        return self.start
+
+      def GetFusionCompCount(self) -> int:
+        """Every Text+ clip has one comp."""
+        return 1
+
+      def GetFusionCompByIndex(self, _idx: int) -> _Comp:
+        """Returns a comp tagged with this item's start."""
+        return _Comp(self.start)
+
+    class _MediaPool:
+      """Media Pool double; `drop` removes requested clips by index."""
+
+      def __init__(self, drop: set[int]) -> None:
+        """Stores which requested clips Resolve "fails" to insert."""
+        self.drop = drop
+
+      def GetRootFolder(self) -> object:
+        """Unused: the template lookup is stubbed."""
+        return object()
+
+      def AppendToTimeline(self, infos: list[dict]) -> list[_Item]:
+        """Returns the inserted items in reverse order."""
+        items = [
+            _Item(info["recordFrame"])
+            for idx, info in enumerate(infos)
+            if idx not in self.drop
+        ]
+        return list(reversed(items))
+
+    class _Timeline:
+      """Timeline double starting at frame 90000."""
+
+      def AddTrack(self, _kind: str) -> bool:
+        """Accepts the new track."""
+        return True
+
+      def GetTrackCount(self, _kind: str) -> int:
+        """Reports two video tracks."""
+        return 2
+
+      def SetTrackName(self, *_args: object) -> bool:
+        """Accepts the track name."""
+        return True
+
+      def GetStartFrame(self) -> int:
+        """Timeline starts at 01:00:00:00 at 25 fps."""
+        return 90000
+
+    class _Project:
+      """Project double exposing the media pool and timeline."""
+
+      def __init__(self, pool: _MediaPool) -> None:
+        """Stores the media pool."""
+        self.pool = pool
+
+      def GetMediaPool(self) -> _MediaPool:
+        """Returns the media pool."""
+        return self.pool
+
+      def GetCurrentTimeline(self) -> _Timeline:
+        """Returns the timeline."""
+        return _Timeline()
+
+    class _Resolve:
+      """Resolve double: GetProjectManager().GetCurrentProject()."""
+
+      def __init__(self, pool: _MediaPool) -> None:
+        """Stores the project."""
+        self.project = _Project(pool)
+
+      def GetProjectManager(self) -> "_Resolve":
+        """Acts as its own project manager."""
+        return self
+
+      def GetCurrentProject(self) -> _Project:
+        """Returns the project."""
+        return self.project
+
+    with tempfile.TemporaryDirectory() as tmp:
+      bridge = resolve_bridge.ResolveBridge(app_data_dir=Path(tmp))
+      styled: list[tuple[int, str]] = []
+      bridge._find_template_item = lambda folder, name: object()
+      bridge._apply_style_to_fusion_comp = (
+          lambda comp, cue_text, style: styled.append((comp.start, cue_text))
+      )
+
+      def _push(drop: set[int]) -> tuple[bool, str]:
+        """Runs a textplus push with the given dropped clip indices."""
+        return bridge._push_via_studio(
+            resolve=_Resolve(_MediaPool(drop)),
+            cues=cues,
+            mode="textplus",
+            track_name="Subs",
+            template_name="AutoSubs_ES_Cine_Netflix",
+            srt_path=Path(tmp) / "a.srt",
+            fcpxml_path=Path(tmp) / "a.fcpxml",
+            fps=25.0,
+            start_frame=0,
+            style=exporters.StyleConfig(),
+        )
+
+      ok, msg = _push(set())
+      self.assertTrue(ok, msg)
+      self.assertEqual(
+          sorted(styled), [(90000, "Uno"), (90025, "Dos"), (90050, "Tres")]
+      )
+      styled.clear()
+      ok, msg = _push({1})
+      self.assertTrue(ok, msg)
+      self.assertEqual(sorted(styled), [(90000, "Uno"), (90050, "Tres")])
+      self.assertIn("1 subtítulos", msg)
+
+    pair = resolve_bridge._pair_textplus_items_with_cues
+    # Unreadable starts: index pairing only when the counts match.
+    self.assertEqual(pair(["a", "b"], [0, 10]), [("a", 0), ("b", 1)])
+    self.assertEqual(pair(["a"], [0, 10]), [])
+    # Constant offset in the same order: safe index fallback.
+    shifted = [_Item(500), _Item(510)]
+    self.assertEqual(
+        [idx for _, idx in pair(shifted, [0, 10])], [0, 1]
+    )
+    # Offset plus a missing clip: nothing can be paired safely.
+    self.assertEqual(pair([_Item(500)], [0, 10]), [])
+
+  def _read_repo_text(self, rel_path: str) -> str:
+    """Returns a repo file's UTF-8 text.
+
+    Args:
+      rel_path: Path relative to the project root.
+
+    Returns:
+      The file contents.
+    """
+    root = package_bundle.find_project_root()
+    return (root / rel_path).read_text(encoding="utf-8")
+
+  def test_export_audio_lua_uses_wall_clock_and_restores_render(self) -> None:
+    """Script 1 times out on wall time and restores render settings."""
+    src = self._read_repo_text("lua/1_AutoSubs_ES_Exportar_Audio.lua")
+    # Wall-clock timeout instead of counting loop iterations.
+    self.assertIn("os.difftime(os.time(), t0)", src)
+    self.assertNotIn("elapsed = elapsed + 0.2", src)
+    self.assertIn("bmd.wait(seconds)", src)
+    # Previous render settings are captured and restored on every path.
+    self.assertIn("GetCurrentRenderFormatAndCodec", src)
+    self.assertIn("SaveAsNewRenderPreset", src)
+    self.assertIn("LoadRenderPreset", src)
+    self.assertIn("DeleteRenderPreset", src)
+    run_idx = src.index("pcall(runAudioRender)")
+    restore_idx = src.index("restoreRenderSettings()", run_idx)
+    # Restore happens right after the protected render, before any return.
+    self.assertNotIn("return", src[run_idx:restore_idx])
+
+  def test_insert_lua_matches_cues_by_frame_and_cleans_tracks(self) -> None:
+    """Script 2 pairs clips by start frame and removes failed tracks."""
+    src = self._read_repo_text("lua/2_AutoSubs_ES_Insertar_Subtitulos.lua")
+    # Cue/clip pairing is positional (start frame), never by list index.
+    self.assertIn("item:GetStart()", src)
+    self.assertIn("MATCH_TOLERANCE_FRAMES", src)
+    self.assertNotIn("local cue = cues[i]", src)
+    self.assertIn("no coinciden con ningún subtítulo", src)
+    # Tracks are added only after import and deleted if the append fails.
+    self.assertNotIn('timeline:AddTrack("subtitle")\n', src)
+    self.assertIn("DeleteTrack", src)
+    srt_block = src[src.index('if mode == "subtitle_srt"'):]
+    self.assertLess(
+        srt_block.index("ImportMedia"), srt_block.index("addNamedTrack(")
+    )
+    self.assertIn('removeAddedTrack("subtitle", subCount)', src)
+    self.assertIn('removeAddedTrack("video", trackIdx)', src)
+    # Exact template name anywhere in the tree beats an earlier fallback.
+    self.assertIn("return visit(folder) or substringMatch or fallback", src)
+
+  def test_lua_loaders_survive_corrupt_payloads(self) -> None:
+    """loadLuaModule pcall-protects chunks and is Lua 5.1-safe."""
+    for rel in (
+        "lua/2_AutoSubs_ES_Insertar_Subtitulos.lua",
+        "lua/3_AutoSubs_ES_Ir_A_Tiempo.lua",
+    ):
+      src = self._read_repo_text(rel)
+      self.assertIn("pcall(fn)", src, rel)
+      self.assertNotIn("return fn()", src, rel)
+      # Plain Lua 5.1 `load` rejects strings, so loadstring must win.
+      self.assertIn("loadstring or load", src, rel)
+      self.assertNotIn("load or loadstring", src, rel)
+
+  def test_jump_lua_reports_failures(self) -> None:
+    """Script 3 checks SetCurrentTimecode and reports missing Resolve."""
+    src = self._read_repo_text("lua/3_AutoSubs_ES_Ir_A_Tiempo.lua")
+    self.assertIn('bmd.scriptapp("Fusion")', src)
+    self.assertNotIn("if not resolve then return end", src)
+    self.assertIn("No se pudo conectar con DaVinci Resolve 20", src)
+    self.assertIn("if ok and moved then", src)
+    self.assertIn("no se pudo mover el cabezal", src)
+
+  def test_installer_optional_steps_are_non_fatal(self) -> None:
+    """venv and Homebrew failures warn instead of aborting under set -e."""
+    src = self._read_repo_text("install_imac.sh")
+    self.assertIn('if ! "${HOST_PYTHON}" -m venv "${VENV_DIR}"; then', src)
+    self.assertIn('if ! "${BREW_BIN}" install "${pkg}"; then', src)
+    # No bare (fatal) invocations of the optional steps remain.
+    self.assertIsNone(
+        re.search(r'^\s*"\$\{HOST_PYTHON\}" -m venv', src, re.MULTILINE)
+    )
+    self.assertIsNone(
+        re.search(r'^\s*"\$\{BREW_BIN\}" install', src, re.MULTILINE)
+    )
 
 
 if __name__ == "__main__":

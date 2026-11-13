@@ -75,10 +75,9 @@
     durationMs: 0,
     // Index into `cues` of the highlighted cue, or -1.
     activeCueIndex: -1,
-    // Job shown in the progress box (target of the cancel button).
+    // Job shown in the progress box (target of the cancel button), or
+    // null. Every polled job lives in jobPollers (see pollJob()).
     activeJobId: null,
-    // setInterval handle used by pollJob() (500 ms).
-    jobTimer: null,
     // setTimeout handle that hides the job box 2 s after success.
     jobHideTimer: null,
     // setTimeout handle of the debounced cue save (350 ms).
@@ -370,21 +369,20 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * Calls a JSON endpoint of the local server and returns the parsed body.
-   * Note: `...opts` is spread after `headers`, so passing opts.headers would
-   * replace the merged headers (no caller does this today).
+   * Reads a fetch() response as JSON without trusting the body to be JSON.
+   * Error pages from the server or a proxy can be plain text or HTML, and
+   * resp.json() would turn them into an opaque SyntaxError; reading the text
+   * first keeps the real message.
    * @async
-   * @param {string} url Same-origin path, e.g. "/api/status".
-   * @param {!RequestInit=} opts fetch() options (method, body...).
-   * @return {!Promise<!Object>} Parsed JSON body.
+   * @param {!Response} resp Response from fetch().
+   * @param {string=} fallbackMsg Message for an HTTP error with empty body.
+   * @return {!Promise<!Object>} Parsed JSON body of a 2xx response.
    * @throws {Error} With the server's `error` field, the first 200 chars of a
    *     non-JSON error body, or a generic message for empty/invalid JSON.
+   *     HTTP errors also carry `status` (number) and `data` (parsed body or
+   *     null) so callers can react to specific codes such as 409.
    */
-  async function apiJson(url, opts = {}) {
-    const resp = await fetch(url, {
-      headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
-      ...opts,
-    });
+  async function readJsonOrText(resp, fallbackMsg = "") {
     const raw = await resp.text();
     let data = null;
     if (raw) {
@@ -395,13 +393,63 @@
       }
     }
     if (!resp.ok) {
-      const msg = (data && data.error) || raw.trim().slice(0, 200) || `Error HTTP ${resp.status}`;
-      throw new Error(msg);
+      const msg =
+        (data && data.error) || raw.trim().slice(0, 200) || fallbackMsg ||
+        `Error HTTP ${resp.status}`;
+      const err = new Error(msg);
+      err.status = resp.status;
+      err.data = data;
+      throw err;
     }
     if (data === null) {
       throw new Error(`Respuesta no válida del servidor (HTTP ${resp.status})`);
     }
     return data;
+  }
+
+  /**
+   * Calls a JSON endpoint of the local server and returns the parsed body.
+   * `opts` is spread before `headers` so a caller passing opts.headers adds
+   * to the JSON Content-Type instead of replacing the merged headers.
+   * @async
+   * @param {string} url Same-origin path, e.g. "/api/status".
+   * @param {!RequestInit=} opts fetch() options (method, body, headers...).
+   * @return {!Promise<!Object>} Parsed JSON body.
+   * @throws {Error} See readJsonOrText().
+   */
+  async function apiJson(url, opts = {}) {
+    const resp = await fetch(url, {
+      ...opts,
+      headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+    });
+    return readJsonOrText(resp);
+  }
+
+  /**
+   * Starts a browser download of a URL through a temporary <a download>.
+   * @param {string} href Same-origin or blob: URL.
+   * @param {string} filename Suggested file name.
+   */
+  function triggerDownload(href, filename) {
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  /**
+   * Downloads in-memory content as a file via a temporary Blob URL. The URL
+   * is revoked 1 s later rather than synchronously because WebKit can cancel
+   * a download whose blob URL is revoked inside the click handler.
+   * @param {!Blob} blob File content.
+   * @param {string} filename Suggested file name.
+   */
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    triggerDownload(url, filename);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   /**
@@ -1657,14 +1705,10 @@
         karaoke_enabled: $("st-karaoke").checked,
         custom_style_presets: loadCustomPresets(),
       };
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "autosubs-preferencias.json";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(a.href);
+      downloadBlob(
+        new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+        "autosubs-preferencias.json"
+      );
     } catch (err) {
       showToast(`No se pudo exportar: ${err.message}`);
     }
@@ -1707,9 +1751,9 @@
 
   /**
    * Runs the Whisper speed benchmark with the dialog's model: starts a job,
-   * polls it every 700 ms on its own timer (the main job box is untouched),
-   * shows the realtime factor and offers to apply the model the server
-   * recommends for this machine.
+   * polls it every 700 ms through pollJob() without taking over the main job
+   * box (progress goes to #bench-result), shows the realtime factor and
+   * offers to apply the model the server recommends for this machine.
    * @async
    * @return {!Promise<void>}
    */
@@ -1725,37 +1769,42 @@
         method: "POST",
         body: JSON.stringify({ model_id: $("mp-model").value }),
       });
-      const timer = setInterval(async () => {
-        try {
-          const job = await apiJson(`/api/jobs/${res.job_id}`);
-          box.textContent = `${job.stage || "Procesando..."} (${job.progress || 0}%)`;
-          if (job.status === "done" || job.status === "error" || job.status === "cancelled") {
-            clearInterval(timer);
-            btn.disabled = false;
-            if (job.status !== "done") {
-              box.textContent = job.error || job.stage;
-              return;
-            }
-            const r = job.result;
-            const rec = state.env && state.env.models[r.recommended_model_id];
-            box.textContent =
-              `${r.realtime_factor}× tiempo real: ${r.audio_s} s de audio en ${r.elapsed_s} s ` +
-              `(${r.threads} hilos, ${r.force_no_gpu ? "solo CPU" : "GPU"}). ${r.note}` +
-              (r.recommended_model_id !== r.model_id && rec ? ` Recomendado: ${rec.label}.` : "");
-            if (r.recommended_model_id !== $("mp-model").value) {
-              const apply = $("btn-bench-apply");
-              apply.dataset.model = r.recommended_model_id;
-              apply.classList.remove("hidden");
-            }
+      pollJob(
+        res.job_id,
+        async (job) => {
+          btn.disabled = false;
+          const r = job.result;
+          const rec = state.env && state.env.models[r.recommended_model_id];
+          box.textContent =
+            `${r.realtime_factor}× tiempo real: ${r.audio_s} s de audio en ${r.elapsed_s} s ` +
+            `(${r.threads} hilos, ${r.force_no_gpu ? "solo CPU" : "GPU"}). ${r.note}` +
+            (r.recommended_model_id !== r.model_id && rec ? ` Recomendado: ${rec.label}.` : "");
+          if (r.recommended_model_id !== $("mp-model").value) {
+            const apply = $("btn-bench-apply");
+            apply.dataset.model = r.recommended_model_id;
+            apply.classList.remove("hidden");
+          }
+          try {
             const m = await apiJson("/api/settings");
             applyMachinePayload(m);
+          } catch (err) {
+            box.textContent = `Error consultando la prueba: ${err.message}`;
           }
-        } catch (err) {
-          clearInterval(timer);
-          btn.disabled = false;
-          box.textContent = `Error consultando la prueba: ${err.message}`;
+        },
+        {
+          showInBox: false,
+          intervalMs: 700,
+          onProgress: (job) => {
+            box.textContent = `${job.stage || "Procesando..."} (${job.progress || 0}%)`;
+          },
+          onError: (job, err) => {
+            btn.disabled = false;
+            box.textContent = err
+              ? `Error consultando la prueba: ${err.message}`
+              : job.error || job.stage;
+          },
         }
-      }, 700);
+      );
     } catch (err) {
       btn.disabled = false;
       box.textContent = err.message;
@@ -1890,8 +1939,10 @@
    * (auto-selected until the user picks one), Resolve badge, hardware controls
    * (first call only), machine settings and saved preferences, Resolve
    * timeline info, and the session when it changed server-side (new media_rev,
-   * or server cues while none are loaded). Runs at startup and from the
-   * refresh / inbox buttons and model download; there is no periodic polling.
+   * or server cues while none are loaded). Runs at startup, from the
+   * refresh / inbox buttons and model download, after a cue-save conflict,
+   * and when the window regains focus (refreshOnReturn, throttled); there is
+   * no periodic polling.
    * @async
    * @return {!Promise<void>} Errors are shown as a toast.
    */
@@ -1987,6 +2038,32 @@
     } catch (err) {
       showToast(`Error leyendo estado: ${err.message}`);
     }
+  }
+
+  // Minimum gap (ms) between focus-triggered refreshes: /api/status probes
+  // tools and processes server-side, and focus + visibilitychange usually
+  // fire together when the user comes back to the window.
+  const FOCUS_REFRESH_MIN_MS = 5000;
+  // Date.now() of the last focus-triggered refresh. Starts at load time
+  // because startup already calls refreshStatus() (and a focus event can
+  // fire right after load).
+  let lastFocusRefreshMs = Date.now();
+
+  /**
+   * Re-syncs the session when the user returns to the window, so changes
+   * made meanwhile from DaVinci Resolve scripts (new inbox audio, timeline
+   * info) show up without pressing «refresh». /api/status is the only read
+   * endpoint that returns the session. Skipped while the page is hidden,
+   * while any job is polled (its onSuccess will refresh what it needs), and
+   * when the last such refresh was under FOCUS_REFRESH_MIN_MS ago.
+   */
+  function refreshOnReturn() {
+    if (document.visibilityState === "hidden") return;
+    if (jobPollers.size > 0) return;
+    const now = Date.now();
+    if (now - lastFocusRefreshMs < FOCUS_REFRESH_MIN_MS) return;
+    lastFocusRefreshMs = now;
+    refreshStatus();
   }
 
   // ---------------------------------------------------------------------------
@@ -2224,6 +2301,11 @@
    * back only if no newer edit exists. With the same cue count, objects are
    * updated in place so open text areas keep their references and caret;
    * otherwise the array is replaced and the list re-rendered.
+   *
+   * The body carries the media_rev the cues were edited against. If the
+   * Resolve script replaced the inbox audio meanwhile, the server answers
+   * 409: the cues belong to the old audio, so the save is dropped (never
+   * retried) and the new session is loaded instead.
    * @async
    * @return {!Promise<void>} Errors are shown as a toast.
    */
@@ -2234,7 +2316,7 @@
     try {
       const data = await apiJson("/api/cues", {
         method: "PUT",
-        body: JSON.stringify({ cues: state.cues }),
+        body: JSON.stringify({ cues: state.cues, media_rev: state.mediaRev }),
       });
       // Ignore stale responses if there were edits while the request was in flight.
       if (data.session && seq === state.editSeq) {
@@ -2251,8 +2333,40 @@
         drawWaveform((activeMedia().currentTime || 0) * 1000);
       }
     } catch (err) {
+      if (err.status === 409) {
+        await handleMediaChangedConflict(err.data);
+        return;
+      }
       showToast(`No se pudo guardar: ${err.message}`);
     }
+  }
+
+  /**
+   * Recovers from a 409 on PUT /api/cues (media replaced server-side, e.g.
+   * by the Resolve export script). Drops any pending debounced save of the
+   * stale cues, loads the server session and tells the user why their view
+   * changed. A session without peaks (autosave responses omit them) is not
+   * applied directly, because applySession() would blank the waveform;
+   * refreshStatus() fetches the full one instead.
+   * @async
+   * @param {?Object} data Parsed 409 body; may hold the current `session`.
+   * @return {!Promise<void>}
+   */
+  async function handleMediaChangedConflict(data) {
+    clearTimeout(state.saveTimer);
+    state.saveTimer = null;
+    state.editSeq += 1;
+    const session = data && data.session;
+    if (session && Array.isArray(session.peaks)) {
+      applySession(session);
+    } else {
+      await refreshStatus();
+    }
+    showToast(
+      "El audio de la sesión cambió (p. ej., desde DaVinci Resolve). " +
+        "Se cargó la sesión nueva; los cambios sobre el audio anterior no se guardaron.",
+      6500
+    );
   }
 
   /**
@@ -2501,6 +2615,8 @@
     }
 
     if (typeof drawWaveform === "function") {
+      // Token values changed with the theme; re-read them on the next draw.
+      invalidateWaveColors();
       const mediaEl = activeMedia();
       drawWaveform(mediaEl ? (mediaEl.currentTime || 0) * 1000 : 0);
     }
@@ -2654,8 +2770,9 @@
   // (ruler, cue regions, peaks, cue lane) is drawn into waveCache.canvas only
   // when one of the recorded keys changes; otherwise drawWaveform() just blits
   // it and paints the playhead, which keeps per-timeupdate redraws cheap.
-  // Keys: device-px size, devicePixelRatio, theme, visible window, peaks and
-  // cues array identity, durationMs, active cue, dragged cue and cuesVersion.
+  // Keys: device-px size, devicePixelRatio, theme and its --waveform-* colors,
+  // visible window, peaks and cues array identity, durationMs, active cue,
+  // dragged cue and cuesVersion.
   // In-place cue edits keep the array identity, so they must call
   // invalidateWaveCache() to bump cuesVersion.
   const waveCache = {
@@ -2665,6 +2782,9 @@
     ph: 0,
     dpr: 0,
     isLight: null,
+    // Theme colors the layer was rendered with (see getWaveColors()).
+    bg: null,
+    peak: null,
     start: -1,
     end: -1,
     peaksRef: null,
@@ -2675,6 +2795,40 @@
     activeCueIndex: -2,
     dragIdx: -2,
   };
+
+  /**
+   * Memoized --waveform-bg / --waveform-peak values for one color scheme.
+   * Reading computed styles forces a style recalc, so it is done once per
+   * scheme instead of on every timeupdate redraw. Null means "re-read".
+   * @type {?{scheme: string, bg: string, peak: string}}
+   */
+  let waveColors = null;
+
+  /** Drops the memoized waveform colors; call after any theme change. */
+  function invalidateWaveColors() {
+    waveColors = null;
+  }
+
+  /**
+   * Returns the waveform background and peak colors from the CSS theme
+   * tokens (canvas cannot use var() directly). Falls back to the previous
+   * hard-coded values if a token is missing, so the look never breaks.
+   * @param {boolean} isLight Whether the light scheme is active (also the
+   *     cache key, so a scheme change re-reads the tokens by itself).
+   * @return {{bg: string, peak: string}} CSS color strings.
+   */
+  function getWaveColors(isLight) {
+    const scheme = isLight ? "light" : "dark";
+    if (!waveColors || waveColors.scheme !== scheme) {
+      const cs = getComputedStyle(document.documentElement);
+      waveColors = {
+        scheme,
+        bg: cs.getPropertyValue("--waveform-bg").trim() || (isLight ? "#f0f0f3" : "#141417"),
+        peak: cs.getPropertyValue("--waveform-peak").trim() || (isLight ? "#94949e" : "#555562"),
+      };
+    }
+    return waveColors;
+  }
 
   /**
    * Forces the next drawWaveform() to re-render the offscreen layer (needed
@@ -2688,18 +2842,20 @@
    * Draws the static waveform layer into the offscreen canvas: background,
    * time ruler (tick step chosen so labels are >= 70 px apart), translucent
    * cue regions, audio peaks (max of the peaks under each px column) and the
-   * cue lane with grab handles and clipped labels. Colors are hard-coded per
-   * theme because canvas cannot read CSS custom properties directly.
+   * cue lane with grab handles and clipped labels. Background and peak
+   * colors come from the --waveform-* theme tokens (see getWaveColors());
+   * the remaining colors are still hard-coded per theme.
    * @param {!CanvasRenderingContext2D} offCtx Offscreen context.
    * @param {number} w Width in CSS px.
    * @param {number} h Height in CSS px.
    * @param {number} dpr devicePixelRatio (drawing is scaled to device px).
    * @param {{start: number, span: number}} vr Visible window, ms.
    * @param {boolean} isLight Use light-theme colors.
+   * @param {{bg: string, peak: string}} colors Theme token colors.
    */
-  function renderWaveformBackground(offCtx, w, h, dpr, vr, isLight) {
+  function renderWaveformBackground(offCtx, w, h, dpr, vr, isLight, colors) {
     offCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    offCtx.fillStyle = isLight ? "#f0f0f3" : "#141417";
+    offCtx.fillStyle = colors.bg;
     offCtx.fillRect(0, 0, w, h);
 
     const laneTop = h - WAVE_LANE_H;
@@ -2735,7 +2891,7 @@
     if (peaks.length > 0 && state.durationMs > 0) {
       const n = peaks.length;
       const perMs = n / state.durationMs;
-      offCtx.fillStyle = isLight ? "#94949e" : "#555562";
+      offCtx.fillStyle = colors.peak;
       for (let x = 0; x < w; x++) {
         const i0 = Math.max(0, Math.floor(xToMs(x, w, vr) * perMs));
         const i1 = Math.min(n, Math.max(i0 + 1, Math.floor(xToMs(x + 1, w, vr) * perMs)));
@@ -2796,6 +2952,7 @@
     const ctx = canvas.getContext("2d");
 
     const isLight = getCurrentScheme() === "light";
+    const colors = getWaveColors(isLight);
     const vr = viewRange();
     const viewEnd = vr.start + vr.span;
     const peaks = state.peaks || [];
@@ -2807,6 +2964,8 @@
       waveCache.ph !== ph ||
       waveCache.dpr !== dpr ||
       waveCache.isLight !== isLight ||
+      waveCache.bg !== colors.bg ||
+      waveCache.peak !== colors.peak ||
       waveCache.start !== vr.start ||
       waveCache.end !== viewEnd ||
       waveCache.peaksRef !== peaks ||
@@ -2823,11 +2982,13 @@
         waveCache.canvas.height = ph;
       }
       const offCtx = waveCache.canvas.getContext("2d");
-      renderWaveformBackground(offCtx, w, h, dpr, vr, isLight);
+      renderWaveformBackground(offCtx, w, h, dpr, vr, isLight, colors);
       waveCache.pw = pw;
       waveCache.ph = ph;
       waveCache.dpr = dpr;
       waveCache.isLight = isLight;
+      waveCache.bg = colors.bg;
+      waveCache.peak = colors.peak;
       waveCache.start = vr.start;
       waveCache.end = viewEnd;
       waveCache.peaksRef = peaks;
@@ -3214,47 +3375,175 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * Polls a server job every 500 ms and drives the shared progress box. Only
-   * one job is tracked at a time: a new poll replaces the previous interval
-   * (the old job keeps running server-side, it is just no longer shown). On
-   * success the box hides after 2 s and `onSuccess` runs; errors and
-   * cancellations are shown as toasts.
+   * Jobs currently being polled, by job id, in start order. Each entry:
+   * {onSuccess, onError, onProgress, showInBox, intervalMs, timer, job}
+   * where `timer` is the pending setTimeout handle and `job` the last
+   * snapshot from GET /api/jobs/<id> (null before the first response).
+   * Several jobs (e.g. a model download and a transcription) can run at once;
+   * each keeps its own callbacks, and the progress box shows one of them.
+   * @type {!Map<string, !Object>}
+   */
+  const jobPollers = new Map();
+
+  /**
+   * Polls a server job until it finishes and runs its callbacks. Each job
+   * gets its own poller, so starting a second job never abandons the first.
+   * The next request is scheduled only after the previous response arrives
+   * (self-rescheduling setTimeout, not setInterval), so slow responses never
+   * overlap and `onSuccess` runs at most once. If the id is already polled
+   * (the server can return the running job for a duplicate start), no second
+   * poller is created; the job is just brought to the progress box.
+   *
+   * Jobs with showInBox (default) drive #job-box: it shows the most recently
+   * started active job, plus a count of the others, and the cancel button
+   * targets the job shown. On success the box hides 2 s after the last boxed
+   * job ends; errors and cancellations are toasts unless `onError` is given.
    * @param {string} jobId Id returned by the job-starting endpoint.
    * @param {function(!Object)} onSuccess Receives the finished job (payload in
-   *     job.result).
+   *     job.result). May be async; a rejection is shown as a toast.
+   * @param {{onError: (function(?Object, ?Error)|undefined),
+   *     onProgress: (function(!Object)|undefined),
+   *     showInBox: (boolean|undefined),
+   *     intervalMs: (number|undefined)}=} opts onError receives the failed
+   *     job, or null and the network/HTTP error; onProgress receives every
+   *     snapshot; showInBox false keeps the job out of #job-box; intervalMs
+   *     is the delay between polls (default 500).
    */
-  function pollJob(jobId, onSuccess) {
+  function pollJob(jobId, onSuccess, opts = {}) {
+    const existing = jobPollers.get(jobId);
+    if (existing) {
+      if (existing.showInBox) showJobInBox(jobId);
+      return;
+    }
+    const poller = {
+      onSuccess,
+      onError: opts.onError || null,
+      onProgress: opts.onProgress || null,
+      showInBox: opts.showInBox !== false,
+      intervalMs: opts.intervalMs || 500,
+      timer: null,
+      job: null,
+    };
+    jobPollers.set(jobId, poller);
+    if (poller.showInBox) showJobInBox(jobId);
+    poller.timer = setTimeout(() => pollJobOnce(jobId), poller.intervalMs);
+  }
+
+  /**
+   * One poll step of pollJob(): fetches the job, reports progress, then
+   * either finishes the poller (done / error / cancelled / request failure)
+   * or schedules the next step.
+   * @async
+   * @param {string} jobId Polled job id.
+   * @return {!Promise<void>}
+   */
+  async function pollJobOnce(jobId) {
+    const poller = jobPollers.get(jobId);
+    if (!poller) return;
+    let job;
+    try {
+      job = await apiJson(`/api/jobs/${jobId}`);
+    } catch (err) {
+      if (jobPollers.get(jobId) !== poller) return;
+      finishJobPoller(jobId, false);
+      if (poller.onError) poller.onError(null, err);
+      else showToast(`Error consultando tarea: ${err.message}`);
+      return;
+    }
+    // Guard against a poller removed while the request was in flight.
+    if (jobPollers.get(jobId) !== poller) return;
+    poller.job = job;
+    if (poller.onProgress) poller.onProgress(job);
+    if (state.activeJobId === jobId) renderJobBox();
+
+    if (job.status === "done") {
+      finishJobPoller(jobId, true);
+      Promise.resolve()
+        .then(() => poller.onSuccess(job))
+        .catch((err) => showToast(err.message, 5000));
+    } else if (job.status === "error" || job.status === "cancelled") {
+      finishJobPoller(jobId, false);
+      if (poller.onError) poller.onError(job, null);
+      else showToast(job.error || job.stage, 5000);
+    } else {
+      poller.timer = setTimeout(() => pollJobOnce(jobId), poller.intervalMs);
+    }
+  }
+
+  /**
+   * Removes a finished job's poller and updates the progress box: if the
+   * finished job was shown, the box switches to the newest remaining boxed
+   * job; with none left the cancel button hides and, after a success, the
+   * box hides 2 s later (after a failure it keeps the final stage visible).
+   * @param {string} jobId Finished job id.
+   * @param {boolean} succeeded Whether the job ended with status "done".
+   */
+  function finishJobPoller(jobId, succeeded) {
+    const poller = jobPollers.get(jobId);
+    if (poller) clearTimeout(poller.timer);
+    jobPollers.delete(jobId);
+    if (state.activeJobId !== jobId) {
+      // Another job is shown: only its "+N en curso" count changed.
+      if (state.activeJobId) renderJobBox();
+      return;
+    }
+    const next = newestBoxedJobId();
+    if (next) {
+      showJobInBox(next);
+      return;
+    }
+    state.activeJobId = null;
+    $("btn-cancel-job").classList.add("hidden");
+    if (succeeded) {
+      clearTimeout(state.jobHideTimer);
+      state.jobHideTimer = setTimeout(() => $("job-box").classList.add("hidden"), 2000);
+    }
+  }
+
+  /**
+   * Returns the most recently started job that is shown in #job-box.
+   * @return {?string} Job id, or null when no boxed job is running.
+   */
+  function newestBoxedJobId() {
+    let newest = null;
+    jobPollers.forEach((p, id) => {
+      if (p.showInBox) newest = id;
+    });
+    return newest;
+  }
+
+  /**
+   * Makes a job the one shown in #job-box (and the cancel target), cancelling
+   * a pending hide of the box.
+   * @param {string} jobId Polled job id.
+   */
+  function showJobInBox(jobId) {
     state.activeJobId = jobId;
     clearTimeout(state.jobHideTimer);
     state.jobHideTimer = null;
     $("job-box").classList.remove("hidden");
     $("btn-cancel-job").classList.remove("hidden");
+    renderJobBox();
+  }
 
-    clearInterval(state.jobTimer);
-    state.jobTimer = setInterval(async () => {
-      try {
-        const job = await apiJson(`/api/jobs/${jobId}`);
-        $("job-stage").textContent = job.stage || "Procesando...";
-        $("job-pct").textContent = `${job.progress || 0}%`;
-        $("job-bar").style.width = `${job.progress || 0}%`;
-
-        if (job.status === "done") {
-          clearInterval(state.jobTimer);
-          $("btn-cancel-job").classList.add("hidden");
-          clearTimeout(state.jobHideTimer);
-          state.jobHideTimer = setTimeout(() => $("job-box").classList.add("hidden"), 2000);
-          onSuccess(job);
-        } else if (job.status === "error" || job.status === "cancelled") {
-          clearInterval(state.jobTimer);
-          $("btn-cancel-job").classList.add("hidden");
-          showToast(job.error || job.stage, 5000);
-        }
-      } catch (err) {
-        clearInterval(state.jobTimer);
-        $("btn-cancel-job").classList.add("hidden");
-        showToast(`Error consultando tarea: ${err.message}`);
-      }
-    }, 500);
+  /**
+   * Paints the shown job's last snapshot into #job-box. Before the first
+   * response it shows a neutral 0% instead of the previous job's text. When
+   * other boxed jobs are running, their count is appended to the stage.
+   */
+  function renderJobBox() {
+    const poller = jobPollers.get(state.activeJobId);
+    if (!poller) return;
+    const job = poller.job || {};
+    const progress = job.progress || 0;
+    let others = -1;
+    jobPollers.forEach((p) => {
+      if (p.showInBox) others += 1;
+    });
+    const extra = others > 0 ? ` (+${others} ${others === 1 ? "tarea" : "tareas"} en curso)` : "";
+    $("job-stage").textContent = `${job.stage || "Procesando..."}${extra}`;
+    $("job-pct").textContent = `${progress}%`;
+    $("job-bar").style.width = `${progress}%`;
   }
 
   /**
@@ -3273,8 +3562,7 @@
         headers: { "X-Filename": encodeURIComponent(file.name) },
         body: file,
       });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || "Fallo al subir archivo");
+      const data = await readJsonOrText(resp, "Fallo al subir archivo");
       state.uploadSource = "uploaded";
       $("upload-status").textContent = `✓ Cargado: ${data.filename}`;
       $("media-name-badge").textContent = data.filename;
@@ -3420,6 +3708,18 @@
           body: JSON.stringify(payload),
         });
         pollJob(res.job_id, (job) => {
+          // The server marks the result stale when the media changed while
+          // Whisper ran (e.g. a new Resolve export); its cues belong to the
+          // old audio, so load the current session instead of this result.
+          if (job.result && job.result.stale === true) {
+            showToast(
+              "Se descartó la transcripción porque el audio cambió mientras se procesaba. " +
+                "Vuelve a transcribir.",
+              6500
+            );
+            refreshStatus();
+            return;
+          }
           if (job.result) applySession(job.result);
           showToast(job.stage || "Transcripción finalizada.");
         });
@@ -3587,8 +3887,7 @@
             },
             body: file,
           });
-          const data = await resp.json();
-          if (!resp.ok) throw new Error(data.error || `Error subiendo ${file.name}`);
+          const data = await readJsonOrText(resp, `Error subiendo ${file.name}`);
           lastRes = data;
           totalFaces += Number(data.installed_count || 0);
         }
@@ -3772,14 +4071,7 @@
               style: readStyleFromUI(),
             }),
           });
-          const blob = new Blob([data.content], { type: data.mime_type });
-          const a = document.createElement("a");
-          a.href = URL.createObjectURL(blob);
-          a.download = data.filename;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(a.href);
+          downloadBlob(new Blob([data.content], { type: data.mime_type }), data.filename);
         } catch (err) {
           showToast(err.message);
         }
@@ -3819,12 +4111,7 @@
           });
           pollJob(res.job_id, (job) => {
             if (job.result && job.result.download_url) {
-              const a = document.createElement("a");
-              a.href = job.result.download_url;
-              a.download = job.result.filename || "subtitulado.mp4";
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
+              triggerDownload(job.result.download_url, job.result.filename || "subtitulado.mp4");
             }
             showToast(job.stage || "MP4 subtitulado listo.");
           });
@@ -3841,6 +4128,10 @@
         $("btn-play").click();
       }
     });
+
+    // Pick up changes made from DaVinci Resolve scripts while away (throttled).
+    document.addEventListener("visibilitychange", refreshOnReturn);
+    window.addEventListener("focus", refreshOnReturn);
 
     // Theme sync across tabs and with the OS setting
     window.addEventListener("storage", (e) => {

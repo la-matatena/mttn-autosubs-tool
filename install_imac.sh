@@ -81,14 +81,21 @@ elif command -v brew >/dev/null 2>&1; then
   BREW_BIN="$(command -v brew)"
 fi
 
+BREW_FAILED=()
 if [[ -n "${BREW_BIN}" ]]; then
   echo "Homebrew detectado: ${BREW_BIN}"
   # ffmpeg-full (keg-only) adds libass, required to burn subtitles into MP4;
   # the slim ffmpeg formula only covers audio preparation for Whisper.
+  # A failed formula (e.g. ffmpeg-full not building on an older macOS) must
+  # not abort the install under `set -e`: the Resolve scripts, templates, and
+  # model below are still useful, and the formula can be retried by hand.
   for pkg in whisper-cpp ffmpeg ffmpeg-full; do
     if ! "${BREW_BIN}" list "${pkg}" >/dev/null 2>&1; then
       echo "Instalando ${pkg} mediante Homebrew..."
-      "${BREW_BIN}" install "${pkg}"
+      if ! "${BREW_BIN}" install "${pkg}"; then
+        BREW_FAILED+=("${pkg}")
+        echo "Aviso: no se pudo instalar ${pkg}. Reinténtalo más tarde con: brew install ${pkg}"
+      fi
     else
       echo "✓ ${pkg} ya está instalado."
     fi
@@ -163,13 +170,24 @@ for cand in /opt/homebrew/bin/python3 /usr/local/bin/python3 "$(command -v pytho
 done
 if [[ -n "${HOST_PYTHON}" ]]; then
   echo "Preparando ventana nativa (pywebview) en: ${VENV_DIR}"
+  # pywebview is optional, so a venv failure (e.g. python3 without the venv
+  # module) must not abort the install under `set -e`. A half-created venv is
+  # removed so the next run retries from scratch; the launcher then falls back
+  # to browser mode because the venv python is missing.
+  VENV_READY=true
   if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
-    "${HOST_PYTHON}" -m venv "${VENV_DIR}"
+    if ! "${HOST_PYTHON}" -m venv "${VENV_DIR}"; then
+      VENV_READY=false
+      rm -rf "${VENV_DIR}"
+      echo "Aviso: no se pudo crear el entorno virtual de Python; la app se abrirá en Chrome/Brave/Safari."
+    fi
   fi
-  if "${VENV_DIR}/bin/pip" install --quiet --disable-pip-version-check --upgrade pywebview; then
-    echo "✓ pywebview instalado: la app abrirá en su propia ventana."
-  else
-    echo "Aviso: no se pudo instalar pywebview; la app se abrirá en Chrome/Brave/Safari."
+  if [[ "${VENV_READY}" == "true" ]]; then
+    if "${VENV_DIR}/bin/pip" install --quiet --disable-pip-version-check --upgrade pywebview; then
+      echo "✓ pywebview instalado: la app abrirá en su propia ventana."
+    else
+      echo "Aviso: no se pudo instalar pywebview; la app se abrirá en Chrome/Brave/Safari."
+    fi
   fi
 else
   echo "Aviso: no se encontró python3; instala Python con: brew install python"
@@ -282,5 +300,10 @@ fi
 
 echo ""
 echo "Instalación completada."
+# Only the count is read while the array may be empty: expanding an empty
+# "${arr[*]}" trips `set -u` on macOS's bash 3.2.
+if [[ ${#BREW_FAILED[@]} -gt 0 ]]; then
+  echo "Aviso: faltan paquetes de Homebrew (${BREW_FAILED[*]}). Instálalos con: brew install ${BREW_FAILED[*]}"
+fi
 echo "1. Abre ~/Applications/MTTN AutoSubs Tool.app (Spotlight/Launchpad) o haz doble clic en 'Iniciar AutoSubs ES.command'"
 echo "2. Usa MTTN AutoSubs Tool de forma independiente o con DaVinci Resolve 20: Workspace > Scripts > 1 - MTTN AutoSubs - Exportar Audio"

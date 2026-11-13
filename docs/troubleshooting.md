@@ -25,7 +25,7 @@ When you extract `MTTN_AutoSubs_Tool.zip` downloaded from a browser, macOS assig
 
 ## Fix missing `whisper-cli` or `ffmpeg` binaries
 
-If the top status badges or `/api/transcribe` report missing `whisper-cli` or `ffmpeg` executables (or MP4 burn-in reports missing `libass`), confirm that Homebrew is on your `PATH` and reinstall the formulas.
+If the top status badges or `/api/transcribe` report missing `whisper-cli` or `ffmpeg` executables (or MP4 burn-in reports missing `libass`), confirm that Homebrew is on your `PATH` and reinstall the formulas. If a Homebrew formula or the Python virtual environment fails during `install_imac.sh`, the installer warns, continues (without the virtual environment, the app opens in your browser), and lists the missing packages at the end.
 
 1.  Install or verify the formulas with Homebrew:
 
@@ -49,6 +49,7 @@ If **Workspace** > **Scripts** > **1 - MTTN AutoSubs - Exportar Audio** complete
 2.  Confirm that `~/Library/Application Support/AutoSubsES/bridge/inbox/timeline_audio.wav` exists and is non-empty on disk.
 3.  If the WAV file exists on disk, return to MTTN AutoSubs Tool, open **1. Audio de origen**, and click **Leer buzón**.
 4.  If your timeline has no active project, unmuted audio tracks, or selectable render range, enable at least one audio track in Resolve and re-run **1 - MTTN AutoSubs - Exportar Audio**.
+5.  If the Console reports that the render exceeded the 180-second limit, Script 1 did not notify MTTN AutoSubs Tool. Check the **Deliver** page render queue, then re-run the script. Script 1 restores your previous Deliver render settings after each run; if it warns that it could not, review them on the **Deliver** page. A leftover `AutoSubsES_Restaurar_Render_Temporal` render preset is removed on the next run.
 
 ## Import SRT subtitles manually when `AppendToTimeline` is skipped
 
@@ -68,6 +69,8 @@ If **2 - MTTN AutoSubs - Insertar Subtitulos** falls back to FCPXML import with 
 3.  Drag your chosen preset (`AutoSubs_ES_Cine_Netflix`, `AutoSubs_ES_Amarillo_Clasico`, `AutoSubs_ES_Reels_Impacto`, `AutoSubs_ES_Caja_Editorial`, or `AutoSubs_ES_Anitype_Animado`) into the **Media Pool** (or into **Power Bins** so every future project inherits it).
 4.  Return to MTTN AutoSubs Tool, click **Enviar a DaVinci Resolve 20**, and run **Workspace** > **Scripts** > **2 - MTTN AutoSubs - Insertar Subtitulos** inside Resolve.
 
+Script 2 prefers a Media Pool clip whose name exactly matches the selected template, anywhere in the Media Pool. If the Console warns that some `Text+` clips or subtitles did not match by timeline frame, check the new video track: unmatched clips are left without text, and the matched clips are already styled.
+
 ## Fix missing Spanish accents or invisible custom fonts in Resolve 20
 
 Custom display fonts uploaded in AutoSubs ES (such as the five-font `Anitype Journal` pack) require both Fusion font enumeration and valid Spanish glyphs in `cmap` tables:
@@ -83,6 +86,12 @@ To avoid `GPU Memory Full` errors or sluggish 4K playback on a 2017 iMac with 2 
 -   Open **⚙ Esta Mac** (**Rendimiento de esta Mac**) from the top bar or **Ajustar…** in **2. Motor Whisper**, and keep the **Automático** or **Seguro** profile active (`--no-gpu` / `-ng` on Intel Polaris GPUs, `3` threads when Resolve is running) so transcription consumes zero GPU VRAM.
 -   Choose **Pista Subtítulos Nativa (0 MB VRAM)** during rough cuts on 4K timelines, and switch to single-node **Clips Text+ GPU-Light (1 nodo)** only when burned-in vector styling is needed.
 -   Use **Timeline Proxy Resolution** (`Half` or `Quarter`) inside DaVinci Resolve **Playback** settings while scrubbing 4K footage with `Text+` overlays.
+
+## Fix rejected uploads, discarded transcriptions, or edits that do not save
+
+-   **Upload rejected as too large**: Local uploads are limited to 8 GiB per file. Export a smaller file, or an audio-only `.wav` or `.m4a`, and upload it again.
+-   **Edits were not saved and the subtitles reloaded**: The active audio changed while you were editing (for example, Script 1 re-exported the timeline audio). The app rejects edits made against the old audio and reloads the session for the new audio.
+-   **Transcription finished but the subtitles did not change**: The media changed while the transcription was running, so the app discarded the result. Run **Transcribir en Español** again on the current media.
 
 ## Change the local server port when port 55120 is busy
 

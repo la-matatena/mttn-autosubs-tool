@@ -304,13 +304,22 @@ def format_ms_vtt(ms: int) -> str:
   return format_ms_srt(ms).replace(",", ".")
 
 
+def _ms_to_ass_cs(ms: int) -> int:
+  """Rounds ms to whole ASS centiseconds (negative values clamp to 0).
+
+  Shared by `format_ms_ass` and the karaoke `\\k` math so event times and
+  word boundaries use exactly the same rounding.
+  """
+  return max(0, int(round(ms / 10.0)))
+
+
 def format_ms_ass(ms: int) -> str:
   """Formats ms as ASS time "H:MM:SS.cc" (1-digit hours, centiseconds).
 
   ASS only has 10 ms resolution, so times are rounded to the nearest
   centisecond.
   """
-  total_cs = max(0, int(round(ms / 10.0)))
+  total_cs = _ms_to_ass_cs(ms)
   hours = total_cs // 360_000
   minutes = (total_cs % 360_000) // 6_000
   seconds = (total_cs % 6_000) // 100
@@ -337,6 +346,10 @@ def _fps_rational(fps: float) -> tuple[int, int, str]:
     rate is approximated as round(fps * 100) / 100.
   """
   rounded = round(fps, 3)
+  # 23.976 and 23.98 map to the same rate but are both needed: with the
+  # 0.005 tolerance, 23.976 covers (23.971, 23.981) and 23.98 extends the
+  # match to 23.985 (e.g. 23.984 -> 24000/1001). Dict order makes 23.976
+  # win where they overlap, which is harmless since the values are equal.
   table = {
       23.976: (24000, 1001, "1001/24000s"),
       23.98: (24000, 1001, "1001/24000s"),
@@ -598,7 +611,8 @@ def export_ass_karaoke(
     * Colours are "&HAABBGGRR" (BGR order, inverted alpha); see
       `hex_to_ass_bgr`.
     * Times are "H:MM:SS.cc" (centiseconds); `\\kf` durations are also in
-      centiseconds.
+      centiseconds and cumulative from the event start, so silences before
+      and between words are written as empty `{\\kNN}` spacers.
     * Line breaks inside dialogue are the literal `\\N`.
     * Karaoke needs exactly one `cue.words` entry per displayed token; if
       that mapping is broken the cue falls back to static fill text.
@@ -672,15 +686,25 @@ def export_ass_karaoke(
 
   events: list[str] = []
   for cue in cues:
+    event_end_ms = max(cue.start_ms + 40, cue.end_ms)
     start_str = format_ms_ass(cue.start_ms)
-    end_str = format_ms_ass(max(cue.start_ms + 40, cue.end_ms))
+    end_str = format_ms_ass(event_end_ms)
     speaker = _sanitize_ass_field(cue.speaker) or "Hablante 1"
     line_tokens = sum(len(ln.split()) for ln in cue.lines)
     if st.karaoke_enabled and cue.words and line_tokens == len(cue.words):
       # Map words onto line breaks using the cue's wrapped lines.
-      # Each token gets "{\kfNN}" with NN = word duration in centiseconds
-      # (min 2 cs). Gaps between words are not encoded, so the sweep runs
-      # word to word back-to-back.
+      # \k durations are cumulative: a syllable starts sweeping once the
+      # sum of all previous \k values has elapsed since the event start.
+      # So each word boundary is taken from absolute times, rounded to cs
+      # exactly like the event Start field (no cumulative rounding drift),
+      # and silences become empty "{\kNN}" spacers before the word's
+      # "{\kfNN}". That keeps every sweep at the word's real `start_ms`,
+      # like the UI preview. Boundaries are clamped to the event and kept
+      # monotonic, so out-of-range or overlapping words never yield
+      # negative values (a zero-length word fills instantly: \kf0).
+      event_start_cs = _ms_to_ass_cs(cue.start_ms)
+      event_len_cs = max(0, _ms_to_ass_cs(event_end_ms) - event_start_cs)
+      cursor_cs = 0  # Sum of all \k values emitted so far in this event.
       word_idx = 0
       line_parts: list[str] = []
       for line in cue.lines:
@@ -688,10 +712,16 @@ def export_ass_karaoke(
         k_tokens: list[str] = []
         for tok in tokens:
           w = cue.words[word_idx]
-          dur_cs = max(2, int(round((w.end_ms - w.start_ms) / 10.0)))
           word_idx += 1
+          s_cs = _ms_to_ass_cs(w.start_ms) - event_start_cs
+          s_cs = min(max(s_cs, cursor_cs), event_len_cs)
+          e_cs = _ms_to_ass_cs(w.end_ms) - event_start_cs
+          e_cs = min(max(e_cs, s_cs), event_len_cs)
+          gap_cs = s_cs - cursor_cs
+          spacer = f"{{\\k{gap_cs}}}" if gap_cs > 0 else ""
+          cursor_cs = e_cs
           txt = _escape_ass_text(_apply_style_text_transforms(tok, st))
-          k_tokens.append(f"{{\\kf{dur_cs}}}{txt}")
+          k_tokens.append(f"{spacer}{{\\kf{e_cs - s_cs}}}{txt}")
         line_parts.append(" ".join(k_tokens))
       dialogue = r"\N".join(line_parts)
     else:
@@ -774,8 +804,8 @@ def export_fcpxml(
   """
   st = style or StyleConfig()
   num, den, frame_dur = _fps_rational(fps)
-  # NOTE: local name shadows the module-level `effective_fps()` function.
-  effective_fps = num / float(den)
+  # Named `eff_fps` so it does not shadow the module-level `effective_fps()`.
+  eff_fps = num / float(den)
   font_px = max(24, int(round(st.size * height * 1.15)))
   r, g, b = hex_to_rgb_norm(st.fill_hex)
   # Resolve may ignore the alpha component on import (documented as partial).
@@ -786,7 +816,7 @@ def export_fcpxml(
   y_offset_px = int(round((st.pos_y - 0.5) * height))
 
   end_ms = max([cue.end_ms for cue in cues], default=1000)
-  total_frames = max(1, int(round((end_ms / 1000.0) * effective_fps)) + 24)
+  total_frames = max(1, int(round((end_ms / 1000.0) * eff_fps)) + 24)
   tc_start = _frames_to_fcpxml_time(start_frame, num, den)
   spine_dur = _frames_to_fcpxml_time(total_frames, num, den)
 
@@ -800,8 +830,8 @@ def export_fcpxml(
     hold = max(1, st.anim_hold_frames)
     est_slices = 0
     for cue in cues:
-      s_f = max(0, int(round((cue.start_ms / 1000.0) * effective_fps)))
-      e_f = max(s_f + 1, int(round((cue.end_ms / 1000.0) * effective_fps)))
+      s_f = max(0, int(round((cue.start_ms / 1000.0) * eff_fps)))
+      e_f = max(s_f + 1, int(round((cue.end_ms / 1000.0) * eff_fps)))
       est_slices += max(1, math.ceil((e_f - s_f) / hold))
     if est_slices <= _MAX_ANIMATED_FCPXML_SLICES:
       cycle_variants = st.font_variants[:5]
@@ -813,9 +843,9 @@ def export_fcpxml(
   style_counter = 0
   hold = max(1, st.anim_hold_frames)
   for idx, cue in enumerate(cues, start=1):
-    s_frame = max(0, int(round((cue.start_ms / 1000.0) * effective_fps)))
+    s_frame = max(0, int(round((cue.start_ms / 1000.0) * eff_fps)))
     e_frame = max(
-        s_frame + 1, int(round((cue.end_ms / 1000.0) * effective_fps))
+        s_frame + 1, int(round((cue.end_ms / 1000.0) * eff_fps))
     )
     text_body = xml_escape(_cue_text(cue, st))
     short_name = xml_escape(" ".join(cue.lines)[:32] or f"Sub {idx}")
