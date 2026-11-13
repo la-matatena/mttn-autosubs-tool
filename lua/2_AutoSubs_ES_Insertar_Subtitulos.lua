@@ -254,7 +254,7 @@ for i, item in ipairs(appended) do
           tp:SetInput("Alpha2", st.outline_a or 1.0)
         end
         tp:SetInput("Enabled3", st.shadow_enabled and 1 or 0)
-        if st.shadow_a ~= nil then tp:SetInput("Alpha3", st.shadow_a) end
+        if st.shadow_a ~= nil then tp:SetInput("Opacity3", st.shadow_a) end
         tp:SetInput("Enabled4", st.box_enabled and 1 or 0)
         if st.box_enabled then
           tp:SetInput("Red4", st.box_r or 0)
