@@ -1157,6 +1157,7 @@
       if (kind === "checked") el.checked = Boolean(prefs[key]);
       else el.value = String(prefs[key]);
     });
+    invalidateStyleCache();
   }
 
   function schedulePreferencesSave() {

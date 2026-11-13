@@ -1485,6 +1485,54 @@ EOF
     self.assertIn("ascii_fold = true", lua_txt)
     self.assertIn("Sabias", lua_txt)
 
+  def test_notify_export_skips_unchanged_and_upload_decodes_filename(
+      self,
+  ) -> None:
+    inbox_wav = self.state.bridge.inbox_dir / "timeline_export.wav"
+    inbox_wav.parent.mkdir(parents=True, exist_ok=True)
+    resolve_bridge.generate_demo_wav(str(inbox_wav), duration_ms=800)
+
+    call_count = 0
+    orig_extract = resolve_bridge.extract_waveform_peaks
+
+    def _counting_extract(path: str, num_buckets: int | None = None):
+      nonlocal call_count
+      call_count += 1
+      return orig_extract(path, num_buckets=num_buckets)
+
+    resolve_bridge.extract_waveform_peaks = _counting_extract
+    try:
+      st1, _, b1 = self._request(
+          "/api/resolve/notify-export", method="POST", body={}
+      )
+      self.assertEqual(st1, 200)
+      j1 = json.loads(b1.decode("utf-8"))
+      self.assertEqual(call_count, 1)
+      self.assertGreater(j1["session"]["duration_ms"], 0)
+      rev1 = j1["session"]["media_rev"]
+
+      st2, _, b2 = self._request(
+          "/api/resolve/notify-export", method="POST", body={}
+      )
+      self.assertEqual(st2, 200)
+      j2 = json.loads(b2.decode("utf-8"))
+      self.assertEqual(call_count, 1)
+      self.assertEqual(j2["session"]["media_rev"], rev1)
+    finally:
+      resolve_bridge.extract_waveform_peaks = orig_extract
+
+    sample_wav = self.tmp_path / "url_encoded.wav"
+    resolve_bridge.generate_demo_wav(str(sample_wav), duration_ms=500)
+    st_up, _, up_bytes = self._request(
+        "/api/upload",
+        method="POST",
+        body=sample_wav.read_bytes(),
+        headers={"X-Filename": "v%C3%ADdeo%20final%20%28es%29.wav"},
+    )
+    self.assertEqual(st_up, 200)
+    up_json = json.loads(up_bytes.decode("utf-8"))
+    self.assertEqual(up_json["filename"], "vídeo_final__es_.wav")
+
 
 class ResolveTemplatesAndBundleTest(unittest.TestCase):
 
@@ -1503,6 +1551,8 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
       self.assertIn("loadfile", lua_src)
     self.assertIn("#appended > 0", lua_insert)
     self.assertIn("GetItemListInTrack", lua_insert)
+    self.assertIn('SetInput("Opacity3"', lua_insert)
+    self.assertNotIn('SetInput("Alpha3"', lua_insert)
 
     templates = (
         "AutoSubs_ES_Amarillo_Clasico.setting",
@@ -1610,6 +1660,55 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
       res = resolve_bridge.extract_waveform_peaks(str(wav_path), num_buckets=buckets)
       self.assertEqual(len(res["peaks"]), buckets)
       self.assertGreater(res["peaks"][-1], 0.4)
+
+  def test_extract_waveform_peaks_24bit_pcm(self) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+      wav_path = Path(tmp) / "test_24bit.wav"
+      # 32 stereo frames (64 samples total):
+      # First 16 frames: ch0 = +4194304 (0.5), ch1 = 0
+      # Next 16 frames: ch0 = -8388608 (-1.0), ch1 = 0
+      raw = bytearray()
+      pos_half = int(4194304).to_bytes(3, "little", signed=True)
+      neg_full = int(-8388608).to_bytes(3, "little", signed=True)
+      zero_24 = b"\x00\x00\x00"
+      for _ in range(16):
+        raw.extend(pos_half)
+        raw.extend(zero_24)
+      for _ in range(16):
+        raw.extend(neg_full)
+        raw.extend(zero_24)
+      with wave.open(str(wav_path), "wb") as wf:
+        wf.setnchannels(2)
+        wf.setsampwidth(3)
+        wf.setframerate(16000)
+        wf.writeframes(bytes(raw))
+
+      res = resolve_bridge.extract_waveform_peaks(str(wav_path), num_buckets=16)
+      self.assertEqual(len(res["peaks"]), 16)
+      self.assertEqual(res["duration_ms"], 2)
+      self.assertEqual(res["peaks"][0], 0.5)
+      self.assertEqual(res["peaks"][-1], 1.0)
+
+  def test_resolve_bridge_uses_opacity3_for_shadow(self) -> None:
+    recorded: dict[str, object] = {}
+
+    class _FakeTextPlus:
+
+      def SetInput(self, key: str, val: object) -> None:
+        recorded[key] = val
+
+    class _FakeComp:
+
+      def FindTool(self, name: str) -> object | None:
+        return _FakeTextPlus() if name == "TextPlus1" else None
+
+    with tempfile.TemporaryDirectory() as tmp:
+      bridge = resolve_bridge.ResolveBridge(app_data_dir=Path(tmp))
+      style = exporters.StyleConfig(shadow_enabled=True, shadow_alpha=0.65)
+      ok = bridge._apply_style_to_fusion_comp(_FakeComp(), "Hola", style)
+      self.assertTrue(ok)
+      self.assertEqual(recorded.get("Opacity3"), 0.65)
+      self.assertNotIn("Alpha3", recorded)
 
 
 if __name__ == "__main__":

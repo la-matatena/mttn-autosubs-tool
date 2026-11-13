@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 from typing import Any
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -513,14 +514,49 @@ class AppState:
           return
 
         existing = part.stat().st_size if part.is_file() else 0
-        req = urllib.request.Request(
-            spec.url,
-            headers={"User-Agent": "AutoSubsES/1.0 (macOS x86_64)"},
-        )
+        headers = {"User-Agent": "AutoSubsES/1.0 (macOS x86_64)"}
+        req = urllib.request.Request(spec.url, headers=headers)
         if existing > 0:
           req.add_header("Range", f"bytes={existing}-")
 
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        try:
+          resp = urllib.request.urlopen(req, timeout=30)
+        except urllib.error.HTTPError as exc:
+          if exc.code == 416 and existing > 0:
+            total_size = 0
+            cr = exc.headers.get("Content-Range", "") if exc.headers else ""
+            exc.close()
+            m_cr = re.search(r"/(\d+)\s*$", cr)
+            if m_cr:
+              total_size = int(m_cr.group(1))
+            else:
+              head_req = urllib.request.Request(
+                  spec.url, headers=headers, method="HEAD"
+              )
+              try:
+                with urllib.request.urlopen(head_req, timeout=15) as hresp:
+                  total_size = int(hresp.headers.get("Content-Length") or 0)
+              except Exception:  # pylint: disable=broad-except
+                total_size = 0
+            if total_size > 0 and existing >= total_size:
+              part.replace(dest)
+              self.update_job(
+                  job_id,
+                  status="done",
+                  progress=100,
+                  stage=f"Modelo {spec.filename} instalado correctamente.",
+                  finished_at=time.time(),
+                  result={"model_id": model_id, "path": str(dest)},
+              )
+              return
+            part.unlink(missing_ok=True)
+            existing = 0
+            req = urllib.request.Request(spec.url, headers=headers)
+            resp = urllib.request.urlopen(req, timeout=30)
+          else:
+            raise
+
+        with resp:
           status_code = getattr(resp, "status", 200)
           mode = "ab" if (existing > 0 and status_code == 206) else "wb"
           if mode == "wb":
@@ -1197,7 +1233,9 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     path = parsed.path
 
     if path == "/api/upload":
-      raw_name = self.headers.get("X-Filename", "media.wav")
+      raw_name = urllib.parse.unquote(
+          self.headers.get("X-Filename", "media.wav")
+      )
       safe_name = _safe_filename(raw_name)
       try:
         length = int(self.headers.get("Content-Length") or 0)
@@ -1438,17 +1476,18 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       if inbox_wav and inbox_wav.is_file():
         st = inbox_wav.stat()
         sig = (str(inbox_wav), st.st_mtime_ns, st.st_size)
-        wave_info = resolve_bridge.extract_waveform_peaks(str(inbox_wav))
         with self.state.lock:
           changed = sig != self.state._last_inbox_sig
-          self.state._last_inbox_sig = sig
-          self.state.media_path = inbox_wav
-          self.state.wav_path = inbox_wav
-          self.state.media_name = inbox_wav.name
-          self.state.duration_ms = int(wave_info["duration_ms"])
-          self.state.peaks = list(wave_info["peaks"])
-          self.state.demo_mode = False
-          if changed:
+        if changed:
+          wave_info = resolve_bridge.extract_waveform_peaks(str(inbox_wav))
+          with self.state.lock:
+            self.state._last_inbox_sig = sig
+            self.state.media_path = inbox_wav
+            self.state.wav_path = inbox_wav
+            self.state.media_name = inbox_wav.name
+            self.state.duration_ms = int(wave_info["duration_ms"])
+            self.state.peaks = list(wave_info["peaks"])
+            self.state.demo_mode = False
             self.state.exported_video_path = None
             self.state.words = []
             self.state.cues = []

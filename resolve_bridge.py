@@ -142,6 +142,24 @@ def extract_waveform_peaks(
           samples = samples[::channels]
         max_amp = max(abs(min(samples)), abs(max(samples))) if samples else 0
         peaks.append(round(min(1.0, max_amp / 32768.0), 4))
+      elif sampwidth == 3 and array("i").itemsize == 4:
+        frame_stride = channels * 3
+        usable = (len(raw) // frame_stride) * frame_stride
+        if usable <= 0:
+          peaks.append(0.0)
+        else:
+          n_samples = usable // frame_stride
+          buf = bytearray(n_samples * 4)
+          mv = memoryview(raw)[:usable]
+          buf[1::4] = mv[0::frame_stride]
+          buf[2::4] = mv[1::frame_stride]
+          buf[3::4] = mv[2::frame_stride]
+          samples = array("i")
+          samples.frombytes(buf)
+          if sys.byteorder != "little":
+            samples.byteswap()
+          max_amp = max(abs(min(samples)), abs(max(samples))) if samples else 0
+          peaks.append(round(min(1.0, (max_amp >> 8) / 8388608.0), 4))
       elif sampwidth == 3:
         frame_stride = channels * 3
         max_amp = 0
@@ -705,7 +723,7 @@ class ResolveBridge:
     tp1.SetInput("Blue2", olb)
     tp1.SetInput("Alpha2", style.outline_alpha)
     tp1.SetInput("Enabled3", 1 if style.shadow_enabled else 0)
-    tp1.SetInput("Alpha3", style.shadow_alpha)
+    tp1.SetInput("Opacity3", style.shadow_alpha)
     tp1.SetInput("Enabled4", 1 if style.box_enabled else 0)
     tp1.SetInput("Red4", br)
     tp1.SetInput("Green4", bg)
