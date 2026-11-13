@@ -1,0 +1,11 @@
+# ShellCheck config for install_imac.sh and the Finder .command launcher.
+# Dev-only; run through tools/lint.sh (CI runs the same script).
+
+# Google Shell Style asks for the optional checks too (for example
+# "${var}" braces and quoting), so enable every optional check...
+enable=all
+
+# ...except SC2312 (return value masked by $(...) inside another command).
+# The only hits are `$(uname -s)` inside echo and [[ ]]: uname cannot fail in
+# a way worth handling, and hoisting it into variables would be churn.
+disable=SC2312

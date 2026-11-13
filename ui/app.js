@@ -361,7 +361,9 @@
     }
     if (!resp.ok) {
       const msg =
-        (data && data.error) || raw.trim().slice(0, 200) || fallbackMsg ||
+        (data && data.error) ||
+        raw.trim().slice(0, 200) ||
+        fallbackMsg ||
         `Error HTTP ${resp.status}`;
       const err = new Error(msg);
       err.status = resp.status;
@@ -462,7 +464,9 @@
 
     const targetTab = state.appMode === "standalone" ? "file" : "resolve";
     state.uploadSource = targetTab === "resolve" ? "inbox" : "uploaded";
-    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === targetTab));
+    document
+      .querySelectorAll(".tab-btn")
+      .forEach((b) => b.classList.toggle("active", b.dataset.tab === targetTab));
     $("tab-resolve").classList.toggle("active", targetTab === "resolve");
     $("tab-file").classList.toggle("active", targetTab === "file");
 
@@ -479,7 +483,9 @@
     const rTitle = $("resolve-push-title");
     if (rTitle) {
       rTitle.textContent =
-        state.appMode === "standalone" ? "5. DaVinci Resolve 20 (Opcional)" : "5. DaVinci Resolve 20";
+        state.appMode === "standalone"
+          ? "5. DaVinci Resolve 20 (Opcional)"
+          : "5. DaVinci Resolve 20";
     }
     const cueList = $("cue-list");
     if (cueList) {
@@ -522,7 +528,10 @@
     $("st-size-val").textContent = `${(Number($("st-size").value) * 100).toFixed(1)} %`;
     $("st-posy-val").textContent = `${Math.round(Number($("st-posy").value) * 100)} %`;
     $("st-outline-w-val").textContent = Number($("st-outline-w").value).toFixed(2);
-    $("st-size").setAttribute("aria-valuetext", `${$("st-size-val").textContent} de la altura del vídeo`);
+    $("st-size").setAttribute(
+      "aria-valuetext",
+      `${$("st-size-val").textContent} de la altura del vídeo`
+    );
     $("st-posy").setAttribute("aria-valuetext", `${$("st-posy-val").textContent} desde abajo`);
     ALPHA_ROWS.forEach(([alphaId, colorId]) => {
       const out = $(`${alphaId}-val`);
@@ -634,11 +643,18 @@
    * @param {string} name Display name; trimmed and capped at 28 characters.
    */
   function saveCurrentAsPreset(name) {
-    const clean = String(name || "").trim().slice(0, 28);
+    const clean = String(name || "")
+      .trim()
+      .slice(0, 28);
     if (!clean) return;
     const st = readStyleFromUI();
-    const id = clean.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || String(Date.now());
+    const id =
+      clean
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || String(Date.now());
     const map = loadCustomPresets();
     map[id] = {
       preset_name: clean,
@@ -723,9 +739,23 @@
 
   // Fields that define a preset; used to detect whether the user modified it.
   const PRESET_KEYS = [
-    "size", "pos_y", "fill_hex", "highlight_hex", "outline_hex", "outline_thickness",
-    "shadow_enabled", "box_enabled", "box_hex", "fill_alpha", "highlight_alpha",
-    "outline_alpha", "shadow_alpha", "box_alpha", "font_style", "animation_mode", "ascii_fold",
+    "size",
+    "pos_y",
+    "fill_hex",
+    "highlight_hex",
+    "outline_hex",
+    "outline_thickness",
+    "shadow_enabled",
+    "box_enabled",
+    "box_hex",
+    "fill_alpha",
+    "highlight_alpha",
+    "outline_alpha",
+    "shadow_alpha",
+    "box_alpha",
+    "font_style",
+    "animation_mode",
+    "ascii_fold",
   ];
 
   /**
@@ -736,10 +766,16 @@
    */
   function styleSignature() {
     const st = readStyleFromUI();
-    return JSON.stringify(PRESET_KEYS.map((k) => {
-      const v = st[k];
-      return typeof v === "number" ? Number(v.toFixed(3)) : typeof v === "string" ? v.toLowerCase() : v;
-    }).concat([$("st-font").value]));
+    return JSON.stringify(
+      PRESET_KEYS.map((k) => {
+        const v = st[k];
+        return typeof v === "number"
+          ? Number(v.toFixed(3))
+          : typeof v === "string"
+            ? v.toLowerCase()
+            : v;
+      }).concat([$("st-font").value])
+    );
   }
 
   /**
@@ -749,7 +785,9 @@
   function updatePresetStatus() {
     const key = state.activePreset;
     const preset = getPreset(key);
-    const modified = Boolean(preset && state.presetSignature && styleSignature() !== state.presetSignature);
+    const modified = Boolean(
+      preset && state.presetSignature && styleSignature() !== state.presetSignature
+    );
     $("preset-status-text").textContent = preset
       ? `Preset: ${preset.preset_name}${modified ? " · modificado" : ""}`
       : "Estilo personalizado";
@@ -760,7 +798,6 @@
       btn.setAttribute("aria-pressed", String(btn.dataset.style === key));
     });
   }
-
 
   /**
    * Warns when the selected Resolve push mode cannot carry the style: native
@@ -775,8 +812,8 @@
       mode === "subtitle_srt"
         ? "La pista nativa de subtítulos de Resolve no admite colores ni opacidad. Estos ajustes se aplican a Text+, FCPXML, .ASS y al MP4 subtitulado."
         : mode === "fcpxml"
-        ? "En FCPXML solo viaja la opacidad del texto, y Resolve podría ignorarla al importar. Para transparencias completas usa Text+, .ASS o MP4."
-        : "";
+          ? "En FCPXML solo viaja la opacidad del texto, y Resolve podría ignorarla al importar. Para transparencias completas usa Text+, .ASS o MP4."
+          : "";
     el.textContent = msg;
     el.classList.toggle("hidden", !msg);
   }
@@ -966,8 +1003,7 @@
     const pack = state.selectedPack;
     if (active && (mode === "font_cycle" || mode === "font_cycle_boil")) {
       if (pack && pack.is_animated_pack) {
-        hintEl.textContent =
-          `Usando ${pack.variant_count} variantes en flipbook. Resolve usará TextPlus1..5 y 1 sola rama activa por frame.`;
+        hintEl.textContent = `Usando ${pack.variant_count} variantes en flipbook. Resolve usará TextPlus1..5 y 1 sola rama activa por frame.`;
         hintEl.classList.remove("hidden");
       } else {
         hintEl.textContent =
@@ -1016,8 +1052,7 @@
     const warnEl = $("font-glyph-warning");
     if (pack && pack.supports_spanish === false && (pack.missing_spanish_chars || []).length > 0) {
       const missingStr = pack.missing_spanish_chars.join(" ");
-      warnEl.textContent =
-        `Aviso en "${pack.family}": faltan glifos en español (${missingStr}). Activa «Adaptar glifos ASCII» para evitar huecos en Resolve.`;
+      warnEl.textContent = `Aviso en "${pack.family}": faltan glifos en español (${missingStr}). Activa «Adaptar glifos ASCII» para evitar huecos en Resolve.`;
       warnEl.classList.remove("hidden");
       if (autoConfigure) {
         $("st-ascii-fold").checked = true;
@@ -1036,7 +1071,10 @@
         $("template-field").classList.remove("hidden");
         $("push-template").value = "AutoSubs_ES_Anitype_Animado";
       } else {
-        if ($("st-anim-mode").value === "font_cycle_boil" || $("st-anim-mode").value === "font_cycle") {
+        if (
+          $("st-anim-mode").value === "font_cycle_boil" ||
+          $("st-anim-mode").value === "font_cycle"
+        ) {
           $("st-anim-mode").value = "none";
         }
       }
@@ -1122,7 +1160,8 @@
       sel.value = prevVal;
     } else if (preferredPackId) {
       const match = packs.find(
-        (p) => p.pack_id === preferredPackId || p.family.toLowerCase() === preferredPackId.toLowerCase()
+        (p) =>
+          p.pack_id === preferredPackId || p.family.toLowerCase() === preferredPackId.toLowerCase()
       );
       if (match) sel.value = match.pack_id;
     }
@@ -1156,8 +1195,10 @@
       }
       $("push-mode").value = "textplus";
       $("template-field").classList.remove("hidden");
-    } else if (state.packByOptionValue[p.font] ||
-               Array.from($("st-font").options).some((o) => o.value === p.font)) {
+    } else if (
+      state.packByOptionValue[p.font] ||
+      Array.from($("st-font").options).some((o) => o.value === p.font)
+    ) {
       $("st-font").value = p.font;
     } else if (isCustom) {
       showToast(`La fuente «${p.font}» de este estilo no está disponible; se mantiene la actual.`);
@@ -1180,7 +1221,8 @@
     $("st-anim-mode").value = p.animation_mode || "none";
     $("st-anim-hold").value = p.anim_hold_frames || 3;
     $("st-anim-jitter").value = p.anim_jitter ?? 0.15;
-    $("st-ascii-fold").checked = key === "anitype" ? !selectedSupportsSpanish : Boolean(p.ascii_fold);
+    $("st-ascii-fold").checked =
+      key === "anitype" ? !selectedSupportsSpanish : Boolean(p.ascii_fold);
     if (p.template_name) $("push-template").value = p.template_name;
 
     syncFontSelection(false, p.font_style);
@@ -1335,7 +1377,14 @@
     for (let n = maxT; n >= 1; n--) {
       const opt = document.createElement("option");
       opt.value = String(n);
-      const tag = n === maxT ? " (máximo)" : n === resolveT ? " (con Resolve)" : n === 2 ? " (silencioso)" : "";
+      const tag =
+        n === maxT
+          ? " (máximo)"
+          : n === resolveT
+            ? " (con Resolve)"
+            : n === 2
+              ? " (silencioso)"
+              : "";
       opt.textContent = `${n} hilo${n === 1 ? "" : "s"}${tag}`;
       sel.appendChild(opt);
     }
@@ -1379,7 +1428,12 @@
   // server's settings.json, plus portable user preferences.
   // ---------------------------------------------------------------------------
   // Display labels of performance.mode values.
-  const PERF_MODE_LABELS = { auto: "Automático", safe: "Seguro", max: "Máximo", custom: "Personalizado" };
+  const PERF_MODE_LABELS = {
+    auto: "Automático",
+    safe: "Seguro",
+    max: "Máximo",
+    custom: "Personalizado",
+  };
   // Portable preferences mirrored to settings.json:
   // [preferences key, element id, how to read/write it: "value"|"number"|"checked"].
   const PREF_FIELDS = [
@@ -1429,7 +1483,10 @@
       ["Equipo", hw.name],
       ["Procesador", hw.cpu_description],
       ["Memoria", hw.ram_gb ? `${hw.ram_gb} GB RAM` : "—"],
-      ["GPU", `${hw.gpu_name || "—"}${vram}${hw.force_no_gpu ? " (Whisper usa solo CPU)" : " (Whisper usa Metal)"}`],
+      [
+        "GPU",
+        `${hw.gpu_name || "—"}${vram}${hw.force_no_gpu ? " (Whisper usa solo CPU)" : " (Whisper usa Metal)"}`,
+      ],
     ].forEach(([k, v]) => {
       const dt = document.createElement("dt");
       dt.textContent = k;
@@ -1556,7 +1613,8 @@
     PREF_FIELDS.forEach(([key, id, kind]) => {
       const el = $(id);
       if (!el) return;
-      prefs[key] = kind === "checked" ? el.checked : kind === "number" ? Number(el.value) : el.value;
+      prefs[key] =
+        kind === "checked" ? el.checked : kind === "number" ? Number(el.value) : el.value;
     });
     return prefs;
   }
@@ -1738,13 +1796,19 @@
       // True when the pointer is outside the dialog box (i.e. on the backdrop).
       const outside = (e) => {
         const r = dialog.getBoundingClientRect();
-        return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+        return (
+          e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom
+        );
       };
       // Both press and release must be outside, so a text selection that ends on
       // the backdrop does not close the dialog.
       let pressedOutside = false;
-      dialog.addEventListener("pointerdown", (e) => { pressedOutside = outside(e); });
-      dialog.addEventListener("pointerup", (e) => { if (pressedOutside && outside(e)) dialog.close(); });
+      dialog.addEventListener("pointerdown", (e) => {
+        pressedOutside = outside(e);
+      });
+      dialog.addEventListener("pointerup", (e) => {
+        if (pressedOutside && outside(e)) dialog.close();
+      });
     }
 
     document.querySelectorAll('input[name="perf-mode"]').forEach((radio) => {
@@ -1757,10 +1821,14 @@
       });
     });
     ["mp-threads", "mp-beam", "mp-no-gpu"].forEach((id) =>
-      $(id).addEventListener("change", () => saveCustomPerformance($("mp-threads"), $("mp-beam"), $("mp-no-gpu")))
+      $(id).addEventListener("change", () =>
+        saveCustomPerformance($("mp-threads"), $("mp-beam"), $("mp-no-gpu"))
+      )
     );
     ["threads-select", "beam-mode", "opt-no-gpu"].forEach((id) =>
-      $(id).addEventListener("change", () => saveCustomPerformance($("threads-select"), $("beam-mode"), $("opt-no-gpu")))
+      $(id).addEventListener("change", () =>
+        saveCustomPerformance($("threads-select"), $("beam-mode"), $("opt-no-gpu"))
+      )
     );
     $("mp-model").addEventListener("change", () => {
       $("model-select").value = $("mp-model").value;
@@ -1795,7 +1863,9 @@
     });
     $("btn-prefs-export").addEventListener("click", exportPreferences);
     $("btn-prefs-import").addEventListener("click", () => $("prefs-import-input").click());
-    $("prefs-import-input").addEventListener("change", (ev) => importPreferences(ev.target.files[0]));
+    $("prefs-import-input").addEventListener("change", (ev) =>
+      importPreferences(ev.target.files[0])
+    );
 
     PREF_FIELDS.forEach(([, id]) => {
       const el = $(id);
@@ -1882,11 +1952,14 @@
         bridgeMode === "studio_direct"
           ? "Resolve Studio"
           : bridgeMode === "lua_bridge_ready"
-          ? "Resolve listo"
-          : "Resolve sin scripts";
+            ? "Resolve listo"
+            : "Resolve sin scripts";
       resolveBadge.title = data.bridge.mode_label;
       resolveBadge.className =
-        "pill " + (bridgeMode === "studio_direct" || bridgeMode === "lua_bridge_ready" ? "pill-neutral" : "pill-warn");
+        "pill " +
+        (bridgeMode === "studio_direct" || bridgeMode === "lua_bridge_ready"
+          ? "pill-neutral"
+          : "pill-warn");
 
       const hw = data.environment.hardware_profile || {};
       const firstLoad = !state.hwProfile;
@@ -2011,7 +2084,6 @@
       card.className = "cue-item" + (idx === state.activeCueIndex ? " active" : "");
       card.dataset.index = String(idx);
 
-
       const head = document.createElement("div");
       head.className = "cue-head";
 
@@ -2069,7 +2141,9 @@
       cpsBadge.textContent = `${Number(cue.cps || 0).toFixed(1)} CPS`;
       actions.appendChild(cpsBadge);
 
-      const btnPlayCue = makeMiniBtn("▶", "Escuchar este subtítulo", () => seekAndPlay(cue.start_ms, cue.end_ms));
+      const btnPlayCue = makeMiniBtn("▶", "Escuchar este subtítulo", () =>
+        seekAndPlay(cue.start_ms, cue.end_ms)
+      );
       const btnSplit = makeMiniBtn("÷", "Dividir en dos subtítulos", () => splitCue(idx));
       const btnMerge = makeMiniBtn("+Unir", "Unir con el siguiente", () => mergeCue(idx));
       const btnDel = makeMiniBtn("×", "Eliminar subtítulo", () => deleteCue(idx));
@@ -2077,7 +2151,9 @@
       // Tools dimmed until the row is hovered or focused (still in the tab order).
       const tools = document.createElement("span");
       tools.className = "cue-tools";
-      const btnJump = makeMiniBtn("Resolve", "Mover cabezal en DaVinci Resolve", () => jumpResolve(cue.start_ms));
+      const btnJump = makeMiniBtn("Resolve", "Mover cabezal en DaVinci Resolve", () =>
+        jumpResolve(cue.start_ms)
+      );
       btnJump.classList.add("cue-btn-resolve");
       tools.append(btnPlayCue, btnJump, btnSplit, btnMerge, btnDel);
       actions.appendChild(tools);
@@ -2095,7 +2171,10 @@
       });
       textarea.addEventListener("input", () => {
         cue.text = textarea.value;
-        cue.lines = textarea.value.split("\n").map((s) => s.trim()).filter(Boolean);
+        cue.lines = textarea.value
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean);
         syncCueWordsAfterTextEdit(cue);
         invalidateWaveCache();
         renderPreviewAtMs(cue.start_ms + 10);
@@ -2338,7 +2417,11 @@
     // Weight is guessed from the style name (Extra* 800, *Bold 700, else 500).
     // 1.15 is an empirical size factor; 12 px keeps tiny stages legible.
     cap.style.fontFamily = resolvedFamily;
-    cap.style.fontWeight = st.font_style.toLowerCase().includes("extra") ? "800" : st.font_style.toLowerCase().includes("bold") ? "700" : "500";
+    cap.style.fontWeight = st.font_style.toLowerCase().includes("extra")
+      ? "800"
+      : st.font_style.toLowerCase().includes("bold")
+        ? "700"
+        : "500";
     const stageH = getCachedStageH();
     cap.style.fontSize = `${Math.max(12, Math.round(st.size * stageH * 1.15))}px`;
     cap.style.bottom = `${Math.round(st.pos_y * 100)}%`;
@@ -2365,7 +2448,8 @@
     // the letters are hollow, as in .ASS and Text+. The width is doubled
     // because the fill covers the inner half of the stroke.
     const ol = Math.max(0, Math.round(st.outline_thickness * 18));
-    cap.style.webkitTextStroke = ol > 0 ? `${ol * 2}px ${hexToRgba(st.outline_hex, st.outline_alpha)}` : "0";
+    cap.style.webkitTextStroke =
+      ol > 0 ? `${ol * 2}px ${hexToRgba(st.outline_hex, st.outline_alpha)}` : "0";
     cap.style.paintOrder = "stroke fill";
     cap.style.textShadow = st.shadow_enabled
       ? `0 3px 8px ${hexToRgba("#000000", st.shadow_alpha)}`
@@ -2384,24 +2468,30 @@
 
     if (
       st.karaoke_enabled &&
-      active.words && active.words.length > 0 &&
-      ms >= active.start_ms && ms <= active.end_ms
+      active.words &&
+      active.words.length > 0 &&
+      ms >= active.start_ms &&
+      ms <= active.end_ms
     ) {
       cap.innerHTML = "";
       let wIdx = 0;
       (active.lines || [active.text]).forEach((line, lIdx) => {
         if (lIdx > 0) cap.appendChild(document.createElement("br"));
-        line.trim().split(/\s+/).filter(Boolean).forEach((tok, tIdx) => {
-          if (tIdx > 0) cap.appendChild(document.createTextNode(" "));
-          const span = document.createElement("span");
-          const wObj = active.words[wIdx];
-          wIdx += 1;
-          span.textContent = transformToken(tok);
-          if (wObj && ms >= wObj.start_ms && ms <= wObj.end_ms) {
-            span.style.color = hexToRgba(st.highlight_hex, st.highlight_alpha);
-          }
-          cap.appendChild(span);
-        });
+        line
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean)
+          .forEach((tok, tIdx) => {
+            if (tIdx > 0) cap.appendChild(document.createTextNode(" "));
+            const span = document.createElement("span");
+            const wObj = active.words[wIdx];
+            wIdx += 1;
+            span.textContent = transformToken(tok);
+            if (wObj && ms >= wObj.start_ms && ms <= wObj.end_ms) {
+              span.style.color = hexToRgba(st.highlight_hex, st.highlight_alpha);
+            }
+            cap.appendChild(span);
+          });
       });
     } else {
       cap.textContent = transformToken(active.text || "");
@@ -2437,11 +2527,16 @@
    */
   function applyTheme(theme, persist = true) {
     const meta = document.querySelector('meta[name="color-scheme"]');
-    const systemPref = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+    const systemPref =
+      window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+        ? "light"
+        : "dark";
 
     if (theme === "system" || !theme) {
       if (persist) {
-        try { localStorage.removeItem("autosubs-theme"); } catch (_) {}
+        try {
+          localStorage.removeItem("autosubs-theme");
+        } catch (_) {}
       }
       if (meta) meta.content = "light dark";
       document.documentElement.removeAttribute("data-theme");
@@ -2462,7 +2557,10 @@
     const btn = $("btn-theme-toggle");
     if (btn) {
       const active = getCurrentScheme();
-      btn.setAttribute("aria-label", active === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro");
+      btn.setAttribute(
+        "aria-label",
+        active === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro"
+      );
       btn.title = active === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro";
     }
 
@@ -2557,9 +2655,11 @@
     if (!el) return;
     const { span, dur } = viewRange();
     el.textContent =
-      span >= dur ? "Todo"
-      : span >= 60000 ? `${(span / 60000).toFixed(1)} min`
-      : `${(span / 1000).toFixed(span < 10000 ? 1 : 0)} s`;
+      span >= dur
+        ? "Todo"
+        : span >= 60000
+          ? `${(span / 60000).toFixed(1)} min`
+          : `${(span / 1000).toFixed(span < 10000 ? 1 : 0)} s`;
   }
 
   /**
@@ -2687,7 +2787,9 @@
     const mutedText = isLight ? "#71717a" : "#92929c";
 
     // Time ruler
-    const steps = [100, 250, 500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000];
+    const steps = [
+      100, 250, 500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000,
+    ];
     const step = steps.find((st) => (st / vr.span) * w >= 70) || 600000;
     offCtx.fillStyle = mutedText;
     offCtx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
@@ -2703,7 +2805,8 @@
       const x1 = msToX(cue.start_ms, w, vr);
       const x2 = msToX(cue.end_ms, w, vr);
       if (x2 < 0 || x1 > w) return;
-      offCtx.fillStyle = idx === state.activeCueIndex ? "rgba(131,103,199,0.16)" : "rgba(131,103,199,0.06)";
+      offCtx.fillStyle =
+        idx === state.activeCueIndex ? "rgba(131,103,199,0.16)" : "rgba(131,103,199,0.06)";
       offCtx.fillRect(x1, waveTop, Math.max(1, x2 - x1), waveBottom - waveTop);
     });
 
@@ -2733,7 +2836,9 @@
       const bw = Math.max(2, x2 - x1 - 1);
       offCtx.fillStyle = active
         ? "rgba(131,103,199,0.92)"
-        : isLight ? "rgba(131,103,199,0.35)" : "rgba(131,103,199,0.32)";
+        : isLight
+          ? "rgba(131,103,199,0.35)"
+          : "rgba(131,103,199,0.32)";
       offCtx.beginPath();
       if (offCtx.roundRect) offCtx.roundRect(x1 + 0.5, laneTop + 2, bw, WAVE_LANE_H - 4, 4);
       else offCtx.rect(x1 + 0.5, laneTop + 2, bw, WAVE_LANE_H - 4);
@@ -2749,7 +2854,11 @@
         offCtx.rect(x1 + 6, laneTop, bw - 12, WAVE_LANE_H);
         offCtx.clip();
         offCtx.fillStyle = active ? "#ffffff" : isLight ? "#3f3f46" : "#d4d4d8";
-        offCtx.fillText(`#${idx + 1} ${(cue.text || "").replace(/\n/g, " ")}`, x1 + 7, laneTop + WAVE_LANE_H / 2);
+        offCtx.fillText(
+          `#${idx + 1} ${(cue.text || "").replace(/\n/g, " ")}`,
+          x1 + 7,
+          laneTop + WAVE_LANE_H / 2
+        );
         offCtx.restore();
       }
     });
@@ -2999,7 +3108,11 @@
           grabMs: xToMs(x, w, vr),
           startX: x,
           moved: false,
-          orig: { start: cue.start_ms, end: cue.end_ms, words: (cue.words || []).map((wd) => ({ ...wd })) },
+          orig: {
+            start: cue.start_ms,
+            end: cue.end_ms,
+            words: (cue.words || []).map((wd) => ({ ...wd })),
+          },
         };
         selectCue(hit.idx);
         drawWaveform(currentMs());
@@ -3321,7 +3434,9 @@
       btn.addEventListener("click", () => {
         const tab = btn.dataset.tab;
         state.uploadSource = tab === "resolve" ? "inbox" : "uploaded";
-        document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b === btn));
+        document
+          .querySelectorAll(".tab-btn")
+          .forEach((b) => b.classList.toggle("active", b === btn));
         $("tab-resolve").classList.toggle("active", tab === "resolve");
         $("tab-file").classList.toggle("active", tab === "file");
       });
@@ -3334,7 +3449,10 @@
     $("btn-refresh").addEventListener("click", refreshStatus);
     $("btn-check-inbox").addEventListener("click", async () => {
       try {
-        const notifyRes = await apiJson("/api/resolve/notify-export", { method: "POST", body: "{}" });
+        const notifyRes = await apiJson("/api/resolve/notify-export", {
+          method: "POST",
+          body: "{}",
+        });
         if (notifyRes && notifyRes.session) {
           applySession(notifyRes.session);
         } else {
@@ -3452,7 +3570,10 @@
       $("cfg-cpl").value = p.max_cpl;
       $("cfg-lines").value = p.max_lines;
       $("cfg-pause").value = p.pause_split_ms;
-      if ($("preset-select").value === "reels_9_16" || $("preset-select").value === "karaoke_impacto") {
+      if (
+        $("preset-select").value === "reels_9_16" ||
+        $("preset-select").value === "karaoke_impacto"
+      ) {
         setAspect("9:16");
       } else {
         setAspect("16:9");
@@ -3548,7 +3669,10 @@
       if (!find) return;
       state.cues.forEach((cue) => {
         cue.text = cue.text.split(find).join(rep);
-        cue.lines = cue.text.split("\n").map((s) => s.trim()).filter(Boolean);
+        cue.lines = cue.text
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean);
         syncCueWordsAfterTextEdit(cue);
       });
       await saveCuesToServer();
@@ -3588,9 +3712,10 @@
         }
         if (lastRes) {
           updateFontCatalog(lastRes, lastRes.selected_pack_id);
-          const restartNote = lastRes.installed_to_macos && lastRes.resolve_running
-            ? " Reinicia DaVinci Resolve 20 para que detecte la nueva tipografía en ~/Library/Fonts."
-            : "";
+          const restartNote =
+            lastRes.installed_to_macos && lastRes.resolve_running
+              ? " Reinicia DaVinci Resolve 20 para que detecte la nueva tipografía en ~/Library/Fonts."
+              : "";
           $("font-upload-status").textContent = `✓ ${totalFaces} variante(s) listas.${restartNote}`;
           showToast(
             `Tipografía instalada (${totalFaces}).${restartNote}`,
@@ -3634,7 +3759,9 @@
           const name = (map[del.dataset.deletePreset] || {}).preset_name || "";
           delete map[del.dataset.deletePreset];
           saveCustomPresets(map);
-          if (state.activePreset === `custom:${del.dataset.deletePreset}`) state.activePreset = null;
+          if (state.activePreset === `custom:${del.dataset.deletePreset}`) {
+            state.activePreset = null;
+          }
           renderCustomChips();
           showToast(`Estilo «${name}» borrado.`);
           return;
@@ -3672,10 +3799,14 @@
       const on = $("st-karaoke").checked;
       syncStyleControlStates();
       updatePresetStatus();
-      try { localStorage.setItem("autosubs-karaoke", on ? "1" : "0"); } catch (_) {}
+      try {
+        localStorage.setItem("autosubs-karaoke", on ? "1" : "0");
+      } catch (_) {}
       renderPreviewAtMs(currentMs());
     };
-    try { $("st-karaoke").checked = localStorage.getItem("autosubs-karaoke") === "1"; } catch (_) {}
+    try {
+      $("st-karaoke").checked = localStorage.getItem("autosubs-karaoke") === "1";
+    } catch (_) {}
     syncStyleControlStates();
     $("st-karaoke").addEventListener("change", syncKaraoke);
 
@@ -3694,25 +3825,46 @@
         btn.setAttribute("aria-pressed", String(btn.dataset.bg === value));
       });
       if (persist) {
-        try { localStorage.setItem("autosubs-stage-bg", value); } catch (_) {}
+        try {
+          localStorage.setItem("autosubs-stage-bg", value);
+        } catch (_) {}
       }
     };
     document.querySelectorAll("#stage-bg-toggle .bg-swatch").forEach((btn) => {
       btn.addEventListener("click", () => setStageBg(btn.dataset.bg));
     });
     let savedBg = "black";
-    try { savedBg = localStorage.getItem("autosubs-stage-bg") || "black"; } catch (_) {}
+    try {
+      savedBg = localStorage.getItem("autosubs-stage-bg") || "black";
+    } catch (_) {}
     setStageBg(savedBg, false);
 
     wireMachinePanel();
     // Every style control re-renders through onStyleControlChanged: "input" for
     // live slider feedback, "change" for selects, checkboxes and color pickers.
-    ["st-weight", "st-ascii-fold", "st-size", "st-posy", "st-fill", "st-highlight", "st-outline", "st-outline-w", "st-shadow", "st-box", "st-box-color", "cfg-uppercase",
-     "st-fill-a", "st-highlight-a", "st-outline-a", "st-shadow-a", "st-box-a", "st-anim-mode"]
-      .forEach((id) => {
-        $(id).addEventListener("input", onStyleControlChanged);
-        $(id).addEventListener("change", onStyleControlChanged);
-      });
+    [
+      "st-weight",
+      "st-ascii-fold",
+      "st-size",
+      "st-posy",
+      "st-fill",
+      "st-highlight",
+      "st-outline",
+      "st-outline-w",
+      "st-shadow",
+      "st-box",
+      "st-box-color",
+      "cfg-uppercase",
+      "st-fill-a",
+      "st-highlight-a",
+      "st-outline-a",
+      "st-shadow-a",
+      "st-box-a",
+      "st-anim-mode",
+    ].forEach((id) => {
+      $(id).addEventListener("input", onStyleControlChanged);
+      $(id).addEventListener("change", onStyleControlChanged);
+    });
     $("st-font").addEventListener("change", updatePresetStatus);
 
     /** Shows the Text+ template field only for the "textplus" push mode. */
@@ -3747,7 +3899,13 @@
         const srtHint = document.createElement("span");
         srtHint.className = "hint";
         srtHint.textContent = `SRT: ${res.files.srt}`;
-        box.append(title, document.createElement("br"), msgNode, document.createElement("br"), srtHint);
+        box.append(
+          title,
+          document.createElement("br"),
+          msgNode,
+          document.createElement("br"),
+          srtHint
+        );
         showToast(res.message, 5000);
       } catch (err) {
         showToast(err.message);
@@ -3818,7 +3976,10 @@
 
     // Space toggles play/pause unless the focus is in a form field
     document.addEventListener("keydown", (ev) => {
-      if (ev.code === "Space" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) {
+      if (
+        ev.code === "Space" &&
+        !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)
+      ) {
         ev.preventDefault();
         $("btn-play").click();
       }
@@ -3839,7 +4000,9 @@
     if (window.matchMedia) {
       window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
         let saved = null;
-        try { saved = localStorage.getItem("autosubs-theme"); } catch (_) {}
+        try {
+          saved = localStorage.getItem("autosubs-theme");
+        } catch (_) {}
         if (!saved) {
           applyTheme("system", false);
         }
@@ -3855,7 +4018,9 @@
   // re-applies that preset once fonts are known, unless the user changed it.
   wireEvents();
   let initialTheme = null;
-  try { initialTheme = localStorage.getItem("autosubs-theme"); } catch (_) {}
+  try {
+    initialTheme = localStorage.getItem("autosubs-theme");
+  } catch (_) {}
   applyTheme(initialTheme, false);
   // Fallback for engines without accent-color: exposes each slider's fill as
   // --progress (no rule in styles.css consumes it at the moment).

@@ -116,7 +116,8 @@
     const totalS = ms / 1000;
     const m = Math.floor(totalS / 60);
     const sec = totalS - m * 60;
-    const secStr = step < 1000 ? sec.toFixed(1).padStart(4, "0") : String(Math.floor(sec)).padStart(2, "0");
+    const secStr =
+      step < 1000 ? sec.toFixed(1).padStart(4, "0") : String(Math.floor(sec)).padStart(2, "0");
     return `${m}:${secStr}`;
   }
 
@@ -152,7 +153,9 @@
   function syncCueWordsAfterTextEdit(cue) {
     const tokens = tokenizeLines(cue.lines);
     if (cue.words && cue.words.length === tokens.length) {
-      cue.words.forEach((w, i) => { w.text = tokens[i]; });
+      cue.words.forEach((w, i) => {
+        w.text = tokens[i];
+      });
     }
   }
 
@@ -187,8 +190,10 @@
    * @return {?Object} The cue, or null.
    */
   function findPreviewCue(cues, ms, activeIdx) {
-    return cues.find((c) => ms >= c.start_ms && ms <= c.end_ms) ||
-      (activeIdx >= 0 ? cues[activeIdx] : null);
+    return (
+      cues.find((c) => ms >= c.start_ms && ms <= c.end_ms) ||
+      (activeIdx >= 0 ? cues[activeIdx] : null)
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -203,7 +208,13 @@
    */
   function hexToRgba(hex, alpha) {
     const h = String(hex || "#000000").replace("#", "");
-    const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h.padEnd(6, "0");
+    const full =
+      h.length === 3
+        ? h
+            .split("")
+            .map((c) => c + c)
+            .join("")
+        : h.padEnd(6, "0");
     const r = parseInt(full.slice(0, 2), 16) || 0;
     const g = parseInt(full.slice(2, 4), 16) || 0;
     const b = parseInt(full.slice(4, 6), 16) || 0;
@@ -216,7 +227,9 @@
    * @return {!Array<number>} [r, g, b], each 0..255.
    */
   function parseHex(hex) {
-    const h = String(hex || "#000000").replace("#", "").padEnd(6, "0");
+    const h = String(hex || "#000000")
+      .replace("#", "")
+      .padEnd(6, "0");
     return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) || 0);
   }
 
@@ -267,11 +280,16 @@
    * @return {number} Ratio from 1 to 21.
    */
   function worstCaseContrast(fillHex, fillAlpha, layerHex, layerAlpha) {
-    return Math.min(...[[255, 255, 255], [0, 0, 0]].map((backdrop) => {
-      const bg = blend(parseHex(layerHex), layerAlpha, backdrop);
-      const fg = blend(parseHex(fillHex), fillAlpha, bg);
-      return contrastRatio(fg, bg);
-    }));
+    return Math.min(
+      ...[
+        [255, 255, 255],
+        [0, 0, 0],
+      ].map((backdrop) => {
+        const bg = blend(parseHex(layerHex), layerAlpha, backdrop);
+        const fg = blend(parseHex(fillHex), fillAlpha, bg);
+        return contrastRatio(fg, bg);
+      })
+    );
   }
 
   /**
@@ -354,7 +372,10 @@
     let edge = null;
     spans.forEach(([x1, x2], idx) => {
       const tol = tolFor(x1, x2);
-      [["start", Math.abs(x - x1)], ["end", Math.abs(x - x2)]].forEach(([mode, dist]) => {
+      [
+        ["start", Math.abs(x - x1)],
+        ["end", Math.abs(x - x2)],
+      ].forEach(([mode, dist]) => {
         if (dist <= tol && (!edge || dist < edge.dist)) edge = { idx, mode, dist };
       });
     });

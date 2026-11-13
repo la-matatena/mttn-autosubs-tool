@@ -38,7 +38,6 @@ import shutil
 import subprocess
 import sys
 
-
 # --- Hardware profiles ---
 
 
@@ -429,8 +428,7 @@ MODEL_CATALOG: dict[str, ModelSpec] = {
         ram_mb=650,
         spanish_wer="~5.5% WER",
         speed_note=(
-            "Muy rápido; útil para borradores largos o clips con audio"
-            " limpio."
+            "Muy rápido; útil para borradores largos o clips con audio limpio."
         ),
         recommended=False,
     ),

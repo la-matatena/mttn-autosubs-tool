@@ -260,7 +260,9 @@ def resolve_performance(
   }
 
 
-def recommend_from_benchmark(model_id: str, realtime_factor: float) -> dict[str, str]:
+def recommend_from_benchmark(
+    model_id: str, realtime_factor: float
+) -> dict[str, str]:
   """Suggests a model given how many times faster than real time one ran.
 
   Heuristic thresholds: below 1.2x real time the transcription cannot keep
@@ -346,13 +348,13 @@ class MachineSettings:
     if isinstance(raw.get("performance"), dict):
       data["performance"].update(_sanitize_performance(raw["performance"]))
     if isinstance(raw.get("preferences"), dict):
-      data["preferences"].update({
-          k: v for k, v in raw["preferences"].items() if k in PREFERENCE_KEYS
-      })
+      data["preferences"].update(
+          {k: v for k, v in raw["preferences"].items() if k in PREFERENCE_KEYS}
+      )
     if known_version and isinstance(raw.get("benchmarks"), dict):
-      data["benchmarks"].update({
-          k: v for k, v in raw["benchmarks"].items() if isinstance(v, dict)
-      })
+      data["benchmarks"].update(
+          {k: v for k, v in raw["benchmarks"].items() if isinstance(v, dict)}
+      )
     return data
 
   def _save(self) -> None:

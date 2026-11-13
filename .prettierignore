@@ -1,0 +1,13 @@
+# Prettier formats only the first-party JS/CSS listed in tools/lint.sh.
+# HTML is excluded on purpose: Prettier re-indents whole documents, rewraps
+# whitespace-sensitive text and inline SVG, and tests assert on raw markup.
+*.html
+# site/ is the marketing page; its styles follow the org-wide brand sheet.
+site/
+# Fusion macros, docs, and generated or vendored content.
+templates/
+*.md
+node_modules/
+.venv-dev/
+dist/
+build/

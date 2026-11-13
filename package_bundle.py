@@ -146,6 +146,31 @@ def find_project_root() -> Path:
   return Path(__file__).parent
 
 
+# Directories never shipped: caches/VCS, CI config, the marketing website
+# (site/), dev-only tooling (tools/) and local lint-tool installs.
+_PRUNED_DIRS = (
+    "__pycache__",
+    ".git",
+    ".citc",
+    ".github",
+    "site",
+    "tools",
+    "node_modules",
+    ".venv-dev",
+)
+
+# Dev-only formatter/linter configs (see tools/lint.sh); users never need
+# them. Most already fail the extension whitelist, but .stylua.toml would
+# match ".toml", so they are all listed explicitly.
+_DEV_ONLY_FILES = frozenset({
+    ".pylintrc",
+    ".prettierrc.json",
+    ".prettierignore",
+    ".shellcheckrc",
+    ".stylua.toml",
+    "eslint.config.mjs",
+})
+
 # Whitelist of file types shipped in the bundle (see _should_skip_entry).
 _ALLOWED_EXTENSIONS = (
     ".py",
@@ -167,11 +192,12 @@ _ALLOWED_EXTENSIONS = (
 def _should_skip_entry(rel_parts: tuple[str, ...], filename: str) -> bool:
   """Decides whether a project file is left out of the bundle.
 
-  Rules, in order: anything under __pycache__, .git, .citc, .github, site
-  (the marketing website) or a *.runfiles tree is skipped; .DS_Store,
-  __init__.py (google3-only) and AGENTS.md (agent instructions) are
-  skipped; BUILD, .gitignore and LICENSE are always kept despite having no
-  allowed extension; everything else must end in _ALLOWED_EXTENSIONS.
+  Rules, in order: anything under a _PRUNED_DIRS folder (caches, VCS, CI,
+  site/ marketing website, tools/ and local lint installs) or a *.runfiles
+  tree is skipped; .DS_Store, __init__.py (google3-only), AGENTS.md (agent
+  instructions) and _DEV_ONLY_FILES (lint configs) are skipped; BUILD,
+  .gitignore and LICENSE are always kept despite having no allowed
+  extension; everything else must end in _ALLOWED_EXTENSIONS.
 
   Args:
     rel_parts: Path components relative to the project root.
@@ -181,12 +207,12 @@ def _should_skip_entry(rel_parts: tuple[str, ...], filename: str) -> bool:
     True to exclude the file.
   """
   if any(
-      part in ("__pycache__", ".git", ".citc", ".github", "site")
-      or part.endswith(".runfiles")
-      for part in rel_parts
+      part in _PRUNED_DIRS or part.endswith(".runfiles") for part in rel_parts
   ):
     return True
   if filename in (".DS_Store", "__init__.py", "AGENTS.md"):
+    return True
+  if filename in _DEV_ONLY_FILES:
     return True
   if filename in ("BUILD", ".gitignore", "LICENSE"):
     return False
@@ -210,11 +236,7 @@ def collect_bundle_files(source_root: Path | None = None) -> dict[str, bytes]:
   root = source_root or find_project_root()
   collected: dict[str, bytes] = {}
   for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
-    dirnames[:] = sorted(
-        d
-        for d in dirnames
-        if d not in ("__pycache__", ".git", ".citc", ".github", "site")
-    )
+    dirnames[:] = sorted(d for d in dirnames if d not in _PRUNED_DIRS)
     current = Path(dirpath)
     for fname in sorted(filenames):
       file_path = current / fname
