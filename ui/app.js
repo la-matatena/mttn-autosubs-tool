@@ -7,6 +7,11 @@
  * step, no dependencies. Function declarations are hoisted inside the IIFE,
  * so helpers are often called above the line where they are defined.
  *
+ * Pure, DOM-free helpers (text folding, contrast math, waveform geometry,
+ * cue drag clamping and the job poller factory) live in ui/app_helpers.js,
+ * which index.html loads first as window.AutoSubsHelpers. They are unit
+ * tested with `node --test tests/js/`.
+ *
  * Server: everything talks to the local Python server (autosubs_server.py,
  * http://127.0.0.1:55120 by default) through same-origin relative URLs.
  * JSON endpoints go through apiJson(); binary uploads (media, fonts) use
@@ -42,6 +47,29 @@
  */
 (() => {
   "use strict";
+
+  // Pure helpers from ui/app_helpers.js (see its JSDoc for each function).
+  // Destructured once here, before any code below runs, so call sites keep
+  // their short names.
+  const {
+    computeCueDrag,
+    computeViewRange,
+    contrastLevel,
+    cpsClassName,
+    createJobPoller,
+    findPreviewCue,
+    formatMsReadable,
+    formatTick,
+    hexToRgba,
+    hitTestCueAt,
+    isStaleJobResult,
+    msToX,
+    rescaleWords,
+    syncCueWordsAfterTextEdit,
+    transformPreviewText,
+    worstCaseContrast,
+    xToMs,
+  } = window.AutoSubsHelpers;
 
   // ---------------------------------------------------------------------------
   // Application state
@@ -145,56 +173,8 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Static data: ASCII folding and built-in style presets
+  // Static data: built-in style presets
   // ---------------------------------------------------------------------------
-
-  /**
-   * Spanish-specific characters mapped to ASCII for fonts without Spanish
-   * glyphs (preview of «Adaptar glifos ASCII»). Mirrors
-   * exporters.fold_spanish_to_ascii so the monitor matches the exports.
-   */
-  const ASCII_FOLD_MAP = {
-    á: "a",
-    é: "e",
-    í: "i",
-    ó: "o",
-    ú: "u",
-    ü: "u",
-    ñ: "n",
-    Á: "A",
-    É: "E",
-    Í: "I",
-    Ó: "O",
-    Ú: "U",
-    Ü: "U",
-    Ñ: "N",
-    "¿": "",
-    "¡": "",
-    "«": '"',
-    "»": '"',
-    "“": '"',
-    "”": '"',
-    "‘": "'",
-    "’": "'",
-    "—": "-",
-    "–": "-",
-    "…": "...",
-  };
-
-  /**
-   * Folds Spanish text to plain ASCII for the preview: the explicit map first
-   * (ñ -> n, ¿/¡ removed, curly quotes -> straight), then NFKD plus removal of
-   * combining marks for any other accented letter.
-   * @param {*} text Text to fold; null/undefined become "".
-   * @return {string} ASCII-only text.
-   */
-  function foldSpanishToAsciiPreview(text) {
-    return String(text || "")
-      .normalize("NFC")
-      .replace(/[áéíóúüñÁÉÍÓÚÜÑ¿¡«»“”‘’—–…]/g, (ch) => ASCII_FOLD_MAP[ch] ?? ch)
-      .normalize("NFKD")
-      .replace(/[\u0300-\u036f]/g, "");
-  }
 
   /**
    * Built-in style presets keyed by chip id (data-style). `size` and `pos_y`
@@ -349,19 +329,6 @@
     el.classList.remove("hidden");
     clearTimeout(el._hideTimer);
     el._hideTimer = setTimeout(() => el.classList.add("hidden"), ms);
-  }
-
-  /**
-   * Formats a time as "MM:SS.cc" (centiseconds) for cue timecodes.
-   * @param {number} ms Time in ms; negative or missing values clamp to 0.
-   * @return {string} e.g. "01:04.25".
-   */
-  function formatMsReadable(ms) {
-    const safe = Math.max(0, Math.floor(ms || 0));
-    const min = Math.floor(safe / 60000);
-    const sec = Math.floor((safe % 60000) / 1000);
-    const cs = Math.floor((safe % 1000) / 10);
-    return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
   }
 
   // ---------------------------------------------------------------------------
@@ -537,21 +504,6 @@
     return Math.max(0, Math.min(1, (Number.isFinite(v) ? v : 100) / 100));
   }
 
-  /**
-   * Converts a hex color plus alpha into a CSS rgba() string.
-   * @param {string} hex "#rgb" or "#rrggbb" ("#" optional).
-   * @param {number} alpha Opacity 0..1.
-   * @return {string} e.g. "rgba(255, 212, 59, 0.750)".
-   */
-  function hexToRgba(hex, alpha) {
-    const h = String(hex || "#000000").replace("#", "");
-    const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h.padEnd(6, "0");
-    const r = parseInt(full.slice(0, 2), 16) || 0;
-    const g = parseInt(full.slice(2, 4), 16) || 0;
-    const b = parseInt(full.slice(4, 6), 16) || 0;
-    return `rgba(${r}, ${g}, ${b}, ${Number(alpha).toFixed(3)})`;
-  }
-
   // [opacity slider id, color input id]: drives the % readout next to each
   // slider and the swatch color (null = shadow, always black).
   const ALPHA_ROWS = [
@@ -724,52 +676,8 @@
   // Approximate WCAG contrast between the text and whatever is behind it,
   // already blended with its opacity. It is evaluated over white and black
   // backdrops and the worst case wins, because the video content is unknown.
-
-  /**
-   * Parses "#rrggbb" into an RGB triple (short "#rgb" is not expanded).
-   * @param {string} hex Color string.
-   * @return {!Array<number>} [r, g, b], each 0..255.
-   */
-  function parseHex(hex) {
-    const h = String(hex || "#000000").replace("#", "").padEnd(6, "0");
-    return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) || 0);
-  }
-
-  /**
-   * Alpha-composites one RGB color over another ("over" operator).
-   * @param {!Array<number>} top Foreground RGB.
-   * @param {number} alpha Foreground opacity 0..1.
-   * @param {!Array<number>} under Background RGB.
-   * @return {!Array<number>} Composited RGB (not rounded).
-   */
-  function blend(top, alpha, under) {
-    return top.map((c, i) => c * alpha + under[i] * (1 - alpha));
-  }
-
-  /**
-   * WCAG 2.x relative luminance (sRGB linearization, Rec. 709 weights).
-   * @param {!Array<number>} rgb RGB 0..255.
-   * @return {number} Luminance 0..1.
-   */
-  function luminance(rgb) {
-    const [r, g, b] = rgb.map((v) => {
-      const c = v / 255;
-      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-    });
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  }
-
-  /**
-   * WCAG contrast ratio between two colors.
-   * @param {!Array<number>} a RGB 0..255.
-   * @param {!Array<number>} b RGB 0..255.
-   * @return {number} Ratio from 1 to 21.
-   */
-  function contrastRatio(a, b) {
-    const la = luminance(a);
-    const lb = luminance(b);
-    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
-  }
+  // The math (parseHex, blend, luminance, contrastRatio, worstCaseContrast,
+  // contrastLevel) lives in ui/app_helpers.js.
 
   /**
    * Updates the legibility badge of the style card. Checks, in order: almost
@@ -798,17 +706,12 @@
     } else {
       const layerHex = st.box_enabled ? st.box_hex : st.outline_hex;
       const layerA = st.box_enabled ? st.box_alpha : st.outline_alpha;
-      const ratio = Math.min(...[[255, 255, 255], [0, 0, 0]].map((backdrop) => {
-        const bg = blend(parseHex(layerHex), layerA, backdrop);
-        const fg = blend(parseHex(st.fill_hex), st.fill_alpha, bg);
-        return contrastRatio(fg, bg);
-      }));
+      const ratio = worstCaseContrast(st.fill_hex, st.fill_alpha, layerHex, layerA);
       const ref = st.box_enabled ? "la caja" : "el contorno";
-      if (ratio < 3) {
-        level = "warn";
+      level = contrastLevel(ratio);
+      if (level === "warn") {
         msg = `Legibilidad baja: contraste ${ratio.toFixed(1)}:1 con ${ref}.`;
-      } else if (ratio < 4.5) {
-        level = "info";
+      } else if (level === "info") {
         msg = `Contraste justo: ${ratio.toFixed(1)}:1 con ${ref} (recomendado ≥ 4.5:1).`;
       } else {
         msg = `Contraste ${ratio.toFixed(1)}:1 con ${ref}.`;
@@ -2071,18 +1974,6 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * CSS class of a cue's reading-speed badge. Only speeds that need
-   * attention are colored: > 17 CPS warn, > 20 CPS danger.
-   * @param {number} cps Characters per second.
-   * @return {string} Class name(s).
-   */
-  function cpsClassName(cps) {
-    if (cps > 20) return "pill pill-danger";
-    if (cps > 17) return "pill pill-warn";
-    return "cue-cps";
-  }
-
-  /**
    * Updates the editor stats (cue count, mean CPS, warnings) as plain text;
    * the warnings count is colored only when non-zero.
    */
@@ -2227,40 +2118,6 @@
 
       list.appendChild(card);
     });
-  }
-
-  /**
-   * Keeps word timings when a cue's text is edited. The server
-   * (align_words_to_lines) keeps Whisper timings for words that survive and
-   * spreads time over new ones; locally the word texts are only synced when
-   * the token count still matches.
-   * @param {!Object} cue Cue whose `lines` were just updated.
-   */
-  function syncCueWordsAfterTextEdit(cue) {
-    const tokens = (cue.lines || []).flatMap((ln) => ln.split(/\s+/).filter(Boolean));
-    if (cue.words && cue.words.length === tokens.length) {
-      cue.words.forEach((w, i) => { w.text = tokens[i]; });
-    }
-  }
-
-  /**
-   * Linearly remaps word timings from an old cue span to a new one.
-   * @param {?Array<!Object>} words Words with start_ms/end_ms.
-   * @param {number} oldStart Old cue start, ms.
-   * @param {number} oldEnd Old cue end, ms.
-   * @param {number} newStart New cue start, ms.
-   * @param {number} newEnd New cue end, ms.
-   * @return {!Array<!Object>} New word objects (inputs not mutated); [] when
-   *     there are no words.
-   */
-  function rescaleWords(words, oldStart, oldEnd, newStart, newEnd) {
-    if (!words || !words.length) return [];
-    const scale = (newEnd - newStart) / Math.max(1, oldEnd - oldStart);
-    return words.map((w) => ({
-      ...w,
-      start_ms: Math.round(newStart + (w.start_ms - oldStart) * scale),
-      end_ms: Math.round(newStart + (w.end_ms - oldStart) * scale),
-    }));
   }
 
   /**
@@ -2456,8 +2313,7 @@
     const st = getCachedStyle();
     const pack = state.selectedPack;
 
-    const active = state.cues.find((c) => ms >= c.start_ms && ms <= c.end_ms) ||
-      (state.activeCueIndex >= 0 ? state.cues[state.activeCueIndex] : null);
+    const active = findPreviewCue(state.cues, ms, state.activeCueIndex);
 
     // Animation step: playing media drives the clock; while paused the synthetic
     // animClockMs keeps boil/flipbook moving. 1000 / 24 ms = one 24 fps frame.
@@ -2516,11 +2372,7 @@
       : "none";
 
     // Applies ASCII folding and uppercase the same way the exporters do.
-    const transformToken = (txt) => {
-      let out = st.ascii_fold ? foldSpanishToAsciiPreview(txt) : txt;
-      if (st.uppercase) out = out.toUpperCase();
-      return out;
-    };
+    const transformToken = (txt) => transformPreviewText(txt, st);
 
     if (!active) {
       const emptyMsg = state.cues.length
@@ -2669,10 +2521,7 @@
    * @return {{start: number, span: number, dur: number}} All in ms.
    */
   function viewRange() {
-    const dur = totalDurMs();
-    const span = state.view.spanMs > 0 ? Math.min(state.view.spanMs, dur) : dur;
-    const start = Math.max(0, Math.min(state.view.startMs, dur - span));
-    return { start, span, dur };
+    return computeViewRange(totalDurMs(), state.view);
   }
 
   /**
@@ -2735,36 +2584,8 @@
     return { canvas, w: rect.width || 960, h: rect.height || 96 };
   }
 
-  /**
-   * Maps a time to an x coordinate in the visible window.
-   * @param {number} ms Time in ms.
-   * @param {number} w Canvas width in CSS px.
-   * @param {{start: number, span: number}} vr Window from viewRange().
-   * @return {number} x in CSS px (may fall outside 0..w).
-   */
-  const msToX = (ms, w, vr) => ((ms - vr.start) / vr.span) * w;
-  /**
-   * Maps an x coordinate in the visible window to a time.
-   * @param {number} x x in CSS px.
-   * @param {number} w Canvas width in CSS px.
-   * @param {{start: number, span: number}} vr Window from viewRange().
-   * @return {number} Time in ms.
-   */
-  const xToMs = (x, w, vr) => vr.start + (x / w) * vr.span;
-
-  /**
-   * Formats a ruler label as "m:ss", or "m:ss.s" when ticks are < 1 s apart.
-   * @param {number} ms Tick time.
-   * @param {number} step Tick spacing in ms.
-   * @return {string}
-   */
-  function formatTick(ms, step) {
-    const totalS = ms / 1000;
-    const m = Math.floor(totalS / 60);
-    const sec = totalS - m * 60;
-    const secStr = step < 1000 ? sec.toFixed(1).padStart(4, "0") : String(Math.floor(sec)).padStart(2, "0");
-    return `${m}:${secStr}`;
-  }
+  // msToX(ms, w, vr), xToMs(x, w, vr) and formatTick(ms, step) come from
+  // ui/app_helpers.js; vr is the window returned by viewRange().
 
   // Offscreen render cache of the waveform. Everything except the playhead
   // (ruler, cue regions, peaks, cue lane) is drawn into waveCache.canvas only
@@ -3021,31 +2842,13 @@
    */
   function hitTestCue(x, y) {
     const { w, h } = waveSize();
-    // The lane accepts clicks slightly above its top edge.
-    if (y < h - WAVE_LANE_H - 8) return null;
-    const vr = viewRange();
-    const spans = state.cues.map((cue) => [msToX(cue.start_ms, w, vr), msToX(cue.end_ms, w, vr)]);
-    // Edge tolerance: up to WAVE_EDGE_PX but at most a third of a narrow block
-    // (min 2 px), so the middle of short cues stays draggable.
-    const tolFor = (x1, x2) => Math.min(WAVE_EDGE_PX, Math.max(2, (x2 - x1) / 3));
-    // Inside a block only its own edges count (never the neighbor's).
-    const insideIdx = spans.findIndex(([x1, x2]) => x >= x1 && x <= x2);
-    if (insideIdx >= 0) {
-      const [x1, x2] = spans[insideIdx];
-      const tol = tolFor(x1, x2);
-      if (x - x1 <= tol) return { idx: insideIdx, mode: "start" };
-      if (x2 - x <= tol) return { idx: insideIdx, mode: "end" };
-      return { idx: insideIdx, mode: "move" };
-    }
-    // In a gap: the nearest edge within tolerance.
-    let edge = null;
-    spans.forEach(([x1, x2], idx) => {
-      const tol = tolFor(x1, x2);
-      [["start", Math.abs(x - x1)], ["end", Math.abs(x - x2)]].forEach(([mode, dist]) => {
-        if (dist <= tol && (!edge || dist < edge.dist)) edge = { idx, mode, dist };
-      });
+    return hitTestCueAt(state.cues, x, y, {
+      w,
+      h,
+      vr: viewRange(),
+      laneH: WAVE_LANE_H,
+      edgePx: WAVE_EDGE_PX,
     });
-    return edge;
   }
 
   /**
@@ -3136,22 +2939,8 @@
    */
   function applyCueDrag(d, deltaMs) {
     const cue = state.cues[d.idx];
-    const prevEnd = d.idx > 0 ? state.cues[d.idx - 1].end_ms : 0;
-    const nextStart = d.idx < state.cues.length - 1 ? state.cues[d.idx + 1].start_ms : totalDurMs();
     const { start, end } = d.orig;
-    const snap = (v) => Math.round(v / 10) * 10;
-    const clamp = (v, lo, hi) => Math.max(lo, Math.min(v, Math.max(lo, hi)));
-    let ns = start;
-    let ne = end;
-    if (d.mode === "start") {
-      ns = clamp(snap(start + deltaMs), prevEnd, end - MIN_CUE_MS);
-    } else if (d.mode === "end") {
-      ne = clamp(snap(end + deltaMs), start + MIN_CUE_MS, nextStart);
-    } else {
-      const len = end - start;
-      ns = clamp(snap(start + deltaMs), prevEnd, nextStart - len);
-      ne = ns + len;
-    }
+    const { start: ns, end: ne } = computeCueDrag(state.cues, d, deltaMs, totalDurMs(), MIN_CUE_MS);
     cue.start_ms = ns;
     cue.end_ms = ne;
     cue.words = rescaleWords(d.orig.words, start, end, ns, ne);
@@ -3375,15 +3164,38 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * Jobs currently being polled, by job id, in start order. Each entry:
-   * {onSuccess, onError, onProgress, showInBox, intervalMs, timer, job}
-   * where `timer` is the pending setTimeout handle and `job` the last
-   * snapshot from GET /api/jobs/<id> (null before the first response).
-   * Several jobs (e.g. a model download and a transcription) can run at once;
-   * each keeps its own callbacks, and the progress box shows one of them.
-   * @type {!Map<string, !Object>}
+   * Per-job poller (see createJobPoller() in ui/app_helpers.js). It owns the
+   * map of polled jobs and which one #job-box shows; the hooks below do the
+   * DOM work. Several jobs (e.g. a model download and a transcription) can
+   * run at once; each keeps its own callbacks. `jobPollers.size` is the
+   * number of jobs being polled. state.activeJobId mirrors the shown job so
+   * the cancel button knows its target.
    */
-  const jobPollers = new Map();
+  const jobPollers = createJobPoller({
+    fetchJson: (url) => apiJson(url),
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (handle) => clearTimeout(handle),
+    // A job became the shown one: cancel a pending hide and reveal the box.
+    onShow: (jobId) => {
+      state.activeJobId = jobId;
+      clearTimeout(state.jobHideTimer);
+      state.jobHideTimer = null;
+      $("job-box").classList.remove("hidden");
+      $("btn-cancel-job").classList.remove("hidden");
+    },
+    onRender: renderJobBox,
+    // The last boxed job ended: hide the cancel button and, after a success,
+    // hide the box 2 s later (after a failure the final stage stays visible).
+    onIdle: (succeeded) => {
+      state.activeJobId = null;
+      $("btn-cancel-job").classList.add("hidden");
+      if (succeeded) {
+        clearTimeout(state.jobHideTimer);
+        state.jobHideTimer = setTimeout(() => $("job-box").classList.add("hidden"), 2000);
+      }
+    },
+    onToast: showToast,
+  });
 
   /**
    * Polls a server job until it finishes and runs its callbacks. Each job
@@ -3410,136 +3222,19 @@
    *     is the delay between polls (default 500).
    */
   function pollJob(jobId, onSuccess, opts = {}) {
-    const existing = jobPollers.get(jobId);
-    if (existing) {
-      if (existing.showInBox) showJobInBox(jobId);
-      return;
-    }
-    const poller = {
-      onSuccess,
-      onError: opts.onError || null,
-      onProgress: opts.onProgress || null,
-      showInBox: opts.showInBox !== false,
-      intervalMs: opts.intervalMs || 500,
-      timer: null,
-      job: null,
-    };
-    jobPollers.set(jobId, poller);
-    if (poller.showInBox) showJobInBox(jobId);
-    poller.timer = setTimeout(() => pollJobOnce(jobId), poller.intervalMs);
-  }
-
-  /**
-   * One poll step of pollJob(): fetches the job, reports progress, then
-   * either finishes the poller (done / error / cancelled / request failure)
-   * or schedules the next step.
-   * @async
-   * @param {string} jobId Polled job id.
-   * @return {!Promise<void>}
-   */
-  async function pollJobOnce(jobId) {
-    const poller = jobPollers.get(jobId);
-    if (!poller) return;
-    let job;
-    try {
-      job = await apiJson(`/api/jobs/${jobId}`);
-    } catch (err) {
-      if (jobPollers.get(jobId) !== poller) return;
-      finishJobPoller(jobId, false);
-      if (poller.onError) poller.onError(null, err);
-      else showToast(`Error consultando tarea: ${err.message}`);
-      return;
-    }
-    // Guard against a poller removed while the request was in flight.
-    if (jobPollers.get(jobId) !== poller) return;
-    poller.job = job;
-    if (poller.onProgress) poller.onProgress(job);
-    if (state.activeJobId === jobId) renderJobBox();
-
-    if (job.status === "done") {
-      finishJobPoller(jobId, true);
-      Promise.resolve()
-        .then(() => poller.onSuccess(job))
-        .catch((err) => showToast(err.message, 5000));
-    } else if (job.status === "error" || job.status === "cancelled") {
-      finishJobPoller(jobId, false);
-      if (poller.onError) poller.onError(job, null);
-      else showToast(job.error || job.stage, 5000);
-    } else {
-      poller.timer = setTimeout(() => pollJobOnce(jobId), poller.intervalMs);
-    }
-  }
-
-  /**
-   * Removes a finished job's poller and updates the progress box: if the
-   * finished job was shown, the box switches to the newest remaining boxed
-   * job; with none left the cancel button hides and, after a success, the
-   * box hides 2 s later (after a failure it keeps the final stage visible).
-   * @param {string} jobId Finished job id.
-   * @param {boolean} succeeded Whether the job ended with status "done".
-   */
-  function finishJobPoller(jobId, succeeded) {
-    const poller = jobPollers.get(jobId);
-    if (poller) clearTimeout(poller.timer);
-    jobPollers.delete(jobId);
-    if (state.activeJobId !== jobId) {
-      // Another job is shown: only its "+N en curso" count changed.
-      if (state.activeJobId) renderJobBox();
-      return;
-    }
-    const next = newestBoxedJobId();
-    if (next) {
-      showJobInBox(next);
-      return;
-    }
-    state.activeJobId = null;
-    $("btn-cancel-job").classList.add("hidden");
-    if (succeeded) {
-      clearTimeout(state.jobHideTimer);
-      state.jobHideTimer = setTimeout(() => $("job-box").classList.add("hidden"), 2000);
-    }
-  }
-
-  /**
-   * Returns the most recently started job that is shown in #job-box.
-   * @return {?string} Job id, or null when no boxed job is running.
-   */
-  function newestBoxedJobId() {
-    let newest = null;
-    jobPollers.forEach((p, id) => {
-      if (p.showInBox) newest = id;
-    });
-    return newest;
-  }
-
-  /**
-   * Makes a job the one shown in #job-box (and the cancel target), cancelling
-   * a pending hide of the box.
-   * @param {string} jobId Polled job id.
-   */
-  function showJobInBox(jobId) {
-    state.activeJobId = jobId;
-    clearTimeout(state.jobHideTimer);
-    state.jobHideTimer = null;
-    $("job-box").classList.remove("hidden");
-    $("btn-cancel-job").classList.remove("hidden");
-    renderJobBox();
+    jobPollers.pollJob(jobId, onSuccess, opts);
   }
 
   /**
    * Paints the shown job's last snapshot into #job-box. Before the first
    * response it shows a neutral 0% instead of the previous job's text. When
    * other boxed jobs are running, their count is appended to the stage.
+   * @param {!Object} job Last snapshot of the shown job ({} before the first
+   *     response).
+   * @param {number} others Number of other boxed jobs still running.
    */
-  function renderJobBox() {
-    const poller = jobPollers.get(state.activeJobId);
-    if (!poller) return;
-    const job = poller.job || {};
+  function renderJobBox(job, others) {
     const progress = job.progress || 0;
-    let others = -1;
-    jobPollers.forEach((p) => {
-      if (p.showInBox) others += 1;
-    });
     const extra = others > 0 ? ` (+${others} ${others === 1 ? "tarea" : "tareas"} en curso)` : "";
     $("job-stage").textContent = `${job.stage || "Procesando..."}${extra}`;
     $("job-pct").textContent = `${progress}%`;
@@ -3711,7 +3406,7 @@
           // The server marks the result stale when the media changed while
           // Whisper ran (e.g. a new Resolve export); its cues belong to the
           // old audio, so load the current session instead of this result.
-          if (job.result && job.result.stale === true) {
+          if (isStaleJobResult(job)) {
             showToast(
               "Se descartó la transcripción porque el audio cambió mientras se procesaba. " +
                 "Vuelve a transcribir.",

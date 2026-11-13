@@ -2570,6 +2570,22 @@ EOF
     self.assertEqual(st, 206)
     self.assertEqual(len(data), 10)
 
+  def test_static_ui_serves_app_helpers_before_app(self) -> None:
+    """/app_helpers.js is served as JS and loaded by index.html first."""
+    st, hdrs, body = self._request("/app_helpers.js")
+    self.assertEqual(st, 200)
+    self.assertEqual(
+        hdrs.get("Content-Type"), "application/javascript; charset=utf-8"
+    )
+    self.assertIn("AutoSubsHelpers", body.decode("utf-8"))
+    _, _, html = self._request("/")
+    html_txt = html.decode("utf-8")
+    helpers_pos = html_txt.find('<script src="/app_helpers.js"></script>')
+    self.assertGreaterEqual(helpers_pos, 0)
+    self.assertLess(
+        helpers_pos, html_txt.find('<script src="/app.js"></script>')
+    )
+
 
 class ResolveTemplatesAndBundleTest(unittest.TestCase):
   """Resolve Lua scripts, Fusion templates, UI IDs, ZIP bundle, WAV peaks."""
@@ -2683,9 +2699,9 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
     return cls._cached_bundle_meta
 
   def test_zip_bundle_file_count_and_exclusions(self) -> None:
-    """The ZIP has exactly 51 files and excludes __init__.py and site/."""
+    """The ZIP has exactly 52 files and excludes __init__.py and site/."""
     meta = self._bundle_meta()
-    self.assertEqual(meta["file_count"], 51, meta["entries"])
+    self.assertEqual(meta["file_count"], 52, meta["entries"])
     self.assertNotIn("AutoSubs_ES/__init__.py", meta["entries"])
     self.assertFalse(
         any(e.startswith("AutoSubs_ES/site/") for e in meta["entries"])
@@ -3100,6 +3116,18 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
     self.assertIsNone(
         re.search(r'^\s*"\$\{BREW_BIN\}" install', src, re.MULTILINE)
     )
+
+  def test_bundle_ships_app_helpers_but_not_node_tests(self) -> None:
+    """The ZIP requires ui/app_helpers.js and leaves out tests/js/*.mjs."""
+    self.assertIn(
+        "AutoSubs_ES/ui/app_helpers.js", package_bundle.REQUIRED_BUNDLE_ENTRIES
+    )
+    root = package_bundle.find_project_root()
+    entries = package_bundle.verify_zip_bytes(
+        package_bundle.build_zip_bytes(root)
+    )["entries"]
+    self.assertIn("AutoSubs_ES/ui/app_helpers.js", entries)
+    self.assertFalse(any(e.endswith(".mjs") for e in entries), entries)
 
 
 if __name__ == "__main__":
