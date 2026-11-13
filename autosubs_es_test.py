@@ -7,6 +7,9 @@ to an ephemeral loopback port inside a temporary app directory. No Resolve,
 ffmpeg, or GGML model downloads are required.
 """
 
+# White-box tests: they deliberately exercise private helpers and state.
+# pylint: disable=protected-access
+
 from __future__ import annotations
 
 import http.client
@@ -332,10 +335,12 @@ class HardwareIMac2017Test(unittest.TestCase):
     filename, rest = self._av_get_token(args, ":")
     self.assertEqual(filename, ass_path)
     self.assertTrue(rest.startswith(":fontsdir="), rest)
-    fonts_val, rest = self._av_get_token(rest[len(":fontsdir="):], ":")
+    fonts_val, rest = self._av_get_token(rest[len(":fontsdir=") :], ":")
     self.assertEqual(fonts_val, fonts_dir)
     self.assertEqual(rest, "")
 
+  def test_burnin_filter_paths_with_local_ffmpeg(self) -> None:
+    """Odd paths survive a real ffmpeg movie= probe and libass burn-in."""
     # End-to-end with the local ffmpeg when present. The "movie" source
     # filter parses its filename option exactly like "ass" (av_get_token on
     # both levels), so it validates the quoting even without libass.
@@ -343,23 +348,48 @@ class HardwareIMac2017Test(unittest.TestCase):
     if not ffmpeg_bin or not hardware_imac2017.ffmpeg_supports_filter(
         ffmpeg_bin, "movie"
     ):
-      return
+      self.skipTest("no local ffmpeg with the movie filter")
     real_subprocess = hardware_imac2017.subprocess
     with tempfile.TemporaryDirectory() as tmp:
       odd_dir = Path(tmp) / "José's clip: v1, [final] ñandú; x"
       odd_dir.mkdir()
       video = odd_dir / "it's a, test: [1].nut"
       gen = real_subprocess.run(
-          [ffmpeg_bin, "-v", "error", "-y", "-f", "lavfi", "-i",
-           "color=c=black:s=32x32:d=0.2", "-c:v", "rawvideo", str(video)],
-          capture_output=True, text=True, check=False,
+          [
+              ffmpeg_bin,
+              "-v",
+              "error",
+              "-y",
+              "-f",
+              "lavfi",
+              "-i",
+              "color=c=black:s=32x32:d=0.2",
+              "-c:v",
+              "rawvideo",
+              str(video),
+          ],
+          capture_output=True,
+          text=True,
+          check=False,
       )
       self.assertEqual(gen.returncode, 0, gen.stderr)
       graph = f"movie={hardware_imac2017.quote_ffmpeg_filter_value(str(video))}"
       probe = real_subprocess.run(
-          [ffmpeg_bin, "-v", "error", "-filter_complex", graph,
-           "-frames:v", "1", "-f", "null", "-"],
-          capture_output=True, text=True, check=False,
+          [
+              ffmpeg_bin,
+              "-v",
+              "error",
+              "-filter_complex",
+              graph,
+              "-frames:v",
+              "1",
+              "-f",
+              "null",
+              "-",
+          ],
+          capture_output=True,
+          text=True,
+          check=False,
       )
       self.assertEqual(probe.returncode, 0, probe.stderr)
 
@@ -407,6 +437,8 @@ class HardwareIMac2017Test(unittest.TestCase):
       """Times out on the first pgrep pattern and matches the second."""
 
       DEVNULL = real_subprocess.DEVNULL
+      # Mirrors the real `subprocess.SubprocessError` attribute name.
+      # pylint: disable-next=invalid-name
       SubprocessError = real_subprocess.SubprocessError
 
       @staticmethod
@@ -441,10 +473,17 @@ class MachineSettingsTest(unittest.TestCase):
   def test_intel_profile_from_real_specs(self) -> None:
     """Intel profiles from CPU brand strings force CPU Whisper and libx264."""
     imac = hardware_imac2017.build_intel_profile(
-        "Intel(R) Core(TM) i5-7500 CPU @ 3.40GHz", 4, 4, 32, "Radeon Pro 555", 2048
+        "Intel(R) Core(TM) i5-7500 CPU @ 3.40GHz",
+        4,
+        4,
+        32,
+        "Radeon Pro 555",
+        2048,
     )
     self.assertTrue(imac.force_no_gpu)
-    self.assertEqual((imac.threads_standalone, imac.threads_with_resolve), (4, 3))
+    self.assertEqual(
+        (imac.threads_standalone, imac.threads_with_resolve), (4, 3)
+    )
     self.assertEqual(imac.cpu_short, "Intel Core i5")
     self.assertEqual(imac.video_encoder, "libx264")
     big = hardware_imac2017.build_intel_profile(
@@ -459,26 +498,47 @@ class MachineSettingsTest(unittest.TestCase):
     with tempfile.TemporaryDirectory() as tmp:
       store = machine_settings.MachineSettings(Path(tmp))
       perf = store.snapshot()["performance"]
-      auto = machine_settings.resolve_performance(prof, perf, resolve_running=False)
-      self.assertEqual((auto["mode"], auto["threads"], auto["force_no_gpu"]), ("auto", 4, True))
+      auto = machine_settings.resolve_performance(
+          prof, perf, resolve_running=False
+      )
       self.assertEqual(
-          machine_settings.resolve_performance(prof, perf, resolve_running=True)["threads"], 3
+          (auto["mode"], auto["threads"], auto["force_no_gpu"]),
+          ("auto", 4, True),
+      )
+      self.assertEqual(
+          machine_settings.resolve_performance(
+              prof, perf, resolve_running=True
+          )["threads"],
+          3,
       )
       safe = machine_settings.resolve_performance(prof, {"mode": "safe"})
       self.assertEqual((safe["threads"], safe["fast_beam"]), (2, True))
 
       store.update({
-          "performance": {"mode": "custom", "threads": 2, "force_no_gpu": False,
-                          "model_id": "small-q8", "bogus": 1},
-          "preferences": {"dialect": "es_mx", "custom_glossary": "Catan", "evil": "x"},
+          "performance": {
+              "mode": "custom",
+              "threads": 2,
+              "force_no_gpu": False,
+              "model_id": "small-q8",
+              "bogus": 1,
+          },
+          "preferences": {
+              "dialect": "es_mx",
+              "custom_glossary": "Catan",
+              "evil": "x",
+          },
       })
       # Persisted to disk and reloaded by a fresh instance.
       data = machine_settings.MachineSettings(Path(tmp)).snapshot()
       self.assertNotIn("bogus", data["performance"])
-      self.assertEqual(data["preferences"], {"dialect": "es_mx", "custom_glossary": "Catan"})
+      self.assertEqual(
+          data["preferences"], {"dialect": "es_mx", "custom_glossary": "Catan"}
+      )
       custom = machine_settings.resolve_performance(prof, data["performance"])
-      self.assertEqual((custom["threads"], custom["force_no_gpu"], custom["model_id"]),
-                       (2, False, "small-q8"))
+      self.assertEqual(
+          (custom["threads"], custom["force_no_gpu"], custom["model_id"]),
+          (2, False, "small-q8"),
+      )
 
       exported = store.export_preferences()
       self.assertNotIn("performance", exported)
@@ -496,13 +556,16 @@ class MachineSettingsTest(unittest.TestCase):
   def test_benchmark_recommendations(self) -> None:
     """Benchmark speed ratios recommend a faster, larger, or same model."""
     self.assertEqual(
-        machine_settings.recommend_from_benchmark("turbo-q8", 0.8)["model_id"], "turbo-q5"
+        machine_settings.recommend_from_benchmark("turbo-q8", 0.8)["model_id"],
+        "turbo-q5",
     )
     self.assertEqual(
-        machine_settings.recommend_from_benchmark("turbo-q8", 20)["model_id"], "large-v3-q5"
+        machine_settings.recommend_from_benchmark("turbo-q8", 20)["model_id"],
+        "large-v3-q5",
     )
     self.assertEqual(
-        machine_settings.recommend_from_benchmark("turbo-q8", 4)["model_id"], "turbo-q8"
+        machine_settings.recommend_from_benchmark("turbo-q8", 4)["model_id"],
+        "turbo-q8",
     )
 
   def test_update_validates_types_and_load_checks_version(self) -> None:
@@ -518,10 +581,16 @@ class MachineSettingsTest(unittest.TestCase):
 
     with tempfile.TemporaryDirectory() as tmp:
       store = machine_settings.MachineSettings(Path(tmp))
-      store.update({"performance": {
-          "mode": "custom", "threads": "abc", "force_no_gpu": "maybe",
-          "fast_beam": "true", "enhance_voice": 0, "model_id": 42,
-      }})
+      store.update({
+          "performance": {
+              "mode": "custom",
+              "threads": "abc",
+              "force_no_gpu": "maybe",
+              "fast_beam": "true",
+              "enhance_voice": 0,
+              "model_id": 42,
+          }
+      })
       perf = store.snapshot()["performance"]
       self.assertEqual(perf["mode"], "custom")
       self.assertIsNone(perf["threads"])
@@ -584,14 +653,20 @@ class SpanishNlpTest(unittest.TestCase):
     )
     by_text = {w.text: w for w in aligned}
     # Untouched words keep their exact Whisper timings.
-    self.assertEqual((by_text["Hoy"].start_ms, by_text["Hoy"].end_ms), (1000, 1300))
-    self.assertEqual((by_text["vez."].start_ms, by_text["vez."].end_ms), (2900, 3200))
+    self.assertEqual(
+        (by_text["Hoy"].start_ms, by_text["Hoy"].end_ms), (1000, 1300)
+    )
+    self.assertEqual(
+        (by_text["vez."].start_ms, by_text["vez."].end_ms), (2900, 3200)
+    )
     for prev, cur in zip(aligned, aligned[1:]):
       self.assertLessEqual(prev.start_ms, cur.start_ms)
       self.assertGreater(cur.end_ms, cur.start_ms)
 
     # Moving/resizing the cue rescales out-of-range words into the new span.
-    moved = spanish_nlp.align_words_to_lines(words, ["Hoy jugamos Katan otra vez."], 5000, 6100)
+    moved = spanish_nlp.align_words_to_lines(
+        words, ["Hoy jugamos Katan otra vez."], 5000, 6100
+    )
     self.assertEqual(moved[0].start_ms, 5000)
     self.assertEqual(moved[-1].end_ms, 6100)
 
@@ -688,9 +763,21 @@ class SpanishNlpTest(unittest.TestCase):
             "tokens": [
                 {"text": "[_BEG_]", "offsets": {"from": 0, "to": 0}, "p": 0.9},
                 {"text": " Hola", "offsets": {"from": 0, "to": 400}, "p": 0.9},
-                {"text": "[_TT_25]", "offsets": {"from": 500, "to": 500}, "p": 0.9},
-                {"text": " mundo.", "offsets": {"from": 500, "to": 900}, "p": 0.9},
-                {"text": "[_TT_335]", "offsets": {"from": 1000, "to": 1000}, "p": 0.9},
+                {
+                    "text": "[_TT_25]",
+                    "offsets": {"from": 500, "to": 500},
+                    "p": 0.9,
+                },
+                {
+                    "text": " mundo.",
+                    "offsets": {"from": 500, "to": 900},
+                    "p": 0.9,
+                },
+                {
+                    "text": "[_TT_335]",
+                    "offsets": {"from": 1000, "to": 1000},
+                    "p": 0.9,
+                },
             ],
         }]
     }
@@ -786,8 +873,8 @@ class SpanishNlpTest(unittest.TestCase):
     for i in range(len(cues_reels) - 1):
       self.assertLessEqual(cues_reels[i].end_ms, cues_reels[i + 1].start_ms)
 
-  def test_boardgame_domain_anglicisms_and_hesitation_punct(self) -> None:
-    """juegos_mesa fixes board-game anglicisms; ¿ skips hesitations."""
+  def test_boardgame_initial_prompt_fits_and_includes_glossary(self) -> None:
+    """juegos_mesa initial prompt stays <= 580 chars with glossary terms."""
     prompt = spanish_nlp.build_spanish_initial_prompt(
         "es_es", ["Catan", "Devir"], domain="juegos_mesa"
     )
@@ -796,6 +883,8 @@ class SpanishNlpTest(unittest.TestCase):
     self.assertIn("Catan", prompt)
     self.assertIn("meeple", prompt)
 
+  def test_boardgame_domain_anglicisms_and_hesitation_punct(self) -> None:
+    """juegos_mesa fixes board-game anglicisms; ¿ skips hesitations."""
     tokens = [
         ("Hoy", 100, 300),
         ("probamos", 310, 650),
@@ -861,7 +950,9 @@ class SpanishNlpTest(unittest.TestCase):
     aligned = spanish_nlp.align_words_to_lines(
         words, ["Hola gran nuevo mundo"], 100, 130
     )
-    self.assertEqual([w.text for w in aligned], ["Hola", "gran", "nuevo", "mundo"])
+    self.assertEqual(
+        [w.text for w in aligned], ["Hola", "gran", "nuevo", "mundo"]
+    )
     for w in aligned:
       self.assertGreaterEqual(w.start_ms, 100)
       self.assertLessEqual(w.end_ms, 130)
@@ -952,7 +1043,9 @@ class ExportersTest(unittest.TestCase):
     )
     self.assertIn(r"{\kf40}¿Cómo", ass_k)
     # Primary = highlight (#FFD43B -> BGR 3BD4FF), Secondary = fill.
-    self.assertIn("Style: AutoSubsES,Open Sans,72,&H003BD4FF,&H00FFFFFF,", ass_k)
+    self.assertIn(
+        "Style: AutoSubsES,Open Sans,72,&H003BD4FF,&H00FFFFFF,", ass_k
+    )
 
     for fps, expected_dur in ((24.0, "100/2400s"), (29.97, "1001/30000s")):
       xml_str = exporters.export_fcpxml(
@@ -978,11 +1071,8 @@ class ExportersTest(unittest.TestCase):
     self.assertIn('track_name = "Sub \\"ES\\""', lua_code)
     self.assertIn("¿Cómo estás\\nen Resolve 20?", lua_code)
 
-  def test_style_opacity_across_exporters(self) -> None:
-    """Alpha values are clamped and mapped into ASS, FCPXML, and Lua."""
-    cues = self._sample_cues()
-
-    # Clamping and safe fallbacks for malformed input.
+  def test_style_from_dict_clamps_alpha_values(self) -> None:
+    """StyleConfig.from_dict clamps alphas to 0..1 with safe fallbacks."""
     parsed = exporters.StyleConfig.from_dict({
         "fill_alpha": 2,
         "outline_alpha": -1,
@@ -997,11 +1087,13 @@ class ExportersTest(unittest.TestCase):
         exporters.StyleConfig.from_dict({"font": "Arial"}).highlight_alpha, 1.0
     )
 
+  def test_ass_style_alpha_bytes_for_fill_outline_and_box(self) -> None:
+    """ASS style colours carry inverted alpha bytes for fill/outline/box."""
+    cues = self._sample_cues()
+
     # Defaults keep the expected style line with black drop shadow.
     ass_default = exporters.export_ass_karaoke(cues, exporters.StyleConfig())
-    self.assertIn(
-        "&H00FFFFFF,&H00FFFFFF,&H00120D0B,&H59000000,", ass_default
-    )
+    self.assertIn("&H00FFFFFF,&H00FFFFFF,&H00120D0B,&H59000000,", ass_default)
 
     # 50 % fill and 0 % outline -> ASS alpha bytes (00 opaque, FF clear).
     ass_alpha = exporters.export_ass_karaoke(
@@ -1019,6 +1111,9 @@ class ExportersTest(unittest.TestCase):
     self.assertIn("&H80332211,&H59000000,", ass_box)
     self.assertIn(",3,6,0,2,", ass_box)
 
+  def test_fcpxml_font_color_carries_fill_alpha(self) -> None:
+    """FCPXML fontColor appends the fill alpha (1 by default)."""
+    cues = self._sample_cues()
     fcp_default = exporters.export_fcpxml(
         cues, timeline_name="A", style=exporters.StyleConfig()
     )
@@ -1028,8 +1123,10 @@ class ExportersTest(unittest.TestCase):
     )
     self.assertIn('fontColor="1.000 1.000 1.000 0.5"', fcp_alpha)
 
+  def test_lua_payload_carries_alpha_fields(self) -> None:
+    """The Resolve Lua payload exports fill/outline/shadow alphas."""
     lua_code = exporters.export_resolve_lua_payload(
-        cues=cues,
+        cues=self._sample_cues(),
         mode="textplus",
         track_name="Sub",
         template_name="AutoSubs_ES_Cine_Netflix",
@@ -1044,8 +1141,38 @@ class ExportersTest(unittest.TestCase):
     self.assertIn("outline_a = 0.5000", lua_code)
     self.assertIn("shadow_a = 0.3000", lua_code)
 
-  def test_ndf_23976_timecode_ass_escaping_and_burnin_fontsdir(self) -> None:
-    """23.976 NDF stays drift-free; ASS, fontsdir, and quotes are safe."""
+  def _ndf_23976_cues(self) -> list[spanish_nlp.SubtitleCue]:
+    """Returns the sample cue plus one cue at 1001 s for 23.976 NDF checks.
+
+    1001 s of media is exactly 24000 frames at 24000/1001 fps, i.e. 1000 s
+    (00:16:40) of non-drop-frame timecode, which exposes any fps rounding.
+
+    Returns:
+      Two cues: the 500-2500 ms sample cue and a 1001-1003.002 s cue.
+    """
+    return self._sample_cues() + [
+        spanish_nlp.SubtitleCue(
+            index=2,
+            start_ms=1_001_000,
+            end_ms=1_003_002,
+            lines=["Sin deriva NDF"],
+        )
+    ]
+
+  def _edited_cue_with_braces(self) -> spanish_nlp.SubtitleCue:
+    """Returns the sample cue re-parsed after editing its text to "{2 VP}".
+
+    Returns:
+      A cue rebuilt with SubtitleCue.from_dict from the edited dict, so its
+      words are re-aligned to the new text.
+    """
+    edited_raw = self._sample_cues()[0].to_dict()
+    edited_raw["lines"] = ["Texto editado {2 VP}"]
+    edited_raw["text"] = "Texto editado {2 VP}"
+    return spanish_nlp.SubtitleCue.from_dict(edited_raw)
+
+  def test_ms_to_timeline_tc_23976_ndf_is_drift_free(self) -> None:
+    """23.976 NDF media ms map to timeline ms without drift from 01:00:00."""
     self.assertEqual(
         exporters.ms_to_timeline_tc_ms(0, start_frame=86400, fps=23.976),
         3_600_000,
@@ -1057,20 +1184,16 @@ class ExportersTest(unittest.TestCase):
         4_600_000,
     )
 
-    cues = self._sample_cues() + [
-        spanish_nlp.SubtitleCue(
-            index=2,
-            start_ms=1_001_000,
-            end_ms=1_003_002,
-            lines=["Sin deriva NDF"],
-        )
-    ]
+  def test_srt_timeline_tc_23976_ndf_is_drift_free(self) -> None:
+    """Timeline-TC SRT at 23.976 keeps cues on NDF timecode after 1001 s."""
     srt_23976 = exporters.export_srt_timeline_tc(
-        cues, start_frame=86400, fps=23.976
+        self._ndf_23976_cues(), start_frame=86400, fps=23.976
     )
     self.assertIn("01:00:00,500 --> 01:00:02,498", srt_23976)
     self.assertIn("01:16:40,000 --> 01:16:42,000", srt_23976)
 
+  def test_jump_playhead_23976_ndf_timecode(self) -> None:
+    """Bridge jump at 23.976 NDF yields frame-exact HH:MM:SS:FF timecodes."""
     with tempfile.TemporaryDirectory() as tmp:
       tmp_p = Path(tmp)
       bridge = resolve_bridge.ResolveBridge(app_data_dir=tmp_p / "app")
@@ -1082,15 +1205,18 @@ class ExportersTest(unittest.TestCase):
       self.assertEqual(j0["timecode"], "01:00:00:00")
       self.assertEqual(j1["timecode"], "01:16:40:00")
 
-    edited_raw = cues[0].to_dict()
-    edited_raw["lines"] = ["Texto editado {2 VP}"]
-    edited_raw["text"] = "Texto editado {2 VP}"
-    edited_cue = spanish_nlp.SubtitleCue.from_dict(edited_raw)
+  def test_cue_from_dict_realigns_words_after_text_edit(self) -> None:
+    """Editing cue text re-splits words and keeps them inside the cue span."""
+    edited_cue = self._edited_cue_with_braces()
     self.assertEqual(
         [w.text for w in edited_cue.words], ["Texto", "editado", "{2", "VP}"]
     )
     self.assertGreaterEqual(edited_cue.words[0].start_ms, edited_cue.start_ms)
     self.assertLessEqual(edited_cue.words[-1].end_ms, edited_cue.end_ms)
+
+  def test_ass_escapes_braces_and_commas_in_text_speaker_font(self) -> None:
+    """ASS escapes {} in text and strips commas from font and speaker."""
+    edited_cue = self._edited_cue_with_braces()
     edited_cue.speaker = "Alex, Host"
     ass_safe = exporters.export_ass_karaoke(
         [edited_cue],
@@ -1101,6 +1227,8 @@ class ExportersTest(unittest.TestCase):
     self.assertIn(r"\{2 VP\}", ass_safe)
     self.assertNotIn(r"\kf", ass_safe)
 
+  def test_burnin_fontsdir_escapes_space_and_colon(self) -> None:
+    """Burn-in quotes a fontsdir containing a space and a colon."""
     burn_cmd = hardware_imac2017.build_ffmpeg_burnin_command(
         ffmpeg_bin="/usr/local/bin/ffmpeg",
         input_video_path="/tmp/in.mp4",
@@ -1112,6 +1240,8 @@ class ExportersTest(unittest.TestCase):
     vf_arg = burn_cmd[burn_cmd.index("-vf") + 1]
     self.assertIn(r":fontsdir='/tmp/my fonts\:1'", vf_arg)
 
+  def test_clean_words_inverted_punct_after_dash_and_quotes(self) -> None:
+    """¿ goes after a leading dash; quoted jargon is still repaired."""
     quoted_words = [
         spanish_nlp.WordTiming("—Sabías", 100, 500),
         spanish_nlp.WordTiming("“mipels”?", 520, 980),
@@ -1137,9 +1267,12 @@ class ExportersTest(unittest.TestCase):
         shadow_alpha=0.5,
     )
     ass = exporters.export_ass_karaoke(cues, style=style)
-    style_lines = [ln for ln in ass.splitlines() if ln.startswith("Style: AutoSubsES,")]
+    style_lines = [
+        ln for ln in ass.splitlines() if ln.startswith("Style: AutoSubsES,")
+    ]
     self.assertEqual(len(style_lines), 1)
-    # Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, ...
+    # Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour,
+    # OutlineColour, BackColour, ...
     fields = style_lines[0].split(",")
     self.assertEqual(fields[6], "&H80000000")
 
@@ -1245,7 +1378,10 @@ class ExportersTest(unittest.TestCase):
 
     # Word/token count mismatch falls back to static fill text.
     broken = spanish_nlp.SubtitleCue(
-        index=1, start_ms=0, end_ms=1000, lines=["dos palabras"],
+        index=1,
+        start_ms=0,
+        end_ms=1000,
+        lines=["dos palabras"],
         words=[spanish_nlp.WordTiming("dos", 0, 500)],
     )
     ass_broken = exporters.export_ass_karaoke(
@@ -1474,7 +1610,9 @@ class FontManagerAndAnitypeTest(unittest.TestCase):
       mac_dir = Path(tmp) / "mac_fonts"
       mgr = font_manager.FontManager(app_dir, mac_dir)
       with self.assertRaises(ValueError):
-        mgr.install_upload("mixed_pack.zip", buf.getvalue(), install_to_macos=True)
+        mgr.install_upload(
+            "mixed_pack.zip", buf.getvalue(), install_to_macos=True
+        )
       self.assertEqual(list(mgr.app_fonts_dir.glob("*")), [])
       self.assertFalse(mac_dir.exists() and any(mac_dir.iterdir()))
 
@@ -1507,12 +1645,15 @@ class FontManagerAndAnitypeTest(unittest.TestCase):
           (c["location"], c["action"], c["installed_as"])
           for c in res["collisions"]
       ]
-      self.assertEqual(summary, [
-          ("zip", "renamed", "Font_2.otf"),
-          ("zip", "skipped_identical", "Font.otf"),
-          ("macos", "renamed", "Font_2.otf"),
-          ("macos", "renamed", "Font_2_2.otf"),
-      ])
+      self.assertEqual(
+          summary,
+          [
+              ("zip", "renamed", "Font_2.otf"),
+              ("zip", "skipped_identical", "Font.otf"),
+              ("macos", "renamed", "Font_2.otf"),
+              ("macos", "renamed", "Font_2_2.otf"),
+          ],
+      )
 
       # Re-uploading the same font finds its identical copy: nothing new.
       again = mgr.install_upload("Font.otf", font_a, install_to_macos=True)
@@ -1539,9 +1680,7 @@ class FontManagerAndAnitypeTest(unittest.TestCase):
 
     def _subtable(length: int) -> bytes:
       """Returns the subtable with `length` written in its header."""
-      header = struct.pack(
-          ">HHHHHHH", 4, length, 0, 2 * len(segs), 0, 0, 0
-      )
+      header = struct.pack(">HHHHHHH", 4, length, 0, 2 * len(segs), 0, 0, 0)
       return header + body
 
     check = font_manager._check_cmap_format4
@@ -1582,8 +1721,12 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
         host="127.0.0.1", port=0, app_dir=self.tmp_path / "app"
     )
     self.port = self.server.server_address[1]
+    # A short poll interval keeps tearDown fast: shutdown() waits up to one
+    # poll (0.5 s by default) for serve_forever to notice, once per test.
     self.thread = threading.Thread(
-        target=self.server.serve_forever, daemon=True
+        target=self.server.serve_forever,
+        kwargs={"poll_interval": 0.05},
+        daemon=True,
     )
     self.thread.start()
 
@@ -1640,48 +1783,31 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
     with urllib.request.urlopen(req, timeout=10) as resp:
       return resp.status, dict(resp.headers.items()), resp.read()
 
-  def test_full_studio_http_workflow(self) -> None:
-    # 1. Static UI & Status
-    """Demo, resegment, edit, export, Resolve push/jump, and upload."""
-    st_html, _, html = self._request("/")
-    self.assertEqual(st_html, 200)
-    html_txt = html.decode("utf-8")
-    self.assertIn("MTTN", html_txt)
-    self.assertIn("AutoSubs Tool", html_txt)
-    self.assertIn("La Matatena", html_txt)
+  # --- Studio workflow: demo -> resegment -> edit -> export/push ---
+  #
+  # The studio steps are sequential (exports read the edited cues), so the
+  # helpers below replay the earlier steps without asserting, letting each
+  # focused test start from the state it needs.
 
-    st_css, _, css = self._request("/styles.css")
-    self.assertEqual(st_css, 200)
-    css_str = css.decode("utf-8")
-    self.assertIn("#8367c7", css_str)
-    self.assertIn("color-scheme", css_str)
-    self.assertIn("theme-toggle-btn", css_str)
+  def _studio_load_demo(self) -> dict[str, Any]:
+    """Loads the Spanish demo session via POST /api/demo.
 
-    st_status, _, status_bytes = self._request("/api/status")
-    self.assertEqual(st_status, 200)
-    status_json = json.loads(status_bytes.decode("utf-8"))
-    self.assertEqual(
-        status_json["environment"]["hardware_profile"]["profile_id"],
-        hardware_imac2017.detect_hardware_profile().profile_id,
-    )
-
-    # 2. Load Spanish Demo + verify waveform + HTTP 206 media Range
+    Returns:
+      The decoded JSON response (`ok` flag plus `session`).
+    """
     _, _, demo_bytes = self._request("/api/demo", method="POST", body={})
-    demo_json = json.loads(demo_bytes.decode("utf-8"))
-    self.assertTrue(demo_json["ok"])
-    self.assertGreaterEqual(demo_json["session"]["cue_count"], 4)
-    self.assertGreater(len(demo_json["session"]["peaks"]), 50)
+    return json.loads(demo_bytes.decode("utf-8"))
 
-    st_media, hdrs_media, chunk = self._request(
-        "/api/media", headers={"Range": "bytes=0-63"}
-    )
-    self.assertEqual(st_media, 206)
-    self.assertEqual(len(chunk), 64)
-    self.assertTrue(
-        hdrs_media.get("Content-Range", "").startswith("bytes 0-63/")
-    )
+  def _studio_resegment_reels(self) -> list[dict[str, Any]]:
+    """Loads the demo, then re-segments it with the Reels 9:16 preset.
 
-    # 3. Instant RAE re-segmentation (Reels 9:16 + remove muletillas)
+    Muletillas are removed and inverted punctuation is fixed, as the studio's
+    instant RAE re-segmentation does.
+
+    Returns:
+      The re-segmented session cues as dicts.
+    """
+    self._studio_load_demo()
     _, _, reseg_bytes = self._request(
         "/api/resegment",
         method="POST",
@@ -1693,22 +1819,87 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
             }
         },
     )
-    reseg_cues = json.loads(reseg_bytes.decode("utf-8"))["session"]["cues"]
-    self.assertGreater(len(reseg_cues), 6)
-    joined_all = " ".join(c["text"] for c in reseg_cues)
-    self.assertIn("¿Sabías", joined_all)
-    self.assertIn("¡Qué", joined_all)
+    return json.loads(reseg_bytes.decode("utf-8"))["session"]["cues"]
 
-    # 4. Edit cues via PUT /api/cues
+  def _studio_edit_first_cue(self) -> list[dict[str, Any]]:
+    """Runs demo + re-segment, then rewrites cue 0 via PUT /api/cues.
+
+    Cue 0 becomes "Hola,\\nAutoSubs ES", which the exporters must reflect.
+
+    Returns:
+      The session cues returned by the server after the edit.
+    """
+    reseg_cues = self._studio_resegment_reels()
     reseg_cues[0]["text"] = "Hola,\nAutoSubs ES"
     reseg_cues[0]["lines"] = ["Hola,", "AutoSubs ES"]
     _, _, put_bytes = self._request(
         "/api/cues", method="PUT", body={"cues": reseg_cues}
     )
-    put_cues = json.loads(put_bytes.decode("utf-8"))["session"]["cues"]
+    return json.loads(put_bytes.decode("utf-8"))["session"]["cues"]
+
+  def test_studio_serves_index_html_with_branding(self) -> None:
+    """GET / serves the studio HTML with MTTN / La Matatena branding."""
+    st_html, _, html = self._request("/")
+    self.assertEqual(st_html, 200)
+    html_txt = html.decode("utf-8")
+    self.assertIn("MTTN", html_txt)
+    self.assertIn("AutoSubs Tool", html_txt)
+    self.assertIn("La Matatena", html_txt)
+
+  def test_studio_serves_css_with_theme_support(self) -> None:
+    """GET /styles.css serves the brand palette and the theme toggle."""
+    st_css, _, css = self._request("/styles.css")
+    self.assertEqual(st_css, 200)
+    css_str = css.decode("utf-8")
+    self.assertIn("#8367c7", css_str)
+    self.assertIn("color-scheme", css_str)
+    self.assertIn("theme-toggle-btn", css_str)
+
+  def test_studio_status_reports_hardware_profile(self) -> None:
+    """GET /api/status reports the detected hardware profile ID."""
+    st_status, _, status_bytes = self._request("/api/status")
+    self.assertEqual(st_status, 200)
+    status_json = json.loads(status_bytes.decode("utf-8"))
+    self.assertEqual(
+        status_json["environment"]["hardware_profile"]["profile_id"],
+        hardware_imac2017.detect_hardware_profile().profile_id,
+    )
+
+  def test_studio_demo_loads_cues_and_waveform(self) -> None:
+    """POST /api/demo loads at least 4 cues and a dense waveform."""
+    demo_json = self._studio_load_demo()
+    self.assertTrue(demo_json["ok"])
+    self.assertGreaterEqual(demo_json["session"]["cue_count"], 4)
+    self.assertGreater(len(demo_json["session"]["peaks"]), 50)
+
+  def test_studio_demo_media_serves_range_206(self) -> None:
+    """GET /api/media honors a Range header with 206 + Content-Range."""
+    self._studio_load_demo()
+    st_media, hdrs_media, chunk = self._request(
+        "/api/media", headers={"Range": "bytes=0-63"}
+    )
+    self.assertEqual(st_media, 206)
+    self.assertEqual(len(chunk), 64)
+    self.assertTrue(
+        hdrs_media.get("Content-Range", "").startswith("bytes 0-63/")
+    )
+
+  def test_studio_resegment_reels_adds_inverted_punctuation(self) -> None:
+    """Reels 9:16 re-segmentation yields short cues with ¿ and ¡ added."""
+    reseg_cues = self._studio_resegment_reels()
+    self.assertGreater(len(reseg_cues), 6)
+    joined_all = " ".join(c["text"] for c in reseg_cues)
+    self.assertIn("¿Sabías", joined_all)
+    self.assertIn("¡Qué", joined_all)
+
+  def test_studio_put_cues_persists_edit(self) -> None:
+    """PUT /api/cues stores edited cue text in the session."""
+    put_cues = self._studio_edit_first_cue()
     self.assertEqual(put_cues[0]["text"], "Hola,\nAutoSubs ES")
 
-    # 5. Export SRT, ASS Karaoke, TXT, FCPXML
+  def test_studio_exports_every_format_after_edit(self) -> None:
+    """POST /api/export renders SRT/ASS/TXT/TXT-TC/FCPXML from edited cues."""
+    self._studio_edit_first_cue()
     for fmt, needle in (
         ("srt", "-->"),
         ("ass", "[Events]"),
@@ -1716,13 +1907,16 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
         ("txt_tc", "[00:00:0"),
         ("fcpxml", '<fcpxml version="1.9">'),
     ):
-      _, _, exp_bytes = self._request(
-          "/api/export", method="POST", body={"format": fmt}
-      )
-      exp_json = json.loads(exp_bytes.decode("utf-8"))
-      self.assertIn(needle, exp_json["content"])
+      with self.subTest(fmt=fmt):
+        _, _, exp_bytes = self._request(
+            "/api/export", method="POST", body={"format": fmt}
+        )
+        exp_json = json.loads(exp_bytes.decode("utf-8"))
+        self.assertIn(needle, exp_json["content"])
 
-    # 6. Push to Resolve outbox & jump timecode
+  def test_studio_resolve_push_writes_outbox_files(self) -> None:
+    """POST /api/resolve/push writes every outbox file; table is bare {...}."""
+    self._studio_edit_first_cue()
     _, _, push_bytes = self._request(
         "/api/resolve/push",
         method="POST",
@@ -1738,13 +1932,18 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
         "lua_payload",
         "lua_table",
     ):
-      self.assertTrue(Path(push_json["files"][key]).is_file())
+      with self.subTest(file=key):
+        self.assertTrue(Path(push_json["files"][key]).is_file())
     push_table_txt = Path(push_json["files"]["lua_table"]).read_text(
         encoding="utf-8"
     )
     self.assertTrue(push_table_txt.lstrip().startswith("{"))
     self.assertFalse(push_table_txt.lstrip().startswith("return"))
 
+  def test_studio_resolve_jump_writes_jump_files(self) -> None:
+    """POST /api/resolve/jump writes jump_tc.lua and a bare {...} table."""
+    # The jump route only reads timeline metadata, never the session cues,
+    # so it needs no demo/edit setup.
     _, _, jump_bytes = self._request(
         "/api/resolve/jump", method="POST", body={"ms": 4500}
     )
@@ -1756,7 +1955,9 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
     ).read_text(encoding="utf-8")
     self.assertTrue(jump_table_txt.lstrip().startswith("{"))
 
-    # 7. Binary upload via POST /api/upload
+  def test_studio_upload_decodes_filename_and_flags_audio(self) -> None:
+    """POST /api/upload over a demo session decodes %-names; WAV is audio."""
+    self._studio_load_demo()
     sample_wav = self.tmp_path / "sample.wav"
     resolve_bridge.generate_demo_wav(str(sample_wav), duration_ms=1200)
     wav_bytes = sample_wav.read_bytes()
@@ -1772,9 +1973,8 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
     self.assertTrue(Path(up_json["media_path"]).is_file())
     self.assertFalse(up_json["session"]["is_video"])
 
-  def test_security_origin_guard_video_range_and_upload_reset(self) -> None:
-    # 1. Cross-origin mutating POST blocked with 403.
-    """Origin/Host/path guards reject; uploads reset cues; MP4 Range works."""
+  def test_guard_rejects_cross_origin_mutating_post(self) -> None:
+    """A cross-origin mutating POST is blocked with 403."""
     with self.assertRaises(urllib.error.HTTPError) as ctx_origin:
       self._request(
           "/api/demo",
@@ -1785,13 +1985,15 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
     self.assertEqual(ctx_origin.exception.code, 403)
     ctx_origin.exception.close()
 
-    # 2. Disallowed Host header blocked with 403.
+  def test_guard_rejects_disallowed_host_header(self) -> None:
+    """A request with a non-loopback Host header is blocked with 403."""
     with self.assertRaises(urllib.error.HTTPError) as ctx_host:
       self._request("/api/status", headers={"Host": "evil.example:55120"})
     self.assertEqual(ctx_host.exception.code, 403)
     ctx_host.exception.close()
 
-    # 3. Arbitrary filesystem media_path in /api/transcribe blocked outside app_dir.
+  def test_transcribe_rejects_media_path_outside_app_dir(self) -> None:
+    """/api/transcribe refuses a filesystem media_path outside app_dir."""
     models_dir = self.tmp_path / "app/models"
     models_dir.mkdir(parents=True, exist_ok=True)
     (models_dir / "ggml-large-v3-turbo-q8_0.bin").write_bytes(
@@ -1819,7 +2021,8 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
     finally:
       hardware_imac2017.find_binary = orig_find
 
-    # 4. Uploading new media clears stale cues from demo session & bumps media_rev.
+  def test_upload_clears_demo_cues_and_bumps_media_rev(self) -> None:
+    """Uploading new media clears stale demo cues and bumps media_rev."""
     _, _, demo_bytes = self._request("/api/demo", method="POST", body={})
     demo_sess = json.loads(demo_bytes.decode("utf-8"))["session"]
     self.assertGreater(demo_sess["cue_count"], 0)
@@ -1835,7 +2038,8 @@ class BridgeAndServerIntegrationTest(unittest.TestCase):
     self.assertEqual(up_sess["cue_count"], 0)
     self.assertNotEqual(up_sess["media_rev"], demo_sess["media_rev"])
 
-    # 5. Exported MP4 streams via HTTP 206 Range requests instead of full read.
+  def test_exported_video_streams_range_206(self) -> None:
+    """The exported MP4 streams via HTTP 206 Range instead of a full read."""
     fake_mp4 = self.tmp_path / "app/cache/fake_out.mp4"
     fake_mp4.write_bytes(b"0123456789ABCDEF" * 8)
     with self.state.lock:
@@ -2164,6 +2368,7 @@ EOF
 
   def test_upload_and_notify_survive_undecodable_wav_peaks(self) -> None:
     """A WAV the wave module rejects (32-bit float) still activates."""
+
     def _raise_wave_error(path: str, num_buckets: int | None = None):
       """Simulates extract_waveform_peaks on a 32-bit float WAV."""
       raise wave.Error("unknown format: 3")
@@ -2335,7 +2540,9 @@ EOF
     hardware_imac2017.find_binary = lambda cands: (
         str(fake_whisper)
         if "whisper-cli" in cands
-        else None if "ffmpeg" in cands else orig_find(cands)
+        else None
+        if "ffmpeg" in cands
+        else orig_find(cands)
     )
     try:
       body = {"source": "inbox", "model_id": "turbo-q8"}
@@ -2367,7 +2574,9 @@ EOF
     hardware_imac2017.find_binary = lambda cands: (
         str(fake_whisper)
         if "whisper-cli" in cands
-        else None if "ffmpeg" in cands else orig_find(cands)
+        else None
+        if "ffmpeg" in cands
+        else orig_find(cands)
     )
     body = {"source": "inbox", "model_id": "turbo-q8"}
     try:
@@ -2456,35 +2665,56 @@ EOF
       st, _, data = self._request("/api/media", headers={"Range": rng})
       self.assertEqual(st, 200, rng)
       self.assertEqual(len(data), total)
-    st, hdrs, data = self._request(
+    st, _, data = self._request(
         "/api/media", headers={"Range": f"bytes={total - 10}-{total + 50}"}
     )
     self.assertEqual(st, 206)
     self.assertEqual(len(data), 10)
 
+  def test_static_ui_serves_app_helpers_before_app(self) -> None:
+    """/app_helpers.js is served as JS and loaded by index.html first."""
+    st, hdrs, body = self._request("/app_helpers.js")
+    self.assertEqual(st, 200)
+    self.assertEqual(
+        hdrs.get("Content-Type"), "application/javascript; charset=utf-8"
+    )
+    self.assertIn("AutoSubsHelpers", body.decode("utf-8"))
+    _, _, html = self._request("/")
+    html_txt = html.decode("utf-8")
+    helpers_pos = html_txt.find('<script src="/app_helpers.js"></script>')
+    self.assertGreaterEqual(helpers_pos, 0)
+    self.assertLess(
+        helpers_pos, html_txt.find('<script src="/app.js"></script>')
+    )
+
 
 class ResolveTemplatesAndBundleTest(unittest.TestCase):
   """Resolve Lua scripts, Fusion templates, UI IDs, ZIP bundle, WAV peaks."""
 
-  def test_lua_bridges_templates_and_zip_bundle(self) -> None:
-    """Lua loaders, Fusion macros, UI element IDs, and ZIP contents."""
-    root = package_bundle.find_project_root()
+  def test_lua_scripts_load_payloads_with_fallbacks(self) -> None:
+    """Insert/jump scripts read payloads via io.open, bmd.readfile, loadfile."""
+    for rel_path in (
+        "lua/2_AutoSubs_ES_Insertar_Subtitulos.lua",
+        "lua/3_AutoSubs_ES_Ir_A_Tiempo.lua",
+    ):
+      lua_src = self._read_repo_text(rel_path)
+      with self.subTest(script=rel_path):
+        self.assertIn("io.open", lua_src)
+        self.assertIn("bmd.readfile", lua_src)
+        self.assertIn("loadfile", lua_src)
 
-    lua_insert = (
-        root / "lua" / "2_AutoSubs_ES_Insertar_Subtitulos.lua"
-    ).read_text(encoding="utf-8")
-    lua_jump = (root / "lua" / "3_AutoSubs_ES_Ir_A_Tiempo.lua").read_text(
-        encoding="utf-8"
+  def test_lua_insert_checks_append_and_uses_opacity3(self) -> None:
+    """Insert script checks appended clips and sets Opacity3, not Alpha3."""
+    lua_insert = self._read_repo_text(
+        "lua/2_AutoSubs_ES_Insertar_Subtitulos.lua"
     )
-    for lua_src in (lua_insert, lua_jump):
-      self.assertIn("io.open", lua_src)
-      self.assertIn("bmd.readfile", lua_src)
-      self.assertIn("loadfile", lua_src)
     self.assertIn("#appended > 0", lua_insert)
     self.assertIn("GetItemListInTrack", lua_insert)
     self.assertIn('SetInput("Opacity3"', lua_insert)
     self.assertNotIn('SetInput("Alpha3"', lua_insert)
 
+  def test_templates_use_frame_format_settings(self) -> None:
+    """Every bundled Text+ macro enables UseFrameFormatSettings."""
     templates = (
         "AutoSubs_ES_Amarillo_Clasico.setting",
         "AutoSubs_ES_Caja_Editorial.setting",
@@ -2493,12 +2723,15 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
         "AutoSubs_ES_Anitype_Animado.setting",
     )
     for tmpl in templates:
-      txt = (root / "templates" / tmpl).read_text(encoding="utf-8")
-      self.assertIn("UseFrameFormatSettings = Input { Value = 1", txt, tmpl)
+      with self.subTest(template=tmpl):
+        txt = self._read_repo_text(f"templates/{tmpl}")
+        self.assertIn("UseFrameFormatSettings = Input { Value = 1", txt, tmpl)
 
-    anim_txt = (
-        root / "templates" / "AutoSubs_ES_Anitype_Animado.setting"
-    ).read_text(encoding="utf-8")
+  def test_anitype_template_balanced_with_required_controls(self) -> None:
+    """Anitype macro has balanced brackets and all its controls/tools."""
+    anim_txt = self._read_repo_text(
+        "templates/AutoSubs_ES_Anitype_Animado.setting"
+    )
     self.assertEqual(anim_txt.count("{"), anim_txt.count("}"))
     self.assertEqual(anim_txt.count("("), anim_txt.count(")"))
     for required_sym in (
@@ -2511,14 +2744,24 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
         "VariantSel5",
         "BoilTransform",
     ):
-      self.assertIn(required_sym, anim_txt)
+      with self.subTest(symbol=required_sym):
+        self.assertIn(required_sym, anim_txt)
+
+  def test_anitype_template_expressions_avoid_math_and_modulo(self) -> None:
+    """Anitype expressions (>= 10) never use math.* or the % operator."""
+    anim_txt = self._read_repo_text(
+        "templates/AutoSubs_ES_Anitype_Animado.setting"
+    )
     exprs = re.findall(r'Expression\s*=\s*"([^"]*)"', anim_txt)
     self.assertGreaterEqual(len(exprs), 10)
     for expr in exprs:
-      self.assertNotIn("math.", expr)
-      self.assertNotIn("%", expr)
+      with self.subTest(expression=expr):
+        self.assertNotIn("math.", expr)
+        self.assertNotIn("%", expr)
 
-    ui_html = (root / "ui" / "index.html").read_text(encoding="utf-8")
+  def test_ui_index_html_exposes_required_ids(self) -> None:
+    """ui/index.html keeps the element IDs the studio JS depends on."""
+    ui_html = self._read_repo_text("ui/index.html")
     for elem_id in (
         "btn-theme-toggle",
         "st-fill-a",
@@ -2536,43 +2779,58 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
         "st-anim-mode",
         "AutoSubs_ES_Anitype_Animado",
     ):
-      self.assertIn(elem_id, ui_html)
+      with self.subTest(elem_id=elem_id):
+        self.assertIn(elem_id, ui_html)
 
-    zip_bytes = package_bundle.build_zip_bytes(root)
-    meta = package_bundle.verify_zip_bytes(zip_bytes)
-    self.assertEqual(meta["file_count"], 51, meta["entries"])
+  def _bundle_meta(self) -> dict[str, Any]:
+    """Builds and verifies the distribution ZIP once per test class.
+
+    Building the ZIP reads the whole repo, so the result is cached on the
+    class and shared by the bundle tests.
+
+    Returns:
+      The metadata from package_bundle.verify_zip_bytes (file_count,
+      entries).
+    """
+    cls = type(self)
+    if getattr(cls, "_cached_bundle_meta", None) is None:
+      root = package_bundle.find_project_root()
+      zip_bytes = package_bundle.build_zip_bytes(root)
+      cls._cached_bundle_meta = package_bundle.verify_zip_bytes(zip_bytes)
+    return cls._cached_bundle_meta
+
+  def test_zip_bundle_file_count_and_exclusions(self) -> None:
+    """The ZIP has exactly 52 files and excludes __init__.py and site/."""
+    meta = self._bundle_meta()
+    self.assertEqual(meta["file_count"], 52, meta["entries"])
     self.assertNotIn("AutoSubs_ES/__init__.py", meta["entries"])
     self.assertFalse(
         any(e.startswith("AutoSubs_ES/site/") for e in meta["entries"])
     )
-    self.assertIn("AutoSubs_ES/.gitignore", meta["entries"])
-    self.assertIn("AutoSubs_ES/BUILD", meta["entries"])
-    self.assertIn("AutoSubs_ES/LICENSE", meta["entries"])
-    self.assertIn("AutoSubs_ES/README.md", meta["entries"])
-    self.assertIn("AutoSubs_ES/README.en.md", meta["entries"])
-    self.assertIn("AutoSubs_ES/pyproject.toml", meta["entries"])
-    self.assertIn("AutoSubs_ES/font_manager.py", meta["entries"])
-    self.assertIn(
+
+  def test_zip_bundle_includes_required_entries(self) -> None:
+    """The ZIP ships metadata, sources, the Anitype macro, docs, images."""
+    meta = self._bundle_meta()
+    for entry in (
+        "AutoSubs_ES/.gitignore",
+        "AutoSubs_ES/BUILD",
+        "AutoSubs_ES/LICENSE",
+        "AutoSubs_ES/README.md",
+        "AutoSubs_ES/README.en.md",
+        "AutoSubs_ES/pyproject.toml",
+        "AutoSubs_ES/font_manager.py",
         "AutoSubs_ES/templates/AutoSubs_ES_Anitype_Animado.setting",
-        meta["entries"],
-    )
-    self.assertIn("AutoSubs_ES/docs/design-doc.md", meta["entries"])
-    self.assertIn("AutoSubs_ES/docs/user-guide.md", meta["entries"])
-    self.assertIn("AutoSubs_ES/docs/imac-2017-architecture.md", meta["entries"])
-    self.assertIn(
-        "AutoSubs_ES/docs/spanish-subtitling-reference.md", meta["entries"]
-    )
-    self.assertIn("AutoSubs_ES/docs/troubleshooting.md", meta["entries"])
-    self.assertIn(
-        "AutoSubs_ES/docs/images/autosubs-es-overview.png", meta["entries"]
-    )
-    self.assertIn(
+        "AutoSubs_ES/docs/design-doc.md",
+        "AutoSubs_ES/docs/user-guide.md",
+        "AutoSubs_ES/docs/imac-2017-architecture.md",
+        "AutoSubs_ES/docs/spanish-subtitling-reference.md",
+        "AutoSubs_ES/docs/troubleshooting.md",
+        "AutoSubs_ES/docs/images/autosubs-es-overview.png",
         "AutoSubs_ES/docs/images/autosubs-es-step6-export.png",
-        meta["entries"],
-    )
-    self.assertIn(
-        "AutoSubs_ES/docs/images/autosubs-es-fonts-animation.png", meta["entries"]
-    )
+        "AutoSubs_ES/docs/images/autosubs-es-fonts-animation.png",
+    ):
+      with self.subTest(entry=entry):
+        self.assertIn(entry, meta["entries"])
 
   def test_extract_waveform_peaks_covers_tail_frames(self) -> None:
     """Frames left over after even bucketing still count in the last peak."""
@@ -2589,7 +2847,9 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
         wf.setframerate(16000)
         wf.writeframes(struct.pack(f"<{len(samples)}h", *samples))
 
-      res = resolve_bridge.extract_waveform_peaks(str(wav_path), num_buckets=buckets)
+      res = resolve_bridge.extract_waveform_peaks(
+          str(wav_path), num_buckets=buckets
+      )
       self.assertEqual(len(res["peaks"]), buckets)
       self.assertGreater(res["peaks"][-1], 0.4)
 
@@ -2626,6 +2886,8 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
     """Studio styling sets the Text+ shadow via Opacity3, never Alpha3."""
     recorded: dict[str, object] = {}
 
+    # The fakes mirror the PascalCase Resolve/Fusion scripting API.
+    # pylint: disable=invalid-name
     class _FakeTextPlus:
       """Records SetInput calls like a Fusion Text+ tool."""
 
@@ -2656,9 +2918,15 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
       # WAVE_FORMAT_IEEE_FLOAT (tag 3), mono, 16 kHz, 32-bit.
       fmt = struct.pack("<HHIIHH", 3, 1, 16000, 64000, 4, 32)
       float_wav = (
-          b"RIFF" + struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(data))
-          + b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt
-          + b"data" + struct.pack("<I", len(data)) + data
+          b"RIFF"
+          + struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(data))
+          + b"WAVE"
+          + b"fmt "
+          + struct.pack("<I", len(fmt))
+          + fmt
+          + b"data"
+          + struct.pack("<I", len(data))
+          + data
       )
       cases = {
           "float32.wav": float_wav,
@@ -2676,6 +2944,8 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
   def test_find_template_item_prefers_exact_match_anywhere(self) -> None:
     """An exact template in a later folder beats an earlier fuzzy fallback."""
 
+    # The fakes mirror the PascalCase Resolve/Fusion scripting API.
+    # pylint: disable=invalid-name
     class _Clip:
       """Media Pool clip double with a display name."""
 
@@ -2708,10 +2978,13 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
         return self.subs
 
     exact = _Clip("AutoSubs_ES_Cine_Netflix")
-    root = _Folder([], [
-        _Folder([_Clip("AutoSubs_Otro")], []),
-        _Folder([exact], []),
-    ])
+    root = _Folder(
+        [],
+        [
+            _Folder([_Clip("AutoSubs_Otro")], []),
+            _Folder([exact], []),
+        ],
+    )
     with tempfile.TemporaryDirectory() as tmp:
       bridge = resolve_bridge.ResolveBridge(app_data_dir=Path(tmp))
       self.assertIs(
@@ -2735,6 +3008,8 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
         spanish_nlp.SubtitleCue(3, 2000, 3000, ["Tres"]),
     ]
 
+    # The fakes mirror the PascalCase Resolve/Fusion scripting API.
+    # pylint: disable=invalid-name
     class _Comp:
       """Fusion comp double remembering which clip it belongs to."""
 
@@ -2870,9 +3145,7 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
     self.assertEqual(pair(["a"], [0, 10]), [])
     # Constant offset in the same order: safe index fallback.
     shifted = [_Item(500), _Item(510)]
-    self.assertEqual(
-        [idx for _, idx in pair(shifted, [0, 10])], [0, 1]
-    )
+    self.assertEqual([idx for _, idx in pair(shifted, [0, 10])], [0, 1])
     # Offset plus a missing clip: nothing can be paired safely.
     self.assertEqual(pair([_Item(500)], [0, 10]), [])
 
@@ -2916,7 +3189,7 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
     # Tracks are added only after import and deleted if the append fails.
     self.assertNotIn('timeline:AddTrack("subtitle")\n', src)
     self.assertIn("DeleteTrack", src)
-    srt_block = src[src.index('if mode == "subtitle_srt"'):]
+    srt_block = src[src.index('if mode == "subtitle_srt"') :]
     self.assertLess(
         srt_block.index("ImportMedia"), srt_block.index("addNamedTrack(")
     )
@@ -2959,6 +3232,40 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
     self.assertIsNone(
         re.search(r'^\s*"\$\{BREW_BIN\}" install', src, re.MULTILINE)
     )
+
+  def test_bundle_ships_app_helpers_but_not_node_tests(self) -> None:
+    """The ZIP requires ui/app_helpers.js and leaves out tests/js/*.mjs."""
+    self.assertIn(
+        "AutoSubs_ES/ui/app_helpers.js", package_bundle.REQUIRED_BUNDLE_ENTRIES
+    )
+    root = package_bundle.find_project_root()
+    entries = package_bundle.verify_zip_bytes(
+        package_bundle.build_zip_bytes(root)
+    )["entries"]
+    self.assertIn("AutoSubs_ES/ui/app_helpers.js", entries)
+    self.assertFalse(any(e.endswith(".mjs") for e in entries), entries)
+
+  def test_bundle_leaves_out_dev_lint_tooling(self) -> None:
+    """Lint configs, tools/ and local tool installs never reach the ZIP."""
+    entries = self._bundle_meta()["entries"]
+    for name in (
+        ".pylintrc",
+        ".prettierrc.json",
+        ".prettierignore",
+        ".shellcheckrc",
+        ".stylua.toml",
+        "eslint.config.mjs",
+        "tools/lint.sh",
+    ):
+      with self.subTest(name=name):
+        self.assertNotIn(f"AutoSubs_ES/{name}", entries)
+    skip = package_bundle._should_skip_entry
+    self.assertTrue(skip(("tools", "lint.sh"), "lint.sh"))
+    self.assertTrue(skip((".venv-dev", "lib", "x.py"), "x.py"))
+    self.assertTrue(skip(("node_modules", "a", "b.js"), "b.js"))
+    self.assertTrue(skip((".stylua.toml",), ".stylua.toml"))
+    # pyproject.toml carries the [tool.pyink] section but is still shipped.
+    self.assertFalse(skip(("pyproject.toml",), "pyproject.toml"))
 
 
 if __name__ == "__main__":

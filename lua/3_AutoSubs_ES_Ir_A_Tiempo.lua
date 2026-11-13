@@ -46,13 +46,17 @@ end
 local function getHomeDir()
   if os and os.getenv then
     local h = os.getenv("HOME")
-    if h and h ~= "" then return h end
+    if h and h ~= "" then
+      return h
+    end
   end
   if fusion and fusion.MapPath then
     local userData = fusion:MapPath("UserData:")
     if userData and userData ~= "" then
       local home = userData:match("^(/Users/[^/]+)")
-      if home then return home end
+      if home then
+        return home
+      end
     end
   end
   return ""
@@ -78,7 +82,9 @@ local function loadLuaModule(path)
   -- @return table|nil The returned table, or nil (lastErr is updated).
   local function runChunk(fn)
     local ok, result = pcall(fn)
-    if ok and type(result) == "table" then return result end
+    if ok and type(result) == "table" then
+      return result
+    end
     lastErr = ok and "el archivo no devolvió una tabla" or tostring(result)
     return nil
   end
@@ -87,7 +93,9 @@ local function loadLuaModule(path)
     local fn, err = loadfile(path)
     if fn then
       local tbl = runChunk(fn)
-      if tbl then return tbl end
+      if tbl then
+        return tbl
+      end
     else
       lastErr = err
     end
@@ -102,10 +110,14 @@ local function loadLuaModule(path)
       local loader = loadstring or load
       if loader and src then
         local okLoad, fn, err = pcall(loader, src)
-        if not okLoad then fn, err = nil, fn end
+        if not okLoad then
+          fn, err = nil, fn
+        end
         if fn then
           local tbl = runChunk(fn)
-          if tbl then return tbl end
+          if tbl then
+            return tbl
+          end
         else
           lastErr = err
         end
@@ -122,7 +134,9 @@ local function loadLuaModule(path)
     end
   end
   local msg = "No se pudo cargar " .. path
-  if lastErr then msg = msg .. " (" .. tostring(lastErr) .. ")" end
+  if lastErr then
+    msg = msg .. " (" .. tostring(lastErr) .. ")"
+  end
   return nil, msg
 end
 
@@ -152,7 +166,9 @@ if not project then
 end
 local timeline = project:GetCurrentTimeline()
 if not timeline then
-  print("[AutoSubs ES] Error: Abre un timeline activo en DaVinci Resolve 20 antes de mover el cabezal.")
+  print(
+    "[AutoSubs ES] Error: Abre un timeline activo en DaVinci Resolve 20 antes de mover el cabezal."
+  )
   return
 end
 
@@ -167,5 +183,7 @@ if ok and moved then
   print("[AutoSubs ES] Cabezal movido a " .. timecode)
 else
   print("[AutoSubs ES] Error: no se pudo mover el cabezal a " .. timecode .. ".")
-  print("[AutoSubs ES] Comprueba que el tiempo esté dentro del timeline y que estés en la página Cut, Edit o Fairlight.")
+  print(
+    "[AutoSubs ES] Comprueba que el tiempo esté dentro del timeline y que estés en la página Cut, Edit o Fairlight."
+  )
 end

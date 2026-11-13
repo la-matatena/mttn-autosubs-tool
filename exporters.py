@@ -844,9 +844,7 @@ def export_fcpxml(
   hold = max(1, st.anim_hold_frames)
   for idx, cue in enumerate(cues, start=1):
     s_frame = max(0, int(round((cue.start_ms / 1000.0) * eff_fps)))
-    e_frame = max(
-        s_frame + 1, int(round((cue.end_ms / 1000.0) * eff_fps))
-    )
+    e_frame = max(s_frame + 1, int(round((cue.end_ms / 1000.0) * eff_fps)))
     text_body = xml_escape(_cue_text(cue, st))
     short_name = xml_escape(" ".join(cue.lines)[:32] or f"Sub {idx}")
 
@@ -865,11 +863,11 @@ def export_fcpxml(
         offset_str = _frames_to_fcpxml_time(start_frame + cur_frame, num, den)
         dur_str = _frames_to_fcpxml_time(slice_dur, num, den)
         style_block = (
-            f'          <text-style-def id="{style_id}">\n'
-            f'            <text-style font="{xml_escape(v_font)}"'
-            f' fontSize="{font_px}" fontFace="{xml_escape(v_face)}"'
-            f' fontColor="{r:.3f} {g:.3f} {b:.3f} {fill_a}" alignment="center"/>\n'
-            "          </text-style-def>"
+            f'          <text-style-def id="{style_id}">\n           '
+            f' <text-style font="{xml_escape(v_font)}" fontSize="{font_px}"'
+            f' fontFace="{xml_escape(v_face)}" fontColor="{r:.3f} {g:.3f}'
+            f' {b:.3f} {fill_a}" alignment="center"/>\n         '
+            " </text-style-def>"
         )
         title_nodes.append(
             f'            <title name="{short_name}" lane="1" ref="r2"'
@@ -889,11 +887,11 @@ def export_fcpxml(
       style_counter += 1
       style_id = f"ts{style_counter}"
       style_block = (
-          f'          <text-style-def id="{style_id}">\n'
-          f'            <text-style font="{xml_escape(st.font)}"'
-          f' fontSize="{font_px}" fontFace="{xml_escape(st.font_style)}"'
-          f' fontColor="{r:.3f} {g:.3f} {b:.3f} {fill_a}" alignment="center"/>\n'
-          "          </text-style-def>"
+          f'          <text-style-def id="{style_id}">\n            <text-style'
+          f' font="{xml_escape(st.font)}" fontSize="{font_px}"'
+          f' fontFace="{xml_escape(st.font_style)}" fontColor="{r:.3f} {g:.3f}'
+          f' {b:.3f} {fill_a}" alignment="center"/>\n         '
+          " </text-style-def>"
       )
       title_nodes.append(
           f'            <title name="{short_name}" lane="1" ref="r2"'

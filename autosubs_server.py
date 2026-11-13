@@ -699,13 +699,17 @@ class AppState:
         if voice:
           cmd[1:1] = ["-v", voice]
         try:
-          res = subprocess.run(cmd, capture_output=True, timeout=60, check=False)
+          res = subprocess.run(
+              cmd, capture_output=True, timeout=60, check=False
+          )
         except (OSError, subprocess.SubprocessError):
           continue
         if res.returncode == 0 and aiff.is_file():
           try:
             resolve_bridge.prepare_wav_16k(
-                str(aiff), str(out_wav), ffmpeg_bin=ffmpeg_bin,
+                str(aiff),
+                str(out_wav),
+                ffmpeg_bin=ffmpeg_bin,
                 enhance_voice=False,
             )
           finally:
@@ -799,7 +803,9 @@ class AppState:
         )
         started = time.monotonic()
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             start_new_session=(os.name == "posix"),
         )
         with self.lock:
@@ -1144,7 +1150,9 @@ class AppState:
     )
     threads = payload.get("threads") or effective["threads"]
     fast_beam = bool(payload.get("fast_beam", effective["fast_beam"]))
-    enhance_voice = bool(payload.get("enhance_voice", effective["enhance_voice"]))
+    enhance_voice = bool(
+        payload.get("enhance_voice", effective["enhance_voice"])
+    )
     force_no_gpu = bool(payload.get("force_no_gpu", effective["force_no_gpu"]))
     accel_label = "CPU, GPU libre" if force_no_gpu else "GPU Metal"
 
@@ -1184,8 +1192,7 @@ class AppState:
             job_id,
             progress=15,
             stage=(
-                f"Transcribiendo en español con {spec.label}"
-                f" ({accel_label})..."
+                f"Transcribiendo en español con {spec.label} ({accel_label})..."
             ),
         )
 
@@ -1815,9 +1822,15 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     parsed = urllib.parse.urlparse(self.path)
     path = parsed.path
 
-    # GET / | /index.html | /styles.css | /app.js -> static Studio UI files.
-    # Fixed allowlist: no other file under ui/ is reachable.
-    if path in ("/", "/index.html", "/styles.css", "/app.js"):
+    # GET / | /index.html | /styles.css | /app_helpers.js | /app.js -> static
+    # Studio UI files. Fixed allowlist: no other file under ui/ is reachable.
+    if path in (
+        "/",
+        "/index.html",
+        "/styles.css",
+        "/app_helpers.js",
+        "/app.js",
+    ):
       self._serve_static(path)
       return
 
@@ -2023,9 +2036,11 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
         self.state.peaks = list(wave_info["peaks"])
         self.state.words = []
         self.state.cues = []
+        # pylint: disable-next=protected-access
         self.state._last_inbox_sig = None
         self.state.media_generation += 1
         self.state.demo_mode = False
+      # pylint: disable-next=protected-access
       self.state._discard_replaced_media(old_media, old_wav, keep=(dest,))
 
       self._send_json(
@@ -2330,6 +2345,7 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
         st = inbox_wav.stat()
         sig = (str(inbox_wav), st.st_mtime_ns, st.st_size)
         with self.state.lock:
+          # pylint: disable-next=protected-access
           changed = sig != self.state._last_inbox_sig
         if changed:
           # Peaks are computed outside the lock (file I/O).
@@ -2337,6 +2353,7 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
           with self.state.lock:
             old_media = self.state.media_path
             old_wav = self.state.wav_path
+            # pylint: disable-next=protected-access
             self.state._last_inbox_sig = sig
             self.state.media_path = inbox_wav
             self.state.wav_path = inbox_wav
@@ -2348,6 +2365,7 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
             self.state.words = []
             self.state.cues = []
             self.state.media_generation += 1
+          # pylint: disable-next=protected-access
           self.state._discard_replaced_media(
               old_media, old_wav, keep=(inbox_wav,)
           )

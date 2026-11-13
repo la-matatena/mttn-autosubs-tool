@@ -507,6 +507,8 @@ class ResolveBridge:
       if module_dir.is_dir() and str(module_dir) not in sys.path:
         sys.path.append(str(module_dir))
     try:
+      # Only importable inside Resolve's Python (after the sys.path tweak).
+      # pylint: disable-next=import-outside-toplevel
       import DaVinciResolveScript as dvr  # type: ignore[import-not-found]
 
       resolve = dvr.scriptapp("Resolve")
@@ -1057,6 +1059,7 @@ class ResolveBridge:
         comp = item.GetFusionCompByIndex(1)
         self._apply_style_to_fusion_comp(
             comp=comp,
+            # pylint: disable-next=protected-access
             cue_text=exporters._cue_text(cues[cue_idx], style),
             style=style,
         )

@@ -158,6 +158,8 @@ Automated offline verification runs via `python3 -B autosubs_es_test.py -v` in l
 
 Physical macOS execution with real downloaded GGML weights, Homebrew `whisper-cli`/`ffmpeg`, and DaVinci Resolve 20 Media Pool rendering must still be exercised directly on the target 2017 iMac hardware.
 
+The Studio UI's pure helpers in `ui/app_helpers.js` (ASCII folding, WCAG contrast, waveform hit testing, cue drag clamping, and the per-job poller) are unit tested with Node's built-in runner: run `node --test tests/js/` (Node 20 or later, no npm packages). CI runs it before the Python suite.
+
 ## Code style and documentation conventions
 
 Every file should be understandable by a maintainer who has never seen it. Apply these conventions when you add or change code:
@@ -165,12 +167,31 @@ Every file should be understandable by a maintainer who has never seen it. Apply
 -   **Language**: Write code, identifiers, comments, and docstrings in English. Keep user-facing UI strings, Resolve Console messages, and Spanish NLP data (word lists, RAE rules, glossaries) in Spanish.
 -   **File headers**: Start every source file with a short header that states its responsibility, main entry points, and how it is run. Group files longer than about 300 lines with section banners.
 -   **Python**: Follow the Google Python Style Guide with the repository's 2-space indentation and 80-column limit. Give every module, class, and function a docstring with `Args:`, `Returns:`, and `Raises:` sections (omit them only for trivial one-liners), plus `Attributes:` for stateful classes. Each test method needs a one-line docstring that states the verified behavior.
--   **JavaScript (`ui/app.js`)**: Add a JSDoc `/** ... */` block above every function with `@param {type}` and `@return {type}` tags, and document the shape of `state` fields inline.
+-   **JavaScript (`ui/app.js`, `ui/app_helpers.js`)**: Add a JSDoc `/** ... */` block above every function with `@param {type}` and `@return {type}` tags, and document the shape of `state` fields inline. Put DOM-free logic in `ui/app_helpers.js` and cover it in `tests/js/*.test.mjs` (`node:test` plus `node:assert/strict`).
 -   **Lua (`lua/`)**: Each script header explains how it is launched (**Workspace** > **Scripts**), which bridge inbox or outbox files it reads and writes, and which HTTP endpoint it calls. Add `---` LuaDoc comments with `@param` and `@return` above every function, and comment Resolve API quirks such as `bmd.readfile` rejecting `return`, `AppendToTimeline` returning `{}`, and render polling timeouts.
 -   **Shell (`install_imac.sh`, `*.command`)**: Follow the Google Shell Style Guide with a purpose, usage, and flags header, plus a `Globals:`/`Arguments:`/`Outputs:`/`Returns:` comment block above every function.
 -   **Comments**: Explain why, not what. Document units (ms, frames, px, normalized `0..1`), coordinate spaces, locking, magic numbers, and host quirks.
 -   **Debt markers**: Mark intentional engineering shortcuts with a `shortcut:` comment, which works as a tracked debt ledger. Keep existing markers and `NOLINT` annotations intact.
 -   **Documentation-only changes**: Commits that only touch comments, docstrings, or docs must not change behavior. Do not rename identifiers, routes, JSON keys, DOM IDs, or OpenFX IDs, and do not reorder logic. The full test suite must pass unchanged.
+
+### Formatters and linters
+
+The conventions above are enforced automatically. These are dev-only tools: the product itself still needs only the Python standard library, and none of the tool configs ship in `MTTN_AutoSubs_Tool.zip`.
+
+| Language | Formatter | Linter | Config files |
+| --- | --- | --- | --- |
+| Python (`*.py`) | pyink 26.5.1 (Google style: 2-space indent, 80 columns, majority quotes) | pylint 4.1.3 (Google `pylintrc`) | `pyproject.toml` (`[tool.pyink]`), `.pylintrc` |
+| JavaScript (`ui/*.js`, `tests/js/*.mjs`) and CSS (`ui/styles.css`) | Prettier 3.10.1 (100 columns, double quotes, semicolons) | ESLint 10.14.0 (`no-undef`, `no-unused-vars`, `eqeqeq`, `no-var`, `prefer-const`, `curly`) | `.prettierrc.json`, `.prettierignore`, `eslint.config.mjs` |
+| Shell (`install_imac.sh`, `*.command`, `tools/lint.sh`) | — | ShellCheck 0.11.0 with all optional checks | `.shellcheckrc` |
+| Lua (`lua/`) | StyLua 2.6.0 (100 columns, 2-space indent) | — | `.stylua.toml` |
+
+HTML (`ui/index.html`, `site/`), `site/styles.css`, `templates/*.setting`, and Markdown are not formatted. Prettier would re-indent whole HTML documents and rewrap whitespace-sensitive text, and the tests assert on raw markup.
+
+-   **Check**: Run `tools/lint.sh` before you push. It exits non-zero on any finding.
+-   **Fix**: Run `tools/lint.sh --fix` to apply pyink, Prettier, StyLua, and ESLint autofixes, then rerun every check. Fix the remaining findings by hand.
+-   **Install**: If a tool is missing, the script prints the pinned `pip` and `npm` commands. They install into the git-ignored `.venv-dev/` folder, and `npm` always uses `--registry https://registry.npmjs.org/`.
+-   **Suppressions**: Disable a rule only for a deliberate exception, on the narrowest scope (`# pylint: disable-next=...`, `// eslint-disable-next-line ...`), with a comment that explains why.
+-   **CI**: The `lint` job in `.github/workflows/ci-release.yml` installs the same pinned versions and runs `tools/lint.sh`. A finding fails the workflow, but the job does not gate the release build.
 
 ## What's next
 

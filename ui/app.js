@@ -7,6 +7,11 @@
  * step, no dependencies. Function declarations are hoisted inside the IIFE,
  * so helpers are often called above the line where they are defined.
  *
+ * Pure, DOM-free helpers (text folding, contrast math, waveform geometry,
+ * cue drag clamping and the job poller factory) live in ui/app_helpers.js,
+ * which index.html loads first as window.AutoSubsHelpers. They are unit
+ * tested with `node --test tests/js/`.
+ *
  * Server: everything talks to the local Python server (autosubs_server.py,
  * http://127.0.0.1:55120 by default) through same-origin relative URLs.
  * JSON endpoints go through apiJson(); binary uploads (media, fonts) use
@@ -42,6 +47,29 @@
  */
 (() => {
   "use strict";
+
+  // Pure helpers from ui/app_helpers.js (see its JSDoc for each function).
+  // Destructured once here, before any code below runs, so call sites keep
+  // their short names.
+  const {
+    computeCueDrag,
+    computeViewRange,
+    contrastLevel,
+    cpsClassName,
+    createJobPoller,
+    findPreviewCue,
+    formatMsReadable,
+    formatTick,
+    hexToRgba,
+    hitTestCueAt,
+    isStaleJobResult,
+    msToX,
+    rescaleWords,
+    syncCueWordsAfterTextEdit,
+    transformPreviewText,
+    worstCaseContrast,
+    xToMs,
+  } = window.AutoSubsHelpers;
 
   // ---------------------------------------------------------------------------
   // Application state
@@ -145,56 +173,8 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Static data: ASCII folding and built-in style presets
+  // Static data: built-in style presets
   // ---------------------------------------------------------------------------
-
-  /**
-   * Spanish-specific characters mapped to ASCII for fonts without Spanish
-   * glyphs (preview of «Adaptar glifos ASCII»). Mirrors
-   * exporters.fold_spanish_to_ascii so the monitor matches the exports.
-   */
-  const ASCII_FOLD_MAP = {
-    á: "a",
-    é: "e",
-    í: "i",
-    ó: "o",
-    ú: "u",
-    ü: "u",
-    ñ: "n",
-    Á: "A",
-    É: "E",
-    Í: "I",
-    Ó: "O",
-    Ú: "U",
-    Ü: "U",
-    Ñ: "N",
-    "¿": "",
-    "¡": "",
-    "«": '"',
-    "»": '"',
-    "“": '"',
-    "”": '"',
-    "‘": "'",
-    "’": "'",
-    "—": "-",
-    "–": "-",
-    "…": "...",
-  };
-
-  /**
-   * Folds Spanish text to plain ASCII for the preview: the explicit map first
-   * (ñ -> n, ¿/¡ removed, curly quotes -> straight), then NFKD plus removal of
-   * combining marks for any other accented letter.
-   * @param {*} text Text to fold; null/undefined become "".
-   * @return {string} ASCII-only text.
-   */
-  function foldSpanishToAsciiPreview(text) {
-    return String(text || "")
-      .normalize("NFC")
-      .replace(/[áéíóúüñÁÉÍÓÚÜÑ¿¡«»“”‘’—–…]/g, (ch) => ASCII_FOLD_MAP[ch] ?? ch)
-      .normalize("NFKD")
-      .replace(/[\u0300-\u036f]/g, "");
-  }
 
   /**
    * Built-in style presets keyed by chip id (data-style). `size` and `pos_y`
@@ -351,19 +331,6 @@
     el._hideTimer = setTimeout(() => el.classList.add("hidden"), ms);
   }
 
-  /**
-   * Formats a time as "MM:SS.cc" (centiseconds) for cue timecodes.
-   * @param {number} ms Time in ms; negative or missing values clamp to 0.
-   * @return {string} e.g. "01:04.25".
-   */
-  function formatMsReadable(ms) {
-    const safe = Math.max(0, Math.floor(ms || 0));
-    const min = Math.floor(safe / 60000);
-    const sec = Math.floor((safe % 60000) / 1000);
-    const cs = Math.floor((safe % 1000) / 10);
-    return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
-  }
-
   // ---------------------------------------------------------------------------
   // API client
   // ---------------------------------------------------------------------------
@@ -394,7 +361,9 @@
     }
     if (!resp.ok) {
       const msg =
-        (data && data.error) || raw.trim().slice(0, 200) || fallbackMsg ||
+        (data && data.error) ||
+        raw.trim().slice(0, 200) ||
+        fallbackMsg ||
         `Error HTTP ${resp.status}`;
       const err = new Error(msg);
       err.status = resp.status;
@@ -495,7 +464,9 @@
 
     const targetTab = state.appMode === "standalone" ? "file" : "resolve";
     state.uploadSource = targetTab === "resolve" ? "inbox" : "uploaded";
-    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === targetTab));
+    document
+      .querySelectorAll(".tab-btn")
+      .forEach((b) => b.classList.toggle("active", b.dataset.tab === targetTab));
     $("tab-resolve").classList.toggle("active", targetTab === "resolve");
     $("tab-file").classList.toggle("active", targetTab === "file");
 
@@ -512,7 +483,9 @@
     const rTitle = $("resolve-push-title");
     if (rTitle) {
       rTitle.textContent =
-        state.appMode === "standalone" ? "5. DaVinci Resolve 20 (Opcional)" : "5. DaVinci Resolve 20";
+        state.appMode === "standalone"
+          ? "5. DaVinci Resolve 20 (Opcional)"
+          : "5. DaVinci Resolve 20";
     }
     const cueList = $("cue-list");
     if (cueList) {
@@ -537,21 +510,6 @@
     return Math.max(0, Math.min(1, (Number.isFinite(v) ? v : 100) / 100));
   }
 
-  /**
-   * Converts a hex color plus alpha into a CSS rgba() string.
-   * @param {string} hex "#rgb" or "#rrggbb" ("#" optional).
-   * @param {number} alpha Opacity 0..1.
-   * @return {string} e.g. "rgba(255, 212, 59, 0.750)".
-   */
-  function hexToRgba(hex, alpha) {
-    const h = String(hex || "#000000").replace("#", "");
-    const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h.padEnd(6, "0");
-    const r = parseInt(full.slice(0, 2), 16) || 0;
-    const g = parseInt(full.slice(2, 4), 16) || 0;
-    const b = parseInt(full.slice(4, 6), 16) || 0;
-    return `rgba(${r}, ${g}, ${b}, ${Number(alpha).toFixed(3)})`;
-  }
-
   // [opacity slider id, color input id]: drives the % readout next to each
   // slider and the swatch color (null = shadow, always black).
   const ALPHA_ROWS = [
@@ -570,7 +528,10 @@
     $("st-size-val").textContent = `${(Number($("st-size").value) * 100).toFixed(1)} %`;
     $("st-posy-val").textContent = `${Math.round(Number($("st-posy").value) * 100)} %`;
     $("st-outline-w-val").textContent = Number($("st-outline-w").value).toFixed(2);
-    $("st-size").setAttribute("aria-valuetext", `${$("st-size-val").textContent} de la altura del vídeo`);
+    $("st-size").setAttribute(
+      "aria-valuetext",
+      `${$("st-size-val").textContent} de la altura del vídeo`
+    );
     $("st-posy").setAttribute("aria-valuetext", `${$("st-posy-val").textContent} desde abajo`);
     ALPHA_ROWS.forEach(([alphaId, colorId]) => {
       const out = $(`${alphaId}-val`);
@@ -682,11 +643,18 @@
    * @param {string} name Display name; trimmed and capped at 28 characters.
    */
   function saveCurrentAsPreset(name) {
-    const clean = String(name || "").trim().slice(0, 28);
+    const clean = String(name || "")
+      .trim()
+      .slice(0, 28);
     if (!clean) return;
     const st = readStyleFromUI();
-    const id = clean.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || String(Date.now());
+    const id =
+      clean
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || String(Date.now());
     const map = loadCustomPresets();
     map[id] = {
       preset_name: clean,
@@ -724,52 +692,8 @@
   // Approximate WCAG contrast between the text and whatever is behind it,
   // already blended with its opacity. It is evaluated over white and black
   // backdrops and the worst case wins, because the video content is unknown.
-
-  /**
-   * Parses "#rrggbb" into an RGB triple (short "#rgb" is not expanded).
-   * @param {string} hex Color string.
-   * @return {!Array<number>} [r, g, b], each 0..255.
-   */
-  function parseHex(hex) {
-    const h = String(hex || "#000000").replace("#", "").padEnd(6, "0");
-    return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) || 0);
-  }
-
-  /**
-   * Alpha-composites one RGB color over another ("over" operator).
-   * @param {!Array<number>} top Foreground RGB.
-   * @param {number} alpha Foreground opacity 0..1.
-   * @param {!Array<number>} under Background RGB.
-   * @return {!Array<number>} Composited RGB (not rounded).
-   */
-  function blend(top, alpha, under) {
-    return top.map((c, i) => c * alpha + under[i] * (1 - alpha));
-  }
-
-  /**
-   * WCAG 2.x relative luminance (sRGB linearization, Rec. 709 weights).
-   * @param {!Array<number>} rgb RGB 0..255.
-   * @return {number} Luminance 0..1.
-   */
-  function luminance(rgb) {
-    const [r, g, b] = rgb.map((v) => {
-      const c = v / 255;
-      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-    });
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  }
-
-  /**
-   * WCAG contrast ratio between two colors.
-   * @param {!Array<number>} a RGB 0..255.
-   * @param {!Array<number>} b RGB 0..255.
-   * @return {number} Ratio from 1 to 21.
-   */
-  function contrastRatio(a, b) {
-    const la = luminance(a);
-    const lb = luminance(b);
-    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
-  }
+  // The math (parseHex, blend, luminance, contrastRatio, worstCaseContrast,
+  // contrastLevel) lives in ui/app_helpers.js.
 
   /**
    * Updates the legibility badge of the style card. Checks, in order: almost
@@ -798,17 +722,12 @@
     } else {
       const layerHex = st.box_enabled ? st.box_hex : st.outline_hex;
       const layerA = st.box_enabled ? st.box_alpha : st.outline_alpha;
-      const ratio = Math.min(...[[255, 255, 255], [0, 0, 0]].map((backdrop) => {
-        const bg = blend(parseHex(layerHex), layerA, backdrop);
-        const fg = blend(parseHex(st.fill_hex), st.fill_alpha, bg);
-        return contrastRatio(fg, bg);
-      }));
+      const ratio = worstCaseContrast(st.fill_hex, st.fill_alpha, layerHex, layerA);
       const ref = st.box_enabled ? "la caja" : "el contorno";
-      if (ratio < 3) {
-        level = "warn";
+      level = contrastLevel(ratio);
+      if (level === "warn") {
         msg = `Legibilidad baja: contraste ${ratio.toFixed(1)}:1 con ${ref}.`;
-      } else if (ratio < 4.5) {
-        level = "info";
+      } else if (level === "info") {
         msg = `Contraste justo: ${ratio.toFixed(1)}:1 con ${ref} (recomendado ≥ 4.5:1).`;
       } else {
         msg = `Contraste ${ratio.toFixed(1)}:1 con ${ref}.`;
@@ -820,9 +739,23 @@
 
   // Fields that define a preset; used to detect whether the user modified it.
   const PRESET_KEYS = [
-    "size", "pos_y", "fill_hex", "highlight_hex", "outline_hex", "outline_thickness",
-    "shadow_enabled", "box_enabled", "box_hex", "fill_alpha", "highlight_alpha",
-    "outline_alpha", "shadow_alpha", "box_alpha", "font_style", "animation_mode", "ascii_fold",
+    "size",
+    "pos_y",
+    "fill_hex",
+    "highlight_hex",
+    "outline_hex",
+    "outline_thickness",
+    "shadow_enabled",
+    "box_enabled",
+    "box_hex",
+    "fill_alpha",
+    "highlight_alpha",
+    "outline_alpha",
+    "shadow_alpha",
+    "box_alpha",
+    "font_style",
+    "animation_mode",
+    "ascii_fold",
   ];
 
   /**
@@ -833,10 +766,16 @@
    */
   function styleSignature() {
     const st = readStyleFromUI();
-    return JSON.stringify(PRESET_KEYS.map((k) => {
-      const v = st[k];
-      return typeof v === "number" ? Number(v.toFixed(3)) : typeof v === "string" ? v.toLowerCase() : v;
-    }).concat([$("st-font").value]));
+    return JSON.stringify(
+      PRESET_KEYS.map((k) => {
+        const v = st[k];
+        return typeof v === "number"
+          ? Number(v.toFixed(3))
+          : typeof v === "string"
+            ? v.toLowerCase()
+            : v;
+      }).concat([$("st-font").value])
+    );
   }
 
   /**
@@ -846,7 +785,9 @@
   function updatePresetStatus() {
     const key = state.activePreset;
     const preset = getPreset(key);
-    const modified = Boolean(preset && state.presetSignature && styleSignature() !== state.presetSignature);
+    const modified = Boolean(
+      preset && state.presetSignature && styleSignature() !== state.presetSignature
+    );
     $("preset-status-text").textContent = preset
       ? `Preset: ${preset.preset_name}${modified ? " · modificado" : ""}`
       : "Estilo personalizado";
@@ -857,7 +798,6 @@
       btn.setAttribute("aria-pressed", String(btn.dataset.style === key));
     });
   }
-
 
   /**
    * Warns when the selected Resolve push mode cannot carry the style: native
@@ -872,8 +812,8 @@
       mode === "subtitle_srt"
         ? "La pista nativa de subtítulos de Resolve no admite colores ni opacidad. Estos ajustes se aplican a Text+, FCPXML, .ASS y al MP4 subtitulado."
         : mode === "fcpxml"
-        ? "En FCPXML solo viaja la opacidad del texto, y Resolve podría ignorarla al importar. Para transparencias completas usa Text+, .ASS o MP4."
-        : "";
+          ? "En FCPXML solo viaja la opacidad del texto, y Resolve podría ignorarla al importar. Para transparencias completas usa Text+, .ASS o MP4."
+          : "";
     el.textContent = msg;
     el.classList.toggle("hidden", !msg);
   }
@@ -1063,8 +1003,7 @@
     const pack = state.selectedPack;
     if (active && (mode === "font_cycle" || mode === "font_cycle_boil")) {
       if (pack && pack.is_animated_pack) {
-        hintEl.textContent =
-          `Usando ${pack.variant_count} variantes en flipbook. Resolve usará TextPlus1..5 y 1 sola rama activa por frame.`;
+        hintEl.textContent = `Usando ${pack.variant_count} variantes en flipbook. Resolve usará TextPlus1..5 y 1 sola rama activa por frame.`;
         hintEl.classList.remove("hidden");
       } else {
         hintEl.textContent =
@@ -1113,8 +1052,7 @@
     const warnEl = $("font-glyph-warning");
     if (pack && pack.supports_spanish === false && (pack.missing_spanish_chars || []).length > 0) {
       const missingStr = pack.missing_spanish_chars.join(" ");
-      warnEl.textContent =
-        `Aviso en "${pack.family}": faltan glifos en español (${missingStr}). Activa «Adaptar glifos ASCII» para evitar huecos en Resolve.`;
+      warnEl.textContent = `Aviso en "${pack.family}": faltan glifos en español (${missingStr}). Activa «Adaptar glifos ASCII» para evitar huecos en Resolve.`;
       warnEl.classList.remove("hidden");
       if (autoConfigure) {
         $("st-ascii-fold").checked = true;
@@ -1133,7 +1071,10 @@
         $("template-field").classList.remove("hidden");
         $("push-template").value = "AutoSubs_ES_Anitype_Animado";
       } else {
-        if ($("st-anim-mode").value === "font_cycle_boil" || $("st-anim-mode").value === "font_cycle") {
+        if (
+          $("st-anim-mode").value === "font_cycle_boil" ||
+          $("st-anim-mode").value === "font_cycle"
+        ) {
           $("st-anim-mode").value = "none";
         }
       }
@@ -1219,7 +1160,8 @@
       sel.value = prevVal;
     } else if (preferredPackId) {
       const match = packs.find(
-        (p) => p.pack_id === preferredPackId || p.family.toLowerCase() === preferredPackId.toLowerCase()
+        (p) =>
+          p.pack_id === preferredPackId || p.family.toLowerCase() === preferredPackId.toLowerCase()
       );
       if (match) sel.value = match.pack_id;
     }
@@ -1253,8 +1195,10 @@
       }
       $("push-mode").value = "textplus";
       $("template-field").classList.remove("hidden");
-    } else if (state.packByOptionValue[p.font] ||
-               Array.from($("st-font").options).some((o) => o.value === p.font)) {
+    } else if (
+      state.packByOptionValue[p.font] ||
+      Array.from($("st-font").options).some((o) => o.value === p.font)
+    ) {
       $("st-font").value = p.font;
     } else if (isCustom) {
       showToast(`La fuente «${p.font}» de este estilo no está disponible; se mantiene la actual.`);
@@ -1277,7 +1221,8 @@
     $("st-anim-mode").value = p.animation_mode || "none";
     $("st-anim-hold").value = p.anim_hold_frames || 3;
     $("st-anim-jitter").value = p.anim_jitter ?? 0.15;
-    $("st-ascii-fold").checked = key === "anitype" ? !selectedSupportsSpanish : Boolean(p.ascii_fold);
+    $("st-ascii-fold").checked =
+      key === "anitype" ? !selectedSupportsSpanish : Boolean(p.ascii_fold);
     if (p.template_name) $("push-template").value = p.template_name;
 
     syncFontSelection(false, p.font_style);
@@ -1432,7 +1377,14 @@
     for (let n = maxT; n >= 1; n--) {
       const opt = document.createElement("option");
       opt.value = String(n);
-      const tag = n === maxT ? " (máximo)" : n === resolveT ? " (con Resolve)" : n === 2 ? " (silencioso)" : "";
+      const tag =
+        n === maxT
+          ? " (máximo)"
+          : n === resolveT
+            ? " (con Resolve)"
+            : n === 2
+              ? " (silencioso)"
+              : "";
       opt.textContent = `${n} hilo${n === 1 ? "" : "s"}${tag}`;
       sel.appendChild(opt);
     }
@@ -1476,7 +1428,12 @@
   // server's settings.json, plus portable user preferences.
   // ---------------------------------------------------------------------------
   // Display labels of performance.mode values.
-  const PERF_MODE_LABELS = { auto: "Automático", safe: "Seguro", max: "Máximo", custom: "Personalizado" };
+  const PERF_MODE_LABELS = {
+    auto: "Automático",
+    safe: "Seguro",
+    max: "Máximo",
+    custom: "Personalizado",
+  };
   // Portable preferences mirrored to settings.json:
   // [preferences key, element id, how to read/write it: "value"|"number"|"checked"].
   const PREF_FIELDS = [
@@ -1526,7 +1483,10 @@
       ["Equipo", hw.name],
       ["Procesador", hw.cpu_description],
       ["Memoria", hw.ram_gb ? `${hw.ram_gb} GB RAM` : "—"],
-      ["GPU", `${hw.gpu_name || "—"}${vram}${hw.force_no_gpu ? " (Whisper usa solo CPU)" : " (Whisper usa Metal)"}`],
+      [
+        "GPU",
+        `${hw.gpu_name || "—"}${vram}${hw.force_no_gpu ? " (Whisper usa solo CPU)" : " (Whisper usa Metal)"}`,
+      ],
     ].forEach(([k, v]) => {
       const dt = document.createElement("dt");
       dt.textContent = k;
@@ -1653,7 +1613,8 @@
     PREF_FIELDS.forEach(([key, id, kind]) => {
       const el = $(id);
       if (!el) return;
-      prefs[key] = kind === "checked" ? el.checked : kind === "number" ? Number(el.value) : el.value;
+      prefs[key] =
+        kind === "checked" ? el.checked : kind === "number" ? Number(el.value) : el.value;
     });
     return prefs;
   }
@@ -1835,13 +1796,19 @@
       // True when the pointer is outside the dialog box (i.e. on the backdrop).
       const outside = (e) => {
         const r = dialog.getBoundingClientRect();
-        return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+        return (
+          e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom
+        );
       };
       // Both press and release must be outside, so a text selection that ends on
       // the backdrop does not close the dialog.
       let pressedOutside = false;
-      dialog.addEventListener("pointerdown", (e) => { pressedOutside = outside(e); });
-      dialog.addEventListener("pointerup", (e) => { if (pressedOutside && outside(e)) dialog.close(); });
+      dialog.addEventListener("pointerdown", (e) => {
+        pressedOutside = outside(e);
+      });
+      dialog.addEventListener("pointerup", (e) => {
+        if (pressedOutside && outside(e)) dialog.close();
+      });
     }
 
     document.querySelectorAll('input[name="perf-mode"]').forEach((radio) => {
@@ -1854,10 +1821,14 @@
       });
     });
     ["mp-threads", "mp-beam", "mp-no-gpu"].forEach((id) =>
-      $(id).addEventListener("change", () => saveCustomPerformance($("mp-threads"), $("mp-beam"), $("mp-no-gpu")))
+      $(id).addEventListener("change", () =>
+        saveCustomPerformance($("mp-threads"), $("mp-beam"), $("mp-no-gpu"))
+      )
     );
     ["threads-select", "beam-mode", "opt-no-gpu"].forEach((id) =>
-      $(id).addEventListener("change", () => saveCustomPerformance($("threads-select"), $("beam-mode"), $("opt-no-gpu")))
+      $(id).addEventListener("change", () =>
+        saveCustomPerformance($("threads-select"), $("beam-mode"), $("opt-no-gpu"))
+      )
     );
     $("mp-model").addEventListener("change", () => {
       $("model-select").value = $("mp-model").value;
@@ -1892,7 +1863,9 @@
     });
     $("btn-prefs-export").addEventListener("click", exportPreferences);
     $("btn-prefs-import").addEventListener("click", () => $("prefs-import-input").click());
-    $("prefs-import-input").addEventListener("change", (ev) => importPreferences(ev.target.files[0]));
+    $("prefs-import-input").addEventListener("change", (ev) =>
+      importPreferences(ev.target.files[0])
+    );
 
     PREF_FIELDS.forEach(([, id]) => {
       const el = $(id);
@@ -1979,11 +1952,14 @@
         bridgeMode === "studio_direct"
           ? "Resolve Studio"
           : bridgeMode === "lua_bridge_ready"
-          ? "Resolve listo"
-          : "Resolve sin scripts";
+            ? "Resolve listo"
+            : "Resolve sin scripts";
       resolveBadge.title = data.bridge.mode_label;
       resolveBadge.className =
-        "pill " + (bridgeMode === "studio_direct" || bridgeMode === "lua_bridge_ready" ? "pill-neutral" : "pill-warn");
+        "pill " +
+        (bridgeMode === "studio_direct" || bridgeMode === "lua_bridge_ready"
+          ? "pill-neutral"
+          : "pill-warn");
 
       const hw = data.environment.hardware_profile || {};
       const firstLoad = !state.hwProfile;
@@ -2071,18 +2047,6 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * CSS class of a cue's reading-speed badge. Only speeds that need
-   * attention are colored: > 17 CPS warn, > 20 CPS danger.
-   * @param {number} cps Characters per second.
-   * @return {string} Class name(s).
-   */
-  function cpsClassName(cps) {
-    if (cps > 20) return "pill pill-danger";
-    if (cps > 17) return "pill pill-warn";
-    return "cue-cps";
-  }
-
-  /**
    * Updates the editor stats (cue count, mean CPS, warnings) as plain text;
    * the warnings count is colored only when non-zero.
    */
@@ -2119,7 +2083,6 @@
       const card = document.createElement("div");
       card.className = "cue-item" + (idx === state.activeCueIndex ? " active" : "");
       card.dataset.index = String(idx);
-
 
       const head = document.createElement("div");
       head.className = "cue-head";
@@ -2178,7 +2141,9 @@
       cpsBadge.textContent = `${Number(cue.cps || 0).toFixed(1)} CPS`;
       actions.appendChild(cpsBadge);
 
-      const btnPlayCue = makeMiniBtn("▶", "Escuchar este subtítulo", () => seekAndPlay(cue.start_ms, cue.end_ms));
+      const btnPlayCue = makeMiniBtn("▶", "Escuchar este subtítulo", () =>
+        seekAndPlay(cue.start_ms, cue.end_ms)
+      );
       const btnSplit = makeMiniBtn("÷", "Dividir en dos subtítulos", () => splitCue(idx));
       const btnMerge = makeMiniBtn("+Unir", "Unir con el siguiente", () => mergeCue(idx));
       const btnDel = makeMiniBtn("×", "Eliminar subtítulo", () => deleteCue(idx));
@@ -2186,7 +2151,9 @@
       // Tools dimmed until the row is hovered or focused (still in the tab order).
       const tools = document.createElement("span");
       tools.className = "cue-tools";
-      const btnJump = makeMiniBtn("Resolve", "Mover cabezal en DaVinci Resolve", () => jumpResolve(cue.start_ms));
+      const btnJump = makeMiniBtn("Resolve", "Mover cabezal en DaVinci Resolve", () =>
+        jumpResolve(cue.start_ms)
+      );
       btnJump.classList.add("cue-btn-resolve");
       tools.append(btnPlayCue, btnJump, btnSplit, btnMerge, btnDel);
       actions.appendChild(tools);
@@ -2204,7 +2171,10 @@
       });
       textarea.addEventListener("input", () => {
         cue.text = textarea.value;
-        cue.lines = textarea.value.split("\n").map((s) => s.trim()).filter(Boolean);
+        cue.lines = textarea.value
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean);
         syncCueWordsAfterTextEdit(cue);
         invalidateWaveCache();
         renderPreviewAtMs(cue.start_ms + 10);
@@ -2227,40 +2197,6 @@
 
       list.appendChild(card);
     });
-  }
-
-  /**
-   * Keeps word timings when a cue's text is edited. The server
-   * (align_words_to_lines) keeps Whisper timings for words that survive and
-   * spreads time over new ones; locally the word texts are only synced when
-   * the token count still matches.
-   * @param {!Object} cue Cue whose `lines` were just updated.
-   */
-  function syncCueWordsAfterTextEdit(cue) {
-    const tokens = (cue.lines || []).flatMap((ln) => ln.split(/\s+/).filter(Boolean));
-    if (cue.words && cue.words.length === tokens.length) {
-      cue.words.forEach((w, i) => { w.text = tokens[i]; });
-    }
-  }
-
-  /**
-   * Linearly remaps word timings from an old cue span to a new one.
-   * @param {?Array<!Object>} words Words with start_ms/end_ms.
-   * @param {number} oldStart Old cue start, ms.
-   * @param {number} oldEnd Old cue end, ms.
-   * @param {number} newStart New cue start, ms.
-   * @param {number} newEnd New cue end, ms.
-   * @return {!Array<!Object>} New word objects (inputs not mutated); [] when
-   *     there are no words.
-   */
-  function rescaleWords(words, oldStart, oldEnd, newStart, newEnd) {
-    if (!words || !words.length) return [];
-    const scale = (newEnd - newStart) / Math.max(1, oldEnd - oldStart);
-    return words.map((w) => ({
-      ...w,
-      start_ms: Math.round(newStart + (w.start_ms - oldStart) * scale),
-      end_ms: Math.round(newStart + (w.end_ms - oldStart) * scale),
-    }));
   }
 
   /**
@@ -2456,8 +2392,7 @@
     const st = getCachedStyle();
     const pack = state.selectedPack;
 
-    const active = state.cues.find((c) => ms >= c.start_ms && ms <= c.end_ms) ||
-      (state.activeCueIndex >= 0 ? state.cues[state.activeCueIndex] : null);
+    const active = findPreviewCue(state.cues, ms, state.activeCueIndex);
 
     // Animation step: playing media drives the clock; while paused the synthetic
     // animClockMs keeps boil/flipbook moving. 1000 / 24 ms = one 24 fps frame.
@@ -2482,7 +2417,11 @@
     // Weight is guessed from the style name (Extra* 800, *Bold 700, else 500).
     // 1.15 is an empirical size factor; 12 px keeps tiny stages legible.
     cap.style.fontFamily = resolvedFamily;
-    cap.style.fontWeight = st.font_style.toLowerCase().includes("extra") ? "800" : st.font_style.toLowerCase().includes("bold") ? "700" : "500";
+    cap.style.fontWeight = st.font_style.toLowerCase().includes("extra")
+      ? "800"
+      : st.font_style.toLowerCase().includes("bold")
+        ? "700"
+        : "500";
     const stageH = getCachedStageH();
     cap.style.fontSize = `${Math.max(12, Math.round(st.size * stageH * 1.15))}px`;
     cap.style.bottom = `${Math.round(st.pos_y * 100)}%`;
@@ -2509,18 +2448,15 @@
     // the letters are hollow, as in .ASS and Text+. The width is doubled
     // because the fill covers the inner half of the stroke.
     const ol = Math.max(0, Math.round(st.outline_thickness * 18));
-    cap.style.webkitTextStroke = ol > 0 ? `${ol * 2}px ${hexToRgba(st.outline_hex, st.outline_alpha)}` : "0";
+    cap.style.webkitTextStroke =
+      ol > 0 ? `${ol * 2}px ${hexToRgba(st.outline_hex, st.outline_alpha)}` : "0";
     cap.style.paintOrder = "stroke fill";
     cap.style.textShadow = st.shadow_enabled
       ? `0 3px 8px ${hexToRgba("#000000", st.shadow_alpha)}`
       : "none";
 
     // Applies ASCII folding and uppercase the same way the exporters do.
-    const transformToken = (txt) => {
-      let out = st.ascii_fold ? foldSpanishToAsciiPreview(txt) : txt;
-      if (st.uppercase) out = out.toUpperCase();
-      return out;
-    };
+    const transformToken = (txt) => transformPreviewText(txt, st);
 
     if (!active) {
       const emptyMsg = state.cues.length
@@ -2532,24 +2468,30 @@
 
     if (
       st.karaoke_enabled &&
-      active.words && active.words.length > 0 &&
-      ms >= active.start_ms && ms <= active.end_ms
+      active.words &&
+      active.words.length > 0 &&
+      ms >= active.start_ms &&
+      ms <= active.end_ms
     ) {
       cap.innerHTML = "";
       let wIdx = 0;
       (active.lines || [active.text]).forEach((line, lIdx) => {
         if (lIdx > 0) cap.appendChild(document.createElement("br"));
-        line.trim().split(/\s+/).filter(Boolean).forEach((tok, tIdx) => {
-          if (tIdx > 0) cap.appendChild(document.createTextNode(" "));
-          const span = document.createElement("span");
-          const wObj = active.words[wIdx];
-          wIdx += 1;
-          span.textContent = transformToken(tok);
-          if (wObj && ms >= wObj.start_ms && ms <= wObj.end_ms) {
-            span.style.color = hexToRgba(st.highlight_hex, st.highlight_alpha);
-          }
-          cap.appendChild(span);
-        });
+        line
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean)
+          .forEach((tok, tIdx) => {
+            if (tIdx > 0) cap.appendChild(document.createTextNode(" "));
+            const span = document.createElement("span");
+            const wObj = active.words[wIdx];
+            wIdx += 1;
+            span.textContent = transformToken(tok);
+            if (wObj && ms >= wObj.start_ms && ms <= wObj.end_ms) {
+              span.style.color = hexToRgba(st.highlight_hex, st.highlight_alpha);
+            }
+            cap.appendChild(span);
+          });
       });
     } else {
       cap.textContent = transformToken(active.text || "");
@@ -2585,11 +2527,16 @@
    */
   function applyTheme(theme, persist = true) {
     const meta = document.querySelector('meta[name="color-scheme"]');
-    const systemPref = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+    const systemPref =
+      window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+        ? "light"
+        : "dark";
 
     if (theme === "system" || !theme) {
       if (persist) {
-        try { localStorage.removeItem("autosubs-theme"); } catch (_) {}
+        try {
+          localStorage.removeItem("autosubs-theme");
+        } catch (_) {}
       }
       if (meta) meta.content = "light dark";
       document.documentElement.removeAttribute("data-theme");
@@ -2610,7 +2557,10 @@
     const btn = $("btn-theme-toggle");
     if (btn) {
       const active = getCurrentScheme();
-      btn.setAttribute("aria-label", active === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro");
+      btn.setAttribute(
+        "aria-label",
+        active === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro"
+      );
       btn.title = active === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro";
     }
 
@@ -2669,10 +2619,7 @@
    * @return {{start: number, span: number, dur: number}} All in ms.
    */
   function viewRange() {
-    const dur = totalDurMs();
-    const span = state.view.spanMs > 0 ? Math.min(state.view.spanMs, dur) : dur;
-    const start = Math.max(0, Math.min(state.view.startMs, dur - span));
-    return { start, span, dur };
+    return computeViewRange(totalDurMs(), state.view);
   }
 
   /**
@@ -2708,9 +2655,11 @@
     if (!el) return;
     const { span, dur } = viewRange();
     el.textContent =
-      span >= dur ? "Todo"
-      : span >= 60000 ? `${(span / 60000).toFixed(1)} min`
-      : `${(span / 1000).toFixed(span < 10000 ? 1 : 0)} s`;
+      span >= dur
+        ? "Todo"
+        : span >= 60000
+          ? `${(span / 60000).toFixed(1)} min`
+          : `${(span / 1000).toFixed(span < 10000 ? 1 : 0)} s`;
   }
 
   /**
@@ -2735,36 +2684,8 @@
     return { canvas, w: rect.width || 960, h: rect.height || 96 };
   }
 
-  /**
-   * Maps a time to an x coordinate in the visible window.
-   * @param {number} ms Time in ms.
-   * @param {number} w Canvas width in CSS px.
-   * @param {{start: number, span: number}} vr Window from viewRange().
-   * @return {number} x in CSS px (may fall outside 0..w).
-   */
-  const msToX = (ms, w, vr) => ((ms - vr.start) / vr.span) * w;
-  /**
-   * Maps an x coordinate in the visible window to a time.
-   * @param {number} x x in CSS px.
-   * @param {number} w Canvas width in CSS px.
-   * @param {{start: number, span: number}} vr Window from viewRange().
-   * @return {number} Time in ms.
-   */
-  const xToMs = (x, w, vr) => vr.start + (x / w) * vr.span;
-
-  /**
-   * Formats a ruler label as "m:ss", or "m:ss.s" when ticks are < 1 s apart.
-   * @param {number} ms Tick time.
-   * @param {number} step Tick spacing in ms.
-   * @return {string}
-   */
-  function formatTick(ms, step) {
-    const totalS = ms / 1000;
-    const m = Math.floor(totalS / 60);
-    const sec = totalS - m * 60;
-    const secStr = step < 1000 ? sec.toFixed(1).padStart(4, "0") : String(Math.floor(sec)).padStart(2, "0");
-    return `${m}:${secStr}`;
-  }
+  // msToX(ms, w, vr), xToMs(x, w, vr) and formatTick(ms, step) come from
+  // ui/app_helpers.js; vr is the window returned by viewRange().
 
   // Offscreen render cache of the waveform. Everything except the playhead
   // (ruler, cue regions, peaks, cue lane) is drawn into waveCache.canvas only
@@ -2866,7 +2787,9 @@
     const mutedText = isLight ? "#71717a" : "#92929c";
 
     // Time ruler
-    const steps = [100, 250, 500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000];
+    const steps = [
+      100, 250, 500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000,
+    ];
     const step = steps.find((st) => (st / vr.span) * w >= 70) || 600000;
     offCtx.fillStyle = mutedText;
     offCtx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
@@ -2882,7 +2805,8 @@
       const x1 = msToX(cue.start_ms, w, vr);
       const x2 = msToX(cue.end_ms, w, vr);
       if (x2 < 0 || x1 > w) return;
-      offCtx.fillStyle = idx === state.activeCueIndex ? "rgba(131,103,199,0.16)" : "rgba(131,103,199,0.06)";
+      offCtx.fillStyle =
+        idx === state.activeCueIndex ? "rgba(131,103,199,0.16)" : "rgba(131,103,199,0.06)";
       offCtx.fillRect(x1, waveTop, Math.max(1, x2 - x1), waveBottom - waveTop);
     });
 
@@ -2912,7 +2836,9 @@
       const bw = Math.max(2, x2 - x1 - 1);
       offCtx.fillStyle = active
         ? "rgba(131,103,199,0.92)"
-        : isLight ? "rgba(131,103,199,0.35)" : "rgba(131,103,199,0.32)";
+        : isLight
+          ? "rgba(131,103,199,0.35)"
+          : "rgba(131,103,199,0.32)";
       offCtx.beginPath();
       if (offCtx.roundRect) offCtx.roundRect(x1 + 0.5, laneTop + 2, bw, WAVE_LANE_H - 4, 4);
       else offCtx.rect(x1 + 0.5, laneTop + 2, bw, WAVE_LANE_H - 4);
@@ -2928,7 +2854,11 @@
         offCtx.rect(x1 + 6, laneTop, bw - 12, WAVE_LANE_H);
         offCtx.clip();
         offCtx.fillStyle = active ? "#ffffff" : isLight ? "#3f3f46" : "#d4d4d8";
-        offCtx.fillText(`#${idx + 1} ${(cue.text || "").replace(/\n/g, " ")}`, x1 + 7, laneTop + WAVE_LANE_H / 2);
+        offCtx.fillText(
+          `#${idx + 1} ${(cue.text || "").replace(/\n/g, " ")}`,
+          x1 + 7,
+          laneTop + WAVE_LANE_H / 2
+        );
         offCtx.restore();
       }
     });
@@ -3021,31 +2951,13 @@
    */
   function hitTestCue(x, y) {
     const { w, h } = waveSize();
-    // The lane accepts clicks slightly above its top edge.
-    if (y < h - WAVE_LANE_H - 8) return null;
-    const vr = viewRange();
-    const spans = state.cues.map((cue) => [msToX(cue.start_ms, w, vr), msToX(cue.end_ms, w, vr)]);
-    // Edge tolerance: up to WAVE_EDGE_PX but at most a third of a narrow block
-    // (min 2 px), so the middle of short cues stays draggable.
-    const tolFor = (x1, x2) => Math.min(WAVE_EDGE_PX, Math.max(2, (x2 - x1) / 3));
-    // Inside a block only its own edges count (never the neighbor's).
-    const insideIdx = spans.findIndex(([x1, x2]) => x >= x1 && x <= x2);
-    if (insideIdx >= 0) {
-      const [x1, x2] = spans[insideIdx];
-      const tol = tolFor(x1, x2);
-      if (x - x1 <= tol) return { idx: insideIdx, mode: "start" };
-      if (x2 - x <= tol) return { idx: insideIdx, mode: "end" };
-      return { idx: insideIdx, mode: "move" };
-    }
-    // In a gap: the nearest edge within tolerance.
-    let edge = null;
-    spans.forEach(([x1, x2], idx) => {
-      const tol = tolFor(x1, x2);
-      [["start", Math.abs(x - x1)], ["end", Math.abs(x - x2)]].forEach(([mode, dist]) => {
-        if (dist <= tol && (!edge || dist < edge.dist)) edge = { idx, mode, dist };
-      });
+    return hitTestCueAt(state.cues, x, y, {
+      w,
+      h,
+      vr: viewRange(),
+      laneH: WAVE_LANE_H,
+      edgePx: WAVE_EDGE_PX,
     });
-    return edge;
   }
 
   /**
@@ -3136,22 +3048,8 @@
    */
   function applyCueDrag(d, deltaMs) {
     const cue = state.cues[d.idx];
-    const prevEnd = d.idx > 0 ? state.cues[d.idx - 1].end_ms : 0;
-    const nextStart = d.idx < state.cues.length - 1 ? state.cues[d.idx + 1].start_ms : totalDurMs();
     const { start, end } = d.orig;
-    const snap = (v) => Math.round(v / 10) * 10;
-    const clamp = (v, lo, hi) => Math.max(lo, Math.min(v, Math.max(lo, hi)));
-    let ns = start;
-    let ne = end;
-    if (d.mode === "start") {
-      ns = clamp(snap(start + deltaMs), prevEnd, end - MIN_CUE_MS);
-    } else if (d.mode === "end") {
-      ne = clamp(snap(end + deltaMs), start + MIN_CUE_MS, nextStart);
-    } else {
-      const len = end - start;
-      ns = clamp(snap(start + deltaMs), prevEnd, nextStart - len);
-      ne = ns + len;
-    }
+    const { start: ns, end: ne } = computeCueDrag(state.cues, d, deltaMs, totalDurMs(), MIN_CUE_MS);
     cue.start_ms = ns;
     cue.end_ms = ne;
     cue.words = rescaleWords(d.orig.words, start, end, ns, ne);
@@ -3210,7 +3108,11 @@
           grabMs: xToMs(x, w, vr),
           startX: x,
           moved: false,
-          orig: { start: cue.start_ms, end: cue.end_ms, words: (cue.words || []).map((wd) => ({ ...wd })) },
+          orig: {
+            start: cue.start_ms,
+            end: cue.end_ms,
+            words: (cue.words || []).map((wd) => ({ ...wd })),
+          },
         };
         selectCue(hit.idx);
         drawWaveform(currentMs());
@@ -3375,15 +3277,38 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * Jobs currently being polled, by job id, in start order. Each entry:
-   * {onSuccess, onError, onProgress, showInBox, intervalMs, timer, job}
-   * where `timer` is the pending setTimeout handle and `job` the last
-   * snapshot from GET /api/jobs/<id> (null before the first response).
-   * Several jobs (e.g. a model download and a transcription) can run at once;
-   * each keeps its own callbacks, and the progress box shows one of them.
-   * @type {!Map<string, !Object>}
+   * Per-job poller (see createJobPoller() in ui/app_helpers.js). It owns the
+   * map of polled jobs and which one #job-box shows; the hooks below do the
+   * DOM work. Several jobs (e.g. a model download and a transcription) can
+   * run at once; each keeps its own callbacks. `jobPollers.size` is the
+   * number of jobs being polled. state.activeJobId mirrors the shown job so
+   * the cancel button knows its target.
    */
-  const jobPollers = new Map();
+  const jobPollers = createJobPoller({
+    fetchJson: (url) => apiJson(url),
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (handle) => clearTimeout(handle),
+    // A job became the shown one: cancel a pending hide and reveal the box.
+    onShow: (jobId) => {
+      state.activeJobId = jobId;
+      clearTimeout(state.jobHideTimer);
+      state.jobHideTimer = null;
+      $("job-box").classList.remove("hidden");
+      $("btn-cancel-job").classList.remove("hidden");
+    },
+    onRender: renderJobBox,
+    // The last boxed job ended: hide the cancel button and, after a success,
+    // hide the box 2 s later (after a failure the final stage stays visible).
+    onIdle: (succeeded) => {
+      state.activeJobId = null;
+      $("btn-cancel-job").classList.add("hidden");
+      if (succeeded) {
+        clearTimeout(state.jobHideTimer);
+        state.jobHideTimer = setTimeout(() => $("job-box").classList.add("hidden"), 2000);
+      }
+    },
+    onToast: showToast,
+  });
 
   /**
    * Polls a server job until it finishes and runs its callbacks. Each job
@@ -3410,136 +3335,19 @@
    *     is the delay between polls (default 500).
    */
   function pollJob(jobId, onSuccess, opts = {}) {
-    const existing = jobPollers.get(jobId);
-    if (existing) {
-      if (existing.showInBox) showJobInBox(jobId);
-      return;
-    }
-    const poller = {
-      onSuccess,
-      onError: opts.onError || null,
-      onProgress: opts.onProgress || null,
-      showInBox: opts.showInBox !== false,
-      intervalMs: opts.intervalMs || 500,
-      timer: null,
-      job: null,
-    };
-    jobPollers.set(jobId, poller);
-    if (poller.showInBox) showJobInBox(jobId);
-    poller.timer = setTimeout(() => pollJobOnce(jobId), poller.intervalMs);
-  }
-
-  /**
-   * One poll step of pollJob(): fetches the job, reports progress, then
-   * either finishes the poller (done / error / cancelled / request failure)
-   * or schedules the next step.
-   * @async
-   * @param {string} jobId Polled job id.
-   * @return {!Promise<void>}
-   */
-  async function pollJobOnce(jobId) {
-    const poller = jobPollers.get(jobId);
-    if (!poller) return;
-    let job;
-    try {
-      job = await apiJson(`/api/jobs/${jobId}`);
-    } catch (err) {
-      if (jobPollers.get(jobId) !== poller) return;
-      finishJobPoller(jobId, false);
-      if (poller.onError) poller.onError(null, err);
-      else showToast(`Error consultando tarea: ${err.message}`);
-      return;
-    }
-    // Guard against a poller removed while the request was in flight.
-    if (jobPollers.get(jobId) !== poller) return;
-    poller.job = job;
-    if (poller.onProgress) poller.onProgress(job);
-    if (state.activeJobId === jobId) renderJobBox();
-
-    if (job.status === "done") {
-      finishJobPoller(jobId, true);
-      Promise.resolve()
-        .then(() => poller.onSuccess(job))
-        .catch((err) => showToast(err.message, 5000));
-    } else if (job.status === "error" || job.status === "cancelled") {
-      finishJobPoller(jobId, false);
-      if (poller.onError) poller.onError(job, null);
-      else showToast(job.error || job.stage, 5000);
-    } else {
-      poller.timer = setTimeout(() => pollJobOnce(jobId), poller.intervalMs);
-    }
-  }
-
-  /**
-   * Removes a finished job's poller and updates the progress box: if the
-   * finished job was shown, the box switches to the newest remaining boxed
-   * job; with none left the cancel button hides and, after a success, the
-   * box hides 2 s later (after a failure it keeps the final stage visible).
-   * @param {string} jobId Finished job id.
-   * @param {boolean} succeeded Whether the job ended with status "done".
-   */
-  function finishJobPoller(jobId, succeeded) {
-    const poller = jobPollers.get(jobId);
-    if (poller) clearTimeout(poller.timer);
-    jobPollers.delete(jobId);
-    if (state.activeJobId !== jobId) {
-      // Another job is shown: only its "+N en curso" count changed.
-      if (state.activeJobId) renderJobBox();
-      return;
-    }
-    const next = newestBoxedJobId();
-    if (next) {
-      showJobInBox(next);
-      return;
-    }
-    state.activeJobId = null;
-    $("btn-cancel-job").classList.add("hidden");
-    if (succeeded) {
-      clearTimeout(state.jobHideTimer);
-      state.jobHideTimer = setTimeout(() => $("job-box").classList.add("hidden"), 2000);
-    }
-  }
-
-  /**
-   * Returns the most recently started job that is shown in #job-box.
-   * @return {?string} Job id, or null when no boxed job is running.
-   */
-  function newestBoxedJobId() {
-    let newest = null;
-    jobPollers.forEach((p, id) => {
-      if (p.showInBox) newest = id;
-    });
-    return newest;
-  }
-
-  /**
-   * Makes a job the one shown in #job-box (and the cancel target), cancelling
-   * a pending hide of the box.
-   * @param {string} jobId Polled job id.
-   */
-  function showJobInBox(jobId) {
-    state.activeJobId = jobId;
-    clearTimeout(state.jobHideTimer);
-    state.jobHideTimer = null;
-    $("job-box").classList.remove("hidden");
-    $("btn-cancel-job").classList.remove("hidden");
-    renderJobBox();
+    jobPollers.pollJob(jobId, onSuccess, opts);
   }
 
   /**
    * Paints the shown job's last snapshot into #job-box. Before the first
    * response it shows a neutral 0% instead of the previous job's text. When
    * other boxed jobs are running, their count is appended to the stage.
+   * @param {!Object} job Last snapshot of the shown job ({} before the first
+   *     response).
+   * @param {number} others Number of other boxed jobs still running.
    */
-  function renderJobBox() {
-    const poller = jobPollers.get(state.activeJobId);
-    if (!poller) return;
-    const job = poller.job || {};
+  function renderJobBox(job, others) {
     const progress = job.progress || 0;
-    let others = -1;
-    jobPollers.forEach((p) => {
-      if (p.showInBox) others += 1;
-    });
     const extra = others > 0 ? ` (+${others} ${others === 1 ? "tarea" : "tareas"} en curso)` : "";
     $("job-stage").textContent = `${job.stage || "Procesando..."}${extra}`;
     $("job-pct").textContent = `${progress}%`;
@@ -3626,7 +3434,9 @@
       btn.addEventListener("click", () => {
         const tab = btn.dataset.tab;
         state.uploadSource = tab === "resolve" ? "inbox" : "uploaded";
-        document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b === btn));
+        document
+          .querySelectorAll(".tab-btn")
+          .forEach((b) => b.classList.toggle("active", b === btn));
         $("tab-resolve").classList.toggle("active", tab === "resolve");
         $("tab-file").classList.toggle("active", tab === "file");
       });
@@ -3639,7 +3449,10 @@
     $("btn-refresh").addEventListener("click", refreshStatus);
     $("btn-check-inbox").addEventListener("click", async () => {
       try {
-        const notifyRes = await apiJson("/api/resolve/notify-export", { method: "POST", body: "{}" });
+        const notifyRes = await apiJson("/api/resolve/notify-export", {
+          method: "POST",
+          body: "{}",
+        });
         if (notifyRes && notifyRes.session) {
           applySession(notifyRes.session);
         } else {
@@ -3711,7 +3524,7 @@
           // The server marks the result stale when the media changed while
           // Whisper ran (e.g. a new Resolve export); its cues belong to the
           // old audio, so load the current session instead of this result.
-          if (job.result && job.result.stale === true) {
+          if (isStaleJobResult(job)) {
             showToast(
               "Se descartó la transcripción porque el audio cambió mientras se procesaba. " +
                 "Vuelve a transcribir.",
@@ -3757,7 +3570,10 @@
       $("cfg-cpl").value = p.max_cpl;
       $("cfg-lines").value = p.max_lines;
       $("cfg-pause").value = p.pause_split_ms;
-      if ($("preset-select").value === "reels_9_16" || $("preset-select").value === "karaoke_impacto") {
+      if (
+        $("preset-select").value === "reels_9_16" ||
+        $("preset-select").value === "karaoke_impacto"
+      ) {
         setAspect("9:16");
       } else {
         setAspect("16:9");
@@ -3853,7 +3669,10 @@
       if (!find) return;
       state.cues.forEach((cue) => {
         cue.text = cue.text.split(find).join(rep);
-        cue.lines = cue.text.split("\n").map((s) => s.trim()).filter(Boolean);
+        cue.lines = cue.text
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean);
         syncCueWordsAfterTextEdit(cue);
       });
       await saveCuesToServer();
@@ -3893,9 +3712,10 @@
         }
         if (lastRes) {
           updateFontCatalog(lastRes, lastRes.selected_pack_id);
-          const restartNote = lastRes.installed_to_macos && lastRes.resolve_running
-            ? " Reinicia DaVinci Resolve 20 para que detecte la nueva tipografía en ~/Library/Fonts."
-            : "";
+          const restartNote =
+            lastRes.installed_to_macos && lastRes.resolve_running
+              ? " Reinicia DaVinci Resolve 20 para que detecte la nueva tipografía en ~/Library/Fonts."
+              : "";
           $("font-upload-status").textContent = `✓ ${totalFaces} variante(s) listas.${restartNote}`;
           showToast(
             `Tipografía instalada (${totalFaces}).${restartNote}`,
@@ -3939,7 +3759,9 @@
           const name = (map[del.dataset.deletePreset] || {}).preset_name || "";
           delete map[del.dataset.deletePreset];
           saveCustomPresets(map);
-          if (state.activePreset === `custom:${del.dataset.deletePreset}`) state.activePreset = null;
+          if (state.activePreset === `custom:${del.dataset.deletePreset}`) {
+            state.activePreset = null;
+          }
           renderCustomChips();
           showToast(`Estilo «${name}» borrado.`);
           return;
@@ -3977,10 +3799,14 @@
       const on = $("st-karaoke").checked;
       syncStyleControlStates();
       updatePresetStatus();
-      try { localStorage.setItem("autosubs-karaoke", on ? "1" : "0"); } catch (_) {}
+      try {
+        localStorage.setItem("autosubs-karaoke", on ? "1" : "0");
+      } catch (_) {}
       renderPreviewAtMs(currentMs());
     };
-    try { $("st-karaoke").checked = localStorage.getItem("autosubs-karaoke") === "1"; } catch (_) {}
+    try {
+      $("st-karaoke").checked = localStorage.getItem("autosubs-karaoke") === "1";
+    } catch (_) {}
     syncStyleControlStates();
     $("st-karaoke").addEventListener("change", syncKaraoke);
 
@@ -3999,25 +3825,46 @@
         btn.setAttribute("aria-pressed", String(btn.dataset.bg === value));
       });
       if (persist) {
-        try { localStorage.setItem("autosubs-stage-bg", value); } catch (_) {}
+        try {
+          localStorage.setItem("autosubs-stage-bg", value);
+        } catch (_) {}
       }
     };
     document.querySelectorAll("#stage-bg-toggle .bg-swatch").forEach((btn) => {
       btn.addEventListener("click", () => setStageBg(btn.dataset.bg));
     });
     let savedBg = "black";
-    try { savedBg = localStorage.getItem("autosubs-stage-bg") || "black"; } catch (_) {}
+    try {
+      savedBg = localStorage.getItem("autosubs-stage-bg") || "black";
+    } catch (_) {}
     setStageBg(savedBg, false);
 
     wireMachinePanel();
     // Every style control re-renders through onStyleControlChanged: "input" for
     // live slider feedback, "change" for selects, checkboxes and color pickers.
-    ["st-weight", "st-ascii-fold", "st-size", "st-posy", "st-fill", "st-highlight", "st-outline", "st-outline-w", "st-shadow", "st-box", "st-box-color", "cfg-uppercase",
-     "st-fill-a", "st-highlight-a", "st-outline-a", "st-shadow-a", "st-box-a", "st-anim-mode"]
-      .forEach((id) => {
-        $(id).addEventListener("input", onStyleControlChanged);
-        $(id).addEventListener("change", onStyleControlChanged);
-      });
+    [
+      "st-weight",
+      "st-ascii-fold",
+      "st-size",
+      "st-posy",
+      "st-fill",
+      "st-highlight",
+      "st-outline",
+      "st-outline-w",
+      "st-shadow",
+      "st-box",
+      "st-box-color",
+      "cfg-uppercase",
+      "st-fill-a",
+      "st-highlight-a",
+      "st-outline-a",
+      "st-shadow-a",
+      "st-box-a",
+      "st-anim-mode",
+    ].forEach((id) => {
+      $(id).addEventListener("input", onStyleControlChanged);
+      $(id).addEventListener("change", onStyleControlChanged);
+    });
     $("st-font").addEventListener("change", updatePresetStatus);
 
     /** Shows the Text+ template field only for the "textplus" push mode. */
@@ -4052,7 +3899,13 @@
         const srtHint = document.createElement("span");
         srtHint.className = "hint";
         srtHint.textContent = `SRT: ${res.files.srt}`;
-        box.append(title, document.createElement("br"), msgNode, document.createElement("br"), srtHint);
+        box.append(
+          title,
+          document.createElement("br"),
+          msgNode,
+          document.createElement("br"),
+          srtHint
+        );
         showToast(res.message, 5000);
       } catch (err) {
         showToast(err.message);
@@ -4123,7 +3976,10 @@
 
     // Space toggles play/pause unless the focus is in a form field
     document.addEventListener("keydown", (ev) => {
-      if (ev.code === "Space" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) {
+      if (
+        ev.code === "Space" &&
+        !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)
+      ) {
         ev.preventDefault();
         $("btn-play").click();
       }
@@ -4144,7 +4000,9 @@
     if (window.matchMedia) {
       window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
         let saved = null;
-        try { saved = localStorage.getItem("autosubs-theme"); } catch (_) {}
+        try {
+          saved = localStorage.getItem("autosubs-theme");
+        } catch (_) {}
         if (!saved) {
           applyTheme("system", false);
         }
@@ -4160,7 +4018,9 @@
   // re-applies that preset once fonts are known, unless the user changed it.
   wireEvents();
   let initialTheme = null;
-  try { initialTheme = localStorage.getItem("autosubs-theme"); } catch (_) {}
+  try {
+    initialTheme = localStorage.getItem("autosubs-theme");
+  } catch (_) {}
   applyTheme(initialTheme, false);
   // Fallback for engines without accent-color: exposes each slider's fill as
   // --progress (no rule in styles.css consumes it at the moment).
