@@ -112,7 +112,7 @@ You can feed audio into MTTN AutoSubs Tool directly from a local media file or f
 ### Upload a local media file
 
 1.  In the top bar, click **App Independiente**, or open the **Archivo local** tab inside **1. Audio de origen**.
-2.  Drag a `.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov`, or `.mkv` file onto the upload dropzone, or click the dropzone to select a file from disk.
+2.  Drag a `.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov`, `.m4v`, or `.mkv` file onto the upload dropzone, or click the dropzone to select a file from disk.
 
 <img src="images/autosubs-es-step1-local.png" width="348" alt="Step 1. Audio de origen with the Archivo local tab and the drag-and-drop zone">
 
@@ -240,7 +240,7 @@ Use **6. Exportar** to download subtitle files, clean Spanish transcripts, or an
 | `.TXT Guion` | Plain UTF-8 text | Exports paragraph-formatted Spanish dialogue without timestamps for blog posts or show notes. |
 | `.TXT + Tiempos` | Timestamped UTF-8 text | Exports `[MM:SS] Texto` lines for rapid script review and timecode logging. |
 | `Copiar guion` | System clipboard text | Copies the clean Spanish transcript directly to your macOS clipboard. |
-| `Render MP4` | H.264 MP4 (`libx264` or `h264_videotoolbox`) | Burns styled `.ass` subtitles onto an uploaded `.mp4`, `.mov`, or `.mkv` video using CPU `libx264` (zero Polaris VRAM) on Intel Macs or `h264_videotoolbox` on Apple Silicon (requires `ffmpeg-full`). |
+| `Render MP4` | H.264 MP4 (`libx264` or `h264_videotoolbox`) | Burns styled `.ass` subtitles onto an uploaded `.mp4`, `.mov`, `.m4v`, or `.mkv` video using CPU `libx264` (zero Polaris VRAM) on Intel Macs or `h264_videotoolbox` on Apple Silicon (requires `ffmpeg-full`). |
 | `.FCPXML 1.9` | Final Cut Pro XML 1.9 | Imports Basic Title clips at exact frame-accurate rational frame rates (`23.976`, `24`, `25`, `29.97`, `30`, `50`, `59.94`, `60` fps). |
 | `.JSON Palabras` | Structured cue and word array | Preserves per-word `start_ms`, `end_ms`, confidence, CPS, and warnings for custom pipelines. |
 

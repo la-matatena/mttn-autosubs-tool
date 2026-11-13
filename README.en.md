@@ -135,7 +135,7 @@ The installer sets up the `whisper-cpp`, `ffmpeg`, and `ffmpeg-full` packages th
 You do not need DaVinci Resolve open or installed to subtitle videos, interviews, or board-game reviews:
 
 1. Switch the top bar to **App Independiente** (the studio also selects this mode automatically on standalone app launches or when DaVinci Resolve is not running).
-2. Drag any local audio or video file (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov`, or `.mkv`) onto the upload zone in **1. Audio de origen**. Video uploads stream directly inside **Monitor previo** with frame-accurate Spanish subtitles and audio scrubbing.
+2. Drag any local audio or video file (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov`, `.m4v`, or `.mkv`) onto the upload zone in **1. Audio de origen**. Video uploads stream directly inside **Monitor previo** with frame-accurate Spanish subtitles and audio scrubbing.
 
    <img src="docs/images/autosubs-es-step1-local.png" width="348" alt="Step 1. Audio de origen with the Archivo local tab and the drag-and-drop zone for video or audio">
 3. Configure **2. Motor Whisper** (`Large-v3-Turbo Q8_0` or `Large-v3 Completo Q5_0`) and **3. Español, dominio y reglas RAE**, then click **Transcribir en Español**.

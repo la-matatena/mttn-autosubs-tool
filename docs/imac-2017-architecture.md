@@ -102,7 +102,7 @@ Set any of these environment variables before starting `autosubs_server.py` to o
 | `GET` | `/api/status` | Returns hardware profile, installed models, Resolve bridge status, presets, dialects, font catalog, and session snapshot. |
 | `GET` | `/api/fonts` | Returns built-in fonts, custom uploaded or macOS faces, Spanish `cmap` coverage warnings, and grouped animated packs. |
 | `GET` | `/api/fonts/file/FONT_ID` | Serves `.otf`, `.ttf`, or `.ttc` font files with `font/otf` or `font/ttf` media types for browser `@font-face` previews. |
-| `GET` | `/api/media` | Streams active `.wav` or uploaded `.mp4`, `.mov`, or `.mkv` video with HTTP `206 Partial Content` `Range` seeking support. |
+| `GET` | `/api/media` | Streams active `.wav` or uploaded `.mp4`, `.mov`, `.m4v`, or `.mkv` video with HTTP `206 Partial Content` `Range` seeking support. |
 | `GET` | `/api/exported-video` | Streams or downloads the latest rendered `.mp4` burned-in video with HTTP `206` range support. |
 | `GET` | `/api/jobs/JOB_ID` | Returns background download, Whisper transcription, or MP4 burn-in progress percentage and stage message. |
 | `POST` | `/api/upload` | Streams raw media uploads into `cache/` by using the `X-Filename` header (avoids the Python 3.13 removed `cgi` module). |

@@ -323,6 +323,8 @@ MODEL_CATALOG: dict[str, ModelSpec] = {
 }
 
 _WHISPER_FLAG_CACHE: dict[tuple[str, str], bool] = {}
+_FFMPEG_FILTER_CACHE: dict[tuple[str, str], bool] = {}
+_FFMPEG_ENCODER_CACHE: dict[tuple[str, str], bool] = {}
 
 
 def get_app_data_dir(create: bool = True) -> Path:
@@ -573,6 +575,9 @@ def escape_ffmpeg_filter_path(path_str: str) -> str:
 
 def ffmpeg_supports_filter(ffmpeg_bin: str, filter_name: str) -> bool:
   """Checks whether the local FFmpeg build ships a filter (e.g. libass 'ass')."""
+  key = (ffmpeg_bin, filter_name)
+  if key in _FFMPEG_FILTER_CACHE:
+    return _FFMPEG_FILTER_CACHE[key]
   try:
     res = subprocess.run(
         [ffmpeg_bin, "-hide_banner", "-filters"],
@@ -582,9 +587,11 @@ def ffmpeg_supports_filter(ffmpeg_bin: str, filter_name: str) -> bool:
         timeout=3.0,
         check=False,
     )
-    return any(
+    supported = any(
         line.split()[1:2] == [filter_name] for line in res.stdout.splitlines()
     )
+    _FFMPEG_FILTER_CACHE[key] = supported
+    return supported
   except (OSError, subprocess.SubprocessError):
     return False
 
@@ -611,6 +618,9 @@ def find_burnin_ffmpeg() -> str | None:
 
 def ffmpeg_supports_encoder(ffmpeg_bin: str, encoder: str) -> bool:
   """Checks whether the local FFmpeg build ships a given video encoder."""
+  key = (ffmpeg_bin, encoder)
+  if key in _FFMPEG_ENCODER_CACHE:
+    return _FFMPEG_ENCODER_CACHE[key]
   try:
     res = subprocess.run(
         [ffmpeg_bin, "-hide_banner", "-encoders"],
@@ -620,9 +630,11 @@ def ffmpeg_supports_encoder(ffmpeg_bin: str, encoder: str) -> bool:
         timeout=3.0,
         check=False,
     )
-    return any(
+    supported = any(
         line.split()[1:2] == [encoder] for line in res.stdout.splitlines()
     )
+    _FFMPEG_ENCODER_CACHE[key] = supported
+    return supported
   except (OSError, subprocess.SubprocessError):
     return False
 

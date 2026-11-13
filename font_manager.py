@@ -547,7 +547,7 @@ def group_font_packs(faces: list[FontFaceInfo]) -> list[FontPackInfo]:
               label=f"{fam_name}{suffix}",
               family=fam_name,
               is_animated_pack=False,
-              variant_count=1,
+              variant_count=len(ordered),
               supports_spanish=len(missing_union) == 0,
               missing_spanish_chars=missing_union,
               source=primary.source,
@@ -777,11 +777,13 @@ class FontManager:
           "No se encontraron archivos .otf o .ttf válidos dentro de la subida."
       )
 
+    for safe_name, font_bytes in extracted:
+      # Validate all OpenType/TrueType headers in memory before writing to disk.
+      parse_font_bytes(font_bytes, fallback_name=safe_name)
+
     installed_faces: list[FontFaceInfo] = []
     copied_to_macos = False
     for safe_name, font_bytes in extracted:
-      # Validate OpenType/TrueType header before writing to disk.
-      parse_font_bytes(font_bytes, fallback_name=safe_name)
       app_dest = self.app_fonts_dir / safe_name
       app_dest.write_bytes(font_bytes)
       if install_to_macos and self.macos_fonts_dir is not None:

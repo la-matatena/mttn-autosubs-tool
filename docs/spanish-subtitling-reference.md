@@ -41,7 +41,7 @@ When `juegos_mesa` is active, `clean_spanish_words` applies `BOARDGAME_PHONETIC_
 Terms entered in **Glosario personalizado** (or added with **+ Términos BGG** from `BOARDGAME_GLOSSARY_TERMS`) perform two tasks:
 
 1.  **Prompt biasing**: Places your custom glossary terms ahead of the domain list inside the 580-character `whisper-cli --prompt` budget so rare proper nouns are never truncated.
-2.  **Deterministic post-processing**: `_apply_glossary` scans normalized word windows from longest phrase to shortest (`k` words down to `1` word) after `BOARDGAME_PHONETIC_FIXES`, restores exact casing (such as `DaVinci Resolve`, `BoardGameGeek`, or `Worker Placement`), and preserves leading or trailing punctuation (`¿`, `¡`, commas, periods, question marks).
+2.  **Deterministic post-processing**: `_apply_glossary` indexes normalized glossary phrases by their leading token for linear-time ($O(N)$) matching after `BOARDGAME_PHONETIC_FIXES` (longest phrase first), restores exact casing (such as `DaVinci Resolve`, `BoardGameGeek`, or `Worker Placement`), and preserves leading or trailing punctuation (`¿`, `¡`, commas, periods, question marks).
 
 ## BPE token reconstruction and silence-hallucination filtering
 

@@ -26,7 +26,7 @@ local function getHomeDir()
       if home then return home end
     end
   end
-  return "~"
+  return ""
 end
 
 local function loadLuaModule(path)
@@ -56,7 +56,12 @@ local function loadLuaModule(path)
   return nil, "No se pudo cargar " .. path
 end
 
-local jumpPath = getHomeDir() .. "/Library/Application Support/AutoSubsES/bridge/outbox/jump_tc.lua"
+local homeDir = getHomeDir()
+if homeDir == "" then
+  print("[AutoSubs ES] Error: No se pudo determinar el directorio HOME del usuario.")
+  return
+end
+local jumpPath = homeDir .. "/Library/Application Support/AutoSubsES/bridge/outbox/jump_tc.lua"
 local data, err = loadLuaModule(jumpPath)
 if not data or not data.timecode then
   print("[AutoSubs ES] No hay ningún salto de tiempo pendiente: " .. tostring(err))

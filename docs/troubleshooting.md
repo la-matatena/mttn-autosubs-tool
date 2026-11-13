@@ -56,7 +56,7 @@ In some DaVinci Resolve 20 Free project configurations, `mediaPool:AppendToTimel
 
 1.  Open **Workspace** > **Console** in DaVinci Resolve 20 and check whether Script 2 printed the fallback path to `autosubs_es_resolve_tc.srt`.
 2.  In DaVinci Resolve 20, click **File** > **Import** > **Subtitle** (or **Archivo** > **Importar** > **Subtítulo**).
-3.  Select `~/Library/Application Support/AutoSubsES/bridge/outbox/autosubs_es_resolve_tc.srt` (this file is pre-aligned to your timeline's `01:00:00:00` starting timecode).
+3.  Select `~/Library/Application Support/AutoSubsES/bridge/outbox/autosubs_es_resolve_tc.srt` (this file is pre-aligned to your timeline's starting timecode, e.g. `01:00:00:00` or `00:00:00:00`).
 4.  Drag the imported subtitle clip onto your subtitle track (`ST1`).
 
 ## Enable `Text+` insertion from the Media Pool

@@ -124,11 +124,13 @@ class AppState:
     self.jobs: dict[str, dict[str, Any]] = {}
     self.active_procs: dict[str, subprocess.Popen[Any]] = {}
     self.cancel_flags: dict[str, bool] = {}
+    self._active_downloads: dict[str, str] = {}
 
     self.media_path: Path | None = None
     self.wav_path: Path | None = None
     self.exported_video_path: Path | None = None
     self._last_inbox_sig: tuple[str, int, int] | None = None
+    self.media_generation: int = 0
     self.media_name: str = ""
     self.duration_ms: int = 0
     self.peaks: list[float] = []
@@ -265,6 +267,7 @@ class AppState:
       self.cues = cues
       self.format_config = cfg
       self._last_inbox_sig = None
+      self.media_generation += 1
       self.demo_mode = True
     return self.session_snapshot()
 
@@ -310,12 +313,19 @@ class AppState:
       _terminate_process(proc)
     return True
 
-  def settings_payload(self) -> dict[str, Any]:
+  def settings_payload(
+      self, resolve_running: bool | None = None
+  ) -> dict[str, Any]:
     """This Mac's profile, saved settings and the resulting parameters."""
     profile = hardware_imac2017.detect_hardware_profile()
     data = self.settings.snapshot()
+    is_running = (
+        resolve_running
+        if resolve_running is not None
+        else hardware_imac2017.is_resolve_running()
+    )
     effective = machine_settings.resolve_performance(
-        profile, data["performance"], hardware_imac2017.is_resolve_running()
+        profile, data["performance"], is_running
     )
     return {
         "settings": data,
@@ -391,6 +401,9 @@ class AppState:
       out_prefix = self.cache_dir / f"bench_{job_id}"
       try:
         audio_s = self._make_benchmark_wav(bench_wav, env.get("ffmpeg_path"))
+        with self.lock:
+          if self.cancel_flags.get(job_id):
+            return
         self.update_job(
             job_id,
             progress=20,
@@ -463,9 +476,26 @@ class AppState:
     if not spec:
       raise ValueError(f"Modelo desconocido: {model_id}")
 
-    job_id = self.create_job(
-        "download", f"Conectando con Hugging Face ({spec.filename})..."
-    )
+    with self.lock:
+      existing_job_id = self._active_downloads.get(model_id)
+      if existing_job_id:
+        existing_job = self.jobs.get(existing_job_id)
+        if existing_job and existing_job.get("status") in ("queued", "running"):
+          return existing_job_id
+      job_id = uuid.uuid4().hex[:10]
+      self.jobs[job_id] = {
+          "job_id": job_id,
+          "kind": "download",
+          "status": "running",
+          "progress": 0,
+          "stage": f"Conectando con Hugging Face ({spec.filename})...",
+          "error": None,
+          "started_at": time.time(),
+          "finished_at": None,
+          "result": None,
+      }
+      self.cancel_flags[job_id] = False
+      self._active_downloads[model_id] = job_id
 
     def _worker() -> None:
       dest = self.models_dir / spec.filename
@@ -542,6 +572,10 @@ class AppState:
             error=str(exc),
             finished_at=time.time(),
         )
+      finally:
+        with self.lock:
+          if self._active_downloads.get(model_id) == job_id:
+            self._active_downloads.pop(model_id, None)
 
     threading.Thread(target=_worker, daemon=True).start()
     return job_id
@@ -608,6 +642,8 @@ class AppState:
     force_no_gpu = bool(payload.get("force_no_gpu", effective["force_no_gpu"]))
     accel_label = "CPU, GPU libre" if force_no_gpu else "GPU Metal"
 
+    with self.lock:
+      expected_generation = self.media_generation
     job_id = self.create_job("transcribe", "Preparando audio 16 kHz mono...")
 
     def _worker() -> None:
@@ -623,6 +659,9 @@ class AppState:
             ffmpeg_bin=ffmpeg_bin,
             enhance_voice=enhance_voice,
         )
+        with self.lock:
+          if self.cancel_flags.get(job_id):
+            return
         wave_info = resolve_bridge.extract_waveform_peaks(str(working_wav))
         self.update_job(
             job_id,
@@ -695,19 +734,24 @@ class AppState:
         words = spanish_nlp.parse_whisper_ojf(ojf_data)
         cues = spanish_nlp.segment_and_wrap_spanish(words, cfg)
 
+        stale = False
         with self.lock:
-          old_wav = self.wav_path
-          self.media_path = src_path
-          self.wav_path = working_wav
-          self.exported_video_path = None
-          self.media_name = src_path.name
-          self.duration_ms = int(wave_info["duration_ms"])
-          self.peaks = list(wave_info["peaks"])
-          self.words = words
-          self.cues = cues
-          self.format_config = cfg
-          self.demo_mode = False
-        completed_ok = True
+          if self.media_generation != expected_generation:
+            stale = True
+          else:
+            old_wav = self.wav_path
+            self.media_path = src_path
+            self.wav_path = working_wav
+            self.exported_video_path = None
+            self.media_name = src_path.name
+            self.duration_ms = int(wave_info["duration_ms"])
+            self.peaks = list(wave_info["peaks"])
+            self.words = words
+            self.cues = cues
+            self.format_config = cfg
+            self.demo_mode = False
+        if not stale:
+          completed_ok = True
 
         self.update_job(
             job_id,
@@ -795,7 +839,7 @@ class AppState:
     def _worker() -> None:
       ass_file = self.cache_dir / f"burnin_{job_id}.ass"
       base_stem = _safe_filename(Path(media_name).stem)
-      out_mp4 = self.cache_dir / f"{base_stem}_subtitulado.mp4"
+      out_mp4 = self.cache_dir / f"{base_stem}_subtitulado_{job_id}.mp4"
       try:
         ass_content = exporters.export_ass_karaoke(cues, style, width, height)
         ass_file.write_text(ass_content, encoding="utf-8")
@@ -942,7 +986,7 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     if ".." in Path(safe).parts or Path(safe).is_absolute():
       self.send_error(HTTPStatus.FORBIDDEN)
       return
-    ui_root = _find_ui_dir()
+    ui_root = UI_DIR
     target = ui_root / safe
     if not target.is_file():
       self.send_error(HTTPStatus.NOT_FOUND)
@@ -1031,7 +1075,7 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       if (
           media
           and media.suffix.lower()
-          not in (".wav", ".mp3", ".m4a", ".mp4", ".mov", ".webm")
+          not in (".wav", ".mp3", ".m4a", ".mp4", ".m4v", ".mov", ".webm")
           and self.state.wav_path
       ):
         media = self.state.wav_path
@@ -1078,7 +1122,10 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
 
     if path == "/api/status":
       env = hardware_imac2017.detect_environment()
-      bridge_status = self.state.bridge.get_status()
+      resolve_running = bool(env.get("resolve_running"))
+      bridge_status = self.state.bridge.get_status(
+          resolve_running=resolve_running
+      )
       self._send_json(
           HTTPStatus.OK,
           {
@@ -1095,7 +1142,9 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
               },
               "fonts": self.state.fonts.list_fonts(),
               "session": self.state.session_snapshot(),
-              "machine": self.state.settings_payload(),
+              "machine": self.state.settings_payload(
+                  resolve_running=resolve_running
+              ),
           },
       )
       return
@@ -1129,7 +1178,8 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     if path.startswith("/api/jobs/"):
       job_id = path.split("/api/jobs/", 1)[1].strip("/")
       with self.state.lock:
-        job = self.state.jobs.get(job_id)
+        raw_job = self.state.jobs.get(job_id)
+        job = dict(raw_job) if raw_job else None
       if not job:
         self._send_json(
             HTTPStatus.NOT_FOUND, {"error": "Trabajo no encontrado"}
@@ -1149,7 +1199,14 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
     if path == "/api/upload":
       raw_name = self.headers.get("X-Filename", "media.wav")
       safe_name = _safe_filename(raw_name)
-      length = int(self.headers.get("Content-Length") or 0)
+      try:
+        length = int(self.headers.get("Content-Length") or 0)
+      except ValueError:
+        self._send_json(
+            HTTPStatus.BAD_REQUEST,
+            {"error": "Content-Length inválido"},
+        )
+        return
       if length <= 0:
         self._send_json(
             HTTPStatus.BAD_REQUEST,
@@ -1165,6 +1222,13 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
             break
           fp.write(chunk)
           remaining -= len(chunk)
+      if remaining != 0:
+        dest.unlink(missing_ok=True)
+        self._send_json(
+            HTTPStatus.BAD_REQUEST,
+            {"error": "Subida incompleta antes de terminar la transferencia"},
+        )
+        return
 
       wave_info = {"peaks": [], "duration_ms": 0}
       if dest.suffix.lower() == ".wav":
@@ -1180,6 +1244,7 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
         self.state.words = []
         self.state.cues = []
         self.state._last_inbox_sig = None
+        self.state.media_generation += 1
         self.state.demo_mode = False
 
       self._send_json(
@@ -1320,8 +1385,11 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       style = exporters.StyleConfig.from_dict(body.get("style"))
       meta = self.state.bridge.read_timeline_meta()
       fps = float(body.get("fps") or meta.get("fps") or 24.0)
+      raw_start_frame = body.get("timeline_start_frame")
+      if raw_start_frame is None:
+        raw_start_frame = meta.get("start_frame")
       start_frame = int(
-          body.get("timeline_start_frame") or meta.get("start_frame") or 86400
+          raw_start_frame if raw_start_frame is not None else 86400
       )
       width = int(meta.get("width") or 1920)
       height = int(meta.get("height") or 1080)
@@ -1329,7 +1397,9 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
 
       with self.state.lock:
         cues = list(self.state.cues)
-        base_stem = Path(self.state.media_name or "subtitulos_es").stem
+        base_stem = _safe_filename(
+            Path(self.state.media_name or "subtitulos_es").stem
+        )
 
       try:
         content, fname, mime = exporters.render_export(
@@ -1382,6 +1452,7 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
             self.state.exported_video_path = None
             self.state.words = []
             self.state.cues = []
+            self.state.media_generation += 1
       self._send_json(
           HTTPStatus.OK,
           {
@@ -1478,6 +1549,7 @@ def create_server(
   state = AppState(app_dir=app_dir)
   handler_cls = partial(AutoSubsHandler, state=state)
   server = ThreadingHTTPServer((host, port), handler_cls)
+  server.daemon_threads = True
   return server, state
 
 
@@ -1542,11 +1614,13 @@ def run_desktop_app(host: str = "127.0.0.1", port: int = 55120) -> int:
     return main(["--host", host, "--port", str(port), "--app-window"])
 
   server = None
+  owns_server = False
   if _server_already_running(url):
     # Another instance owns the port (e.g. a window already open): reuse it.
     print(f"[MTTN AutoSubs Tool] Usando el servidor ya activo en {url}")
   else:
     server, _ = create_server(host=host, port=port)
+    owns_server = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f"[MTTN AutoSubs Tool] Servidor activo en {url} (ventana nativa)")
 
@@ -1573,7 +1647,7 @@ def run_desktop_app(host: str = "127.0.0.1", port: int = 55120) -> int:
         icon=str(icon) if icon.is_file() else None,
     )
   finally:
-    if server is not None:
+    if owns_server and server is not None:
       server.shutdown()
       server.server_close()
   return 0

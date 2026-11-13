@@ -39,10 +39,14 @@ local function getHomeDir()
       if home then return home end
     end
   end
-  return "~"
+  return ""
 end
 
 local homeDir = getHomeDir()
+if homeDir == "" then
+  print("[AutoSubs ES] Error: No se pudo determinar el directorio HOME del usuario.")
+  return
+end
 local bridgeBase = homeDir .. "/Library/Application Support/AutoSubsES/bridge"
 local inboxDir = bridgeBase .. "/inbox"
 
@@ -144,6 +148,7 @@ while project:IsRenderingInProgress() and elapsed < 180.0 do
   end
   elapsed = elapsed + 0.2
 end
+local timedOut = project:IsRenderingInProgress()
 
 pcall(function()
   project:DeleteRenderJob(jobId)
@@ -151,6 +156,11 @@ end)
 
 if prevPage and resolve.OpenPage then
   pcall(function() resolve:OpenPage(prevPage) end)
+end
+
+if timedOut then
+  print(string.format("[AutoSubs ES] Error: el render de audio superó el límite de %.0fs; no se notificó al servidor.", elapsed))
+  return
 end
 
 local audioPath = inboxDir .. "/" .. customName .. ".wav"

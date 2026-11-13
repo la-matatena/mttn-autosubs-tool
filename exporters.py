@@ -167,7 +167,7 @@ def hex_to_rgb_norm(hex_color: str) -> tuple[float, float, float]:
 def hex_to_ass_bgr(hex_color: str, alpha_0_1: float = 1.0) -> str:
   """Converts '#RRGGBB' + opacity into ASS '&HAABBGGRR' color string."""
   h = hex_color.strip().lstrip("#")
-  if len(h) != 6:
+  if len(h) != 6 or any(c not in "0123456789abcdefABCDEF" for c in h):
     h = "FFFFFF"
   r, g, b = h[0:2].upper(), h[2:4].upper(), h[4:6].upper()
   ass_alpha = int(round((1.0 - max(0.0, min(1.0, alpha_0_1))) * 255.0))
@@ -380,7 +380,7 @@ def export_ass_karaoke(
     outline = hex_to_ass_bgr(st.box_hex, st.box_alpha)
   else:
     outline = hex_to_ass_bgr(st.outline_hex, st.outline_alpha)
-  back = hex_to_ass_bgr(st.box_hex, st.shadow_alpha)
+  back = hex_to_ass_bgr("#000000", st.shadow_alpha)
   border_style = 3 if st.box_enabled else 1
   outline_px = 6 if st.box_enabled else max(1, round(st.outline_thickness * 32))
   shadow_px = 2 if (st.shadow_enabled and not st.box_enabled) else 0
@@ -484,7 +484,7 @@ def export_fcpxml(
       st.animation_mode in ("font_cycle", "font_cycle_boil")
       and len(st.font_variants) > 1
   ):
-    hold = max(2, st.anim_hold_frames)
+    hold = max(1, st.anim_hold_frames)
     est_slices = 0
     for cue in cues:
       s_f = max(0, int(round((cue.start_ms / 1000.0) * effective_fps)))
@@ -495,7 +495,7 @@ def export_fcpxml(
 
   title_nodes: list[str] = []
   style_counter = 0
-  hold = max(2, st.anim_hold_frames)
+  hold = max(1, st.anim_hold_frames)
   for idx, cue in enumerate(cues, start=1):
     s_frame = max(0, int(round((cue.start_ms / 1000.0) * effective_fps)))
     e_frame = max(

@@ -122,11 +122,15 @@ def extract_waveform_peaks(
     if num_buckets is None:
       num_buckets = max(900, min(60_000, duration_ms // 40))
     buckets = max(16, min(int(num_buckets), total_frames))
-    frames_per_bucket = max(1, total_frames // buckets)
     peaks: list[float] = []
 
-    while len(peaks) < buckets:
-      raw = wf.readframes(frames_per_bucket)
+    for i in range(buckets):
+      start_idx = (i * total_frames) // buckets
+      end_idx = ((i + 1) * total_frames) // buckets
+      n_frames = end_idx - start_idx
+      if n_frames <= 0:
+        continue
+      raw = wf.readframes(n_frames)
       if not raw:
         break
       if sampwidth == 2:
@@ -136,10 +140,37 @@ def extract_waveform_peaks(
           samples.byteswap()
         if channels > 1:
           samples = samples[::channels]
-        max_amp = max((abs(s) for s in samples), default=0)
+        max_amp = max(abs(min(samples)), abs(max(samples))) if samples else 0
         peaks.append(round(min(1.0, max_amp / 32768.0), 4))
+      elif sampwidth == 3:
+        frame_stride = channels * 3
+        max_amp = 0
+        for offset in range(0, len(raw) - frame_stride + 1, frame_stride):
+          val = int.from_bytes(raw[offset : offset + 3], "little", signed=True)
+          amp = abs(val)
+          if amp > max_amp:
+            max_amp = amp
+        peaks.append(round(min(1.0, max_amp / 8388608.0), 4))
+      elif sampwidth == 4 and array("i").itemsize == 4:
+        samples = array("i")
+        samples.frombytes(raw)
+        if sys.byteorder != "little":
+          samples.byteswap()
+        if channels > 1:
+          samples = samples[::channels]
+        max_amp = max(abs(min(samples)), abs(max(samples))) if samples else 0
+        peaks.append(round(min(1.0, max_amp / 2147483648.0), 4))
+      elif sampwidth == 4:
+        frame_stride = channels * 4
+        max_amp = 0
+        for offset in range(0, len(raw) - frame_stride + 1, frame_stride):
+          val = int.from_bytes(raw[offset : offset + 4], "little", signed=True)
+          amp = abs(val)
+          if amp > max_amp:
+            max_amp = amp
+        peaks.append(round(min(1.0, max_amp / 2147483648.0), 4))
       else:
-        max_b = max((abs(b - 128) for b in raw), default=0)
+        max_b = max((abs(b - 128) for b in raw[::channels]), default=0)
         peaks.append(round(min(1.0, max_b / 128.0), 4))
 
     return {
@@ -251,7 +282,7 @@ class ResolveBridge:
             re.DOTALL,
         )
         if match:
-          unescaped = match.group(1).replace('\\"', '"').replace("\\\\", "\\")
+          unescaped = match.group(1).replace("\\\\", "\\").replace('\\"', '"')
           data = json.loads(unescaped)
           if isinstance(data, dict):
             return data
@@ -298,7 +329,7 @@ class ResolveBridge:
       ]
     return names
 
-  def get_status(self) -> dict[str, Any]:
+  def get_status(self, resolve_running: bool | None = None) -> dict[str, Any]:
     """Returns bridge mode, timeline metadata, and available Resolve scripts."""
     studio = self.try_studio_connection()
     meta = self.read_timeline_meta()
@@ -328,7 +359,11 @@ class ResolveBridge:
     return {
         "mode": mode,
         "mode_label": mode_label,
-        "resolve_running": hardware_imac2017.is_resolve_running(),
+        "resolve_running": (
+            resolve_running
+            if resolve_running is not None
+            else hardware_imac2017.is_resolve_running()
+        ),
         "lua_scripts_installed": lua_installed,
         "inbox_audio_path": str(inbox_audio) if inbox_audio else None,
         "timeline_meta": meta,
@@ -412,9 +447,10 @@ class ResolveBridge:
     track_name = str(cfg.get("track_name", "Subtítulos ES"))
     template_name = str(cfg.get("template_name", "AutoSubs_ES_Cine_Netflix"))
     fps = float(cfg.get("fps") or meta.get("fps") or 24.0)
-    start_frame = int(
-        cfg.get("timeline_start_frame") or meta.get("start_frame") or 86400
-    )
+    raw_start_frame = cfg.get("timeline_start_frame")
+    if raw_start_frame is None:
+      raw_start_frame = meta.get("start_frame")
+    start_frame = int(raw_start_frame if raw_start_frame is not None else 86400)
     width = int(cfg.get("width") or meta.get("width") or 1920)
     height = int(cfg.get("height") or meta.get("height") or 1080)
     timeline_name = str(meta.get("timeline_name") or "AutoSubs ES")
@@ -444,38 +480,24 @@ class ResolveBridge:
         ),
         encoding="utf-8",
     )
+    lua_table = exporters.export_resolve_lua_payload(
+        cues=cues,
+        mode=mode,
+        track_name=track_name,
+        template_name=template_name,
+        srt_path=str(srt_path),
+        srt_timeline_tc_path=str(srt_tc_path),
+        fcpxml_path=str(fcpxml_path),
+        fps=fps,
+        timeline_start_frame=start_frame,
+        style=style,
+        include_return=False,
+    )
     payload_lua_path.write_text(
-        exporters.export_resolve_lua_payload(
-            cues=cues,
-            mode=mode,
-            track_name=track_name,
-            template_name=template_name,
-            srt_path=str(srt_path),
-            srt_timeline_tc_path=str(srt_tc_path),
-            fcpxml_path=str(fcpxml_path),
-            fps=fps,
-            timeline_start_frame=start_frame,
-            style=style,
-            include_return=True,
-        ),
+        f"-- Auto-generated by AutoSubs ES\nreturn {lua_table}",
         encoding="utf-8",
     )
-    payload_table_path.write_text(
-        exporters.export_resolve_lua_payload(
-            cues=cues,
-            mode=mode,
-            track_name=track_name,
-            template_name=template_name,
-            srt_path=str(srt_path),
-            srt_timeline_tc_path=str(srt_tc_path),
-            fcpxml_path=str(fcpxml_path),
-            fps=fps,
-            timeline_start_frame=start_frame,
-            style=style,
-            include_return=False,
-        ),
-        encoding="utf-8",
-    )
+    payload_table_path.write_text(lua_table, encoding="utf-8")
 
     pushed_directly = False
     studio_note = ""
@@ -563,10 +585,13 @@ class ResolveBridge:
       timeline.SetTrackName("subtitle", sub_count, track_name)
       imported = media_pool.ImportMedia([str(srt_path)])
       if imported:
+        tl_raw_start = timeline.GetStartFrame()
         media_pool.AppendToTimeline([{
             "mediaPoolItem": imported[0],
             "startFrame": 0,
-            "recordFrame": int(timeline.GetStartFrame() or start_frame),
+            "recordFrame": int(
+                tl_raw_start if tl_raw_start is not None else start_frame
+            ),
             "trackIndex": sub_count,
         }])
         return True, f"Subtítulos SRT insertados en la pista {sub_count}."
@@ -597,7 +622,8 @@ class ResolveBridge:
     timeline.AddTrack("video")
     target_track = int(timeline.GetTrackCount("video") or 1)
     timeline.SetTrackName("video", target_track, track_name)
-    tl_start = int(timeline.GetStartFrame() or start_frame)
+    tl_raw_start = timeline.GetStartFrame()
+    tl_start = int(tl_raw_start if tl_raw_start is not None else start_frame)
     eff_fps = exporters.effective_fps(fps)
     clip_infos = []
     for cue in cues:
@@ -614,6 +640,14 @@ class ResolveBridge:
     appended = media_pool.AppendToTimeline(clip_infos)
     if not appended:
       return False, "AppendToTimeline no pudo insertar los clips Text+."
+    if len(appended) != len(cues):
+      return (
+          False,
+          (
+              f"AppendToTimeline insertó {len(appended)} clips pero había"
+              f" {len(cues)} subtítulos."
+          ),
+      )
 
     for item, cue in zip(appended, cues):
       if item.GetFusionCompCount() > 0:
@@ -704,7 +738,8 @@ class ResolveBridge:
     """Moves Resolve playhead directly in Studio or stages jump_tc.lua."""
     meta = self.read_timeline_meta()
     fps = float(meta.get("fps") or 24.0)
-    start_frame = int(meta.get("start_frame") or 86400)
+    raw_start_frame = meta.get("start_frame")
+    start_frame = int(raw_start_frame if raw_start_frame is not None else 86400)
     eff_fps = exporters.effective_fps(fps)
     elapsed_frames = max(0, int(round((max(0, ms) / 1000.0) * eff_fps)))
     tc = exporters.frames_to_smpte(start_frame + elapsed_frames, fps=fps)

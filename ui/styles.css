@@ -1087,6 +1087,10 @@ input[type="color"]:disabled {
   padding-right: 4px;
 }
 
+.cue-list.mode-standalone .cue-btn-resolve {
+  display: none;
+}
+
 .cue-item {
   background: var(--surface-inset);
   border: 1px solid var(--border);

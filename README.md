@@ -138,7 +138,7 @@ El instalador configura automáticamente las herramientas `whisper-cpp`, `ffmpeg
 No es obligatorio tener DaVinci Resolve abierto ni instalado para subtitular videos, entrevistas, podcasts o reseñas:
 
 1. Selecciona **App Independiente** en el selector de modo de la barra superior (el sistema también activa este modo automáticamente si abres la app y DaVinci Resolve no está en ejecución).
-2. Arrastra cualquier archivo de audio o video local (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov` o `.mkv`) sobre la zona de carga en **1. Audio de origen**. Los videos se reproducen de inmediato en el **Monitor previo** con subtítulos sincronizados cuadro por cuadro y barra de desplazamiento de audio.
+2. Arrastra cualquier archivo de audio o video local (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov`, `.m4v` o `.mkv`) sobre la zona de carga en **1. Audio de origen**. Los videos se reproducen de inmediato en el **Monitor previo** con subtítulos sincronizados cuadro por cuadro y barra de desplazamiento de audio.
 
    <img src="docs/images/autosubs-es-step1-local.png" width="348" alt="Paso 1. Audio de origen con la pestaña Archivo local y la zona para arrastrar vídeo o audio">
 3. Ajusta las opciones en **2. Motor Whisper** y **3. Español, dominio y reglas RAE**, y haz clic en **Transcribir en Español**.
