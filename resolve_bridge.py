@@ -32,6 +32,7 @@ import math
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import sys
 from typing import Any
@@ -179,12 +180,38 @@ def extract_waveform_peaks(
 
   Returns:
     {"peaks": [float rounded to 4 decimals], "duration_ms": int,
-    "sample_rate": Hz}; empty peaks if the file is missing or empty.
+    "sample_rate": Hz}; empty peaks if the file is missing, empty, or a WAV
+    the stdlib `wave` module cannot decode (32-bit float
+    WAVE_FORMAT_IEEE_FLOAT, WAVE_FORMAT_EXTENSIBLE on Python < 3.12,
+    truncated headers/data), so the editor shows a flat waveform instead of
+    a server error.
   """
   path = Path(wav_path)
   if not path.is_file():
     return {"peaks": [], "duration_ms": 0, "sample_rate": 16000}
+  try:
+    return _read_waveform_peaks(path, num_buckets)
+  except (wave.Error, EOFError, OSError, struct.error, ValueError):
+    # wave.Error: unsupported format tag; EOFError/struct.error: truncated
+    # chunk headers; ValueError: corrupt sizes (e.g. zero channels).
+    return {"peaks": [], "duration_ms": 0, "sample_rate": 16000}
 
+
+def _read_waveform_peaks(path: Path, num_buckets: int | None) -> dict[str, Any]:
+  """Decodes peaks for extract_waveform_peaks; may raise on unsupported WAVs.
+
+  Args:
+    path: Existing WAV file.
+    num_buckets: See extract_waveform_peaks.
+
+  Returns:
+    Same dict as extract_waveform_peaks.
+
+  Raises:
+    wave.Error, EOFError, OSError, struct.error, ValueError: For files the
+      `wave` module cannot read; the public wrapper turns them into an empty
+      result.
+  """
   with wave.open(str(path), "rb") as wf:
     channels = wf.getnchannels()
     sampwidth = wf.getsampwidth()
@@ -331,6 +358,98 @@ def generate_demo_wav(
     wf.setsampwidth(2)
     wf.setframerate(rate)
     wf.writeframes(samples.tobytes())
+
+
+# --- Studio Text+ helpers ---
+
+# Max distance, in timeline frames, between a Text+ item's GetStart() and the
+# record frame requested from AppendToTimeline. One frame absorbs Resolve's
+# rounding on NTSC rates (23.976/29.97) without ever reaching the next cue,
+# because every cue lasts at least one frame.
+_TEXTPLUS_START_TOLERANCE_FRAMES = 1
+
+
+def _item_start_frame(item: Any) -> int | None:
+  """Returns a timeline item's record start frame, or None if unreadable.
+
+  Args:
+    item: Resolve TimelineItem (or a test double) returned by
+      AppendToTimeline.
+
+  Returns:
+    GetStart() rounded to an int, or None when the call fails or returns a
+    non-numeric value.
+  """
+  try:
+    raw = item.GetStart()
+  except Exception:  # pylint: disable=broad-except
+    return None
+  if raw is None:
+    return None
+  try:
+    return int(round(float(raw)))
+  except (TypeError, ValueError):
+    return None
+
+
+def _pair_textplus_items_with_cues(
+    items: list[Any],
+    expected_frames: list[int],
+    tolerance: int = _TEXTPLUS_START_TOLERANCE_FRAMES,
+) -> list[tuple[Any, int]]:
+  """Pairs appended Text+ timeline items with the cues they were made for.
+
+  AppendToTimeline does not promise to return items in request order (and
+  may drop clips that collide), so pairing by list index can style a clip
+  with another cue's text. Items are therefore matched to cues by record
+  frame: both lists are sorted by frame and walked together, pairing an
+  item with a cue when |GetStart() - expected| <= tolerance.
+
+  If frame matching does not pair everything, plain index pairing is used
+  only when it is provably safe: same number of items and cues, and either
+  the start frames are unreadable or they are in the same relative order as
+  the cues (e.g. every clip shifted by a constant timeline offset).
+  Otherwise only the frame-matched pairs are returned and the rest are left
+  for the caller to report.
+
+  Args:
+    items: Timeline items returned by AppendToTimeline.
+    expected_frames: Requested record frame per cue (cue index order).
+    tolerance: Allowed |start - expected| distance, in frames.
+
+  Returns:
+    (item, cue_index) pairs sorted by cue index; may be shorter than either
+    input when some items or cues could not be matched.
+  """
+  starts = [_item_start_frame(it) for it in items]
+  same_count = len(items) == len(expected_frames)
+  if any(s is None for s in starts):
+    return list(zip(items, range(len(items)))) if same_count else []
+
+  # Ties are broken by original index so equal frames keep request order.
+  item_order = sorted(range(len(items)), key=lambda k: (starts[k], k))
+  cue_order = sorted(
+      range(len(expected_frames)), key=lambda k: (expected_frames[k], k)
+  )
+  pairs: list[tuple[Any, int]] = []
+  i = j = 0
+  while i < len(item_order) and j < len(cue_order):
+    item_k = item_order[i]
+    cue_k = cue_order[j]
+    diff = starts[item_k] - expected_frames[cue_k]
+    if abs(diff) <= tolerance:
+      pairs.append((items[item_k], cue_k))
+      i += 1
+      j += 1
+    elif diff < 0:
+      i += 1  # Item starts before every remaining cue: no cue for it.
+    else:
+      j += 1  # Cue has no item at its frame (dropped by Resolve).
+
+  if len(pairs) < len(items) and same_count and item_order == cue_order:
+    return list(zip(items, range(len(items))))
+  pairs.sort(key=lambda pair: pair[1])
+  return pairs
 
 
 # --- Resolve bridge ---
@@ -761,11 +880,13 @@ class ResolveBridge:
   def _find_template_item(self, folder: Any, template_name: str) -> Any:
     """Recursively looks for a Text+ or AutoSubs template in Media Pool.
 
-    Match priority within each folder: exact name or case-insensitive
-    substring among its own clips first, then subfolders depth-first, then
-    the first own clip whose name contains "autosubs" or "text+" as a
-    fallback. Caveat: a subfolder's fallback is returned as soon as it is
-    found, so it can win over an exact match in a later sibling folder.
+    The whole folder tree is searched once per priority level, so a better
+    match anywhere always wins over a weaker one found earlier:
+      1. exact clip name == template_name;
+      2. case-insensitive substring (template_name inside the clip name);
+      3. fallback: first clip whose name contains "autosubs" or "text+".
+    Within a level, clips are taken in walk order (a folder's own clips
+    before its subfolders, depth-first).
 
     Args:
       folder: Resolve MediaPool Folder object.
@@ -774,18 +895,36 @@ class ResolveBridge:
     Returns:
       A MediaPoolItem, or None.
     """
-    candidates = []
+    named_clips = self._collect_named_clips(folder)
+    wanted = template_name.lower()
+    for clip, name in named_clips:
+      if name == template_name:
+        return clip
+    for clip, name in named_clips:
+      if wanted in name.lower():
+        return clip
+    for clip, name in named_clips:
+      lowered = name.lower()
+      if "autosubs" in lowered or "text+" in lowered:
+        return clip
+    return None
+
+  def _collect_named_clips(self, folder: Any) -> list[tuple[Any, str]]:
+    """Lists (clip, display name) for a Media Pool folder and its subfolders.
+
+    Args:
+      folder: Resolve MediaPool Folder object.
+
+    Returns:
+      Pairs in depth-first walk order, own clips before subfolders.
+    """
+    out: list[tuple[Any, str]] = []
     for clip in folder.GetClipList() or []:
       name = str(clip.GetClipProperty("Clip Name") or clip.GetName() or "")
-      if name == template_name or template_name.lower() in name.lower():
-        return clip
-      if "autosubs" in name.lower() or "text+" in name.lower():
-        candidates.append(clip)
+      out.append((clip, name))
     for sub in folder.GetSubFolderList() or []:
-      found = self._find_template_item(sub, template_name)
-      if found:
-        return found
-    return candidates[0] if candidates else None
+      out.extend(self._collect_named_clips(sub))
+    return out
 
   def _push_via_studio(
       self,
@@ -807,7 +946,10 @@ class ResolveBridge:
         and appends it at the timeline start frame.
       * fcpxml: imports the FCPXML as a new timeline.
       * textplus: adds a video track and places one copy of the Text+
-        template per cue, then styles each clip's Fusion comp.
+        template per cue, then styles each clip's Fusion comp. Clips are
+        paired with cues by record start frame (see
+        _pair_textplus_items_with_cues); unmatched clips are left unstyled
+        and counted in the message.
     Cue ms are converted to frames with exporters.effective_fps (handles
     NTSC rates such as 23.976).
 
@@ -896,23 +1038,38 @@ class ResolveBridge:
     appended = media_pool.AppendToTimeline(clip_infos)
     if not appended:
       return False, "AppendToTimeline no pudo insertar los clips Text+."
-    if len(appended) != len(cues):
+    appended = list(appended)
+    pairs = _pair_textplus_items_with_cues(
+        appended, [info["recordFrame"] for info in clip_infos]
+    )
+    if not pairs:
       return (
           False,
           (
-              f"AppendToTimeline insertó {len(appended)} clips pero había"
-              f" {len(cues)} subtítulos."
+              f"AppendToTimeline insertó {len(appended)} clips Text+ pero no"
+              f" se pudieron emparejar con los {len(cues)} subtítulos; no se"
+              " aplicó ningún estilo."
           ),
       )
 
-    for item, cue in zip(appended, cues):
+    for item, cue_idx in pairs:
       if item.GetFusionCompCount() > 0:
         comp = item.GetFusionCompByIndex(1)
         self._apply_style_to_fusion_comp(
             comp=comp,
-            cue_text=exporters._cue_text(cue, style),
+            cue_text=exporters._cue_text(cues[cue_idx], style),
             style=style,
         )
+    unmatched_cues = len(cues) - len(pairs)
+    unmatched_items = len(appended) - len(pairs)
+    if unmatched_cues or unmatched_items:
+      # Unpaired clips stay on the timeline unstyled rather than showing the
+      # wrong subtitle text.
+      return True, (
+          f"Se insertaron {len(appended)} clips Text+ en V{target_track};"
+          f" {unmatched_cues} subtítulos y {unmatched_items} clips no"
+          " coincidieron por posición y quedaron sin estilo."
+      )
     return True, f"Se insertaron {len(cues)} clips Text+ en V{target_track}."
 
   def _apply_style_to_fusion_comp(

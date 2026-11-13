@@ -265,6 +265,172 @@ class HardwareIMac2017Test(unittest.TestCase):
     self.assertNotIn("libx264", vt_cmd)
     self.assertNotIn("-crf", vt_cmd)
 
+  @staticmethod
+  def _av_get_token(buf: str, term: str) -> tuple[str, str]:
+    """Python port of libavutil av_get_token(), used by both escaping levels.
+
+    Skips leading whitespace, stops at an unescaped/unquoted char in `term`,
+    a backslash copies the next char literally, '...' copies its content
+    literally, and unprotected trailing whitespace is trimmed.
+
+    Args:
+      buf: Text to parse.
+      term: Terminator characters.
+
+    Returns:
+      (token, unparsed rest starting at the terminator).
+    """
+    ws = " \n\t\r"
+    i = 0
+    while i < len(buf) and buf[i] in ws:
+      i += 1
+    out: list[str] = []
+    end = 0
+    while i < len(buf) and buf[i] not in term:
+      c = buf[i]
+      i += 1
+      if c == "\\" and i < len(buf):
+        out.append(buf[i])
+        i += 1
+        end = len(out)
+      elif c == "'":
+        while i < len(buf) and buf[i] != "'":
+          out.append(buf[i])
+          i += 1
+        if i < len(buf):
+          i += 1
+          end = len(out)
+      else:
+        out.append(c)
+    while len(out) > end and out[-1] in ws:
+      out.pop()
+    return "".join(out), buf[i:]
+
+  def test_burnin_filter_paths_with_apostrophe_colon_comma(self) -> None:
+    """ass=/fontsdir= paths with ', :, comma, [], \\ round-trip ffmpeg rules."""
+    ass_path = "/tmp/José's clips: v2, [final]/sub\\títulos; ñ .ass"
+    fonts_dir = "/tmp/it's fonts:1, [x] "
+    burn_cmd = hardware_imac2017.build_ffmpeg_burnin_command(
+        ffmpeg_bin="/usr/local/bin/ffmpeg",
+        input_video_path="/tmp/in.mp4",
+        ass_path=ass_path,
+        output_mp4_path="/tmp/out.mp4",
+        fonts_dir=fonts_dir,
+        nice_level=0,
+    )
+    vf_arg = burn_cmd[burn_cmd.index("-vf") + 1]
+    # Level 2 (filtergraph): filter name, then its whole argument string.
+    name, rest = self._av_get_token(vf_arg, "=,;[")
+    self.assertEqual(name, "ass")
+    self.assertTrue(rest.startswith("="))
+    args, rest = self._av_get_token(rest[1:], "[],;")
+    self.assertEqual(rest, "", vf_arg)
+    # Level 1 (options): positional filename, then fontsdir=value.
+    filename, rest = self._av_get_token(args, ":")
+    self.assertEqual(filename, ass_path)
+    self.assertTrue(rest.startswith(":fontsdir="), rest)
+    fonts_val, rest = self._av_get_token(rest[len(":fontsdir="):], ":")
+    self.assertEqual(fonts_val, fonts_dir)
+    self.assertEqual(rest, "")
+
+    # End-to-end with the local ffmpeg when present. The "movie" source
+    # filter parses its filename option exactly like "ass" (av_get_token on
+    # both levels), so it validates the quoting even without libass.
+    ffmpeg_bin = hardware_imac2017.find_binary(["ffmpeg"])
+    if not ffmpeg_bin or not hardware_imac2017.ffmpeg_supports_filter(
+        ffmpeg_bin, "movie"
+    ):
+      return
+    real_subprocess = hardware_imac2017.subprocess
+    with tempfile.TemporaryDirectory() as tmp:
+      odd_dir = Path(tmp) / "José's clip: v1, [final] ñandú; x"
+      odd_dir.mkdir()
+      video = odd_dir / "it's a, test: [1].nut"
+      gen = real_subprocess.run(
+          [ffmpeg_bin, "-v", "error", "-y", "-f", "lavfi", "-i",
+           "color=c=black:s=32x32:d=0.2", "-c:v", "rawvideo", str(video)],
+          capture_output=True, text=True, check=False,
+      )
+      self.assertEqual(gen.returncode, 0, gen.stderr)
+      graph = f"movie={hardware_imac2017.quote_ffmpeg_filter_value(str(video))}"
+      probe = real_subprocess.run(
+          [ffmpeg_bin, "-v", "error", "-filter_complex", graph,
+           "-frames:v", "1", "-f", "null", "-"],
+          capture_output=True, text=True, check=False,
+      )
+      self.assertEqual(probe.returncode, 0, probe.stderr)
+
+      # Real libass burn-in when an ffmpeg with the "ass" filter exists
+      # (Homebrew ffmpeg-full); the slim formula lacks it.
+      burnin_bin = hardware_imac2017.find_burnin_ffmpeg()
+      if burnin_bin and hardware_imac2017.ffmpeg_supports_encoder(
+          burnin_bin, "libx264"
+      ):
+        ass_file = odd_dir / "sub's, 1: [es].ass"
+        ass_file.write_text(
+            "[Script Info]\nScriptType: v4.00+\nPlayResX: 32\nPlayResY: 32\n"
+            "\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize\n"
+            "Style: Default,Arial,8\n\n[Events]\n"
+            "Format: Layer, Start, End, Style, Text\n"
+            "Dialogue: 0,0:00:00.00,0:00:00.20,Default,Hola\n",
+            encoding="utf-8",
+        )
+        burn = hardware_imac2017.build_ffmpeg_burnin_command(
+            ffmpeg_bin=burnin_bin,
+            input_video_path=str(video),
+            ass_path=str(ass_file),
+            output_mp4_path=str(odd_dir / "out.mp4"),
+            fonts_dir=str(odd_dir),
+            nice_level=0,
+        )
+        res = real_subprocess.run(
+            burn, capture_output=True, text=True, check=False
+        )
+        self.assertEqual(res.returncode, 0, res.stderr[-500:])
+        self.assertGreater((odd_dir / "out.mp4").stat().st_size, 0)
+
+  def test_is_resolve_running_tries_next_pattern_after_error(self) -> None:
+    """A pgrep failure on the first pattern still checks the second one."""
+    real_subprocess = hardware_imac2017.subprocess
+    real_shutil = hardware_imac2017.shutil
+    calls: list[str] = []
+
+    class _Result:
+      """Minimal CompletedProcess stand-in."""
+
+      returncode = 0
+
+    class _FakeSubprocess:
+      """Times out on the first pgrep pattern and matches the second."""
+
+      DEVNULL = real_subprocess.DEVNULL
+      SubprocessError = real_subprocess.SubprocessError
+
+      @staticmethod
+      def run(cmd: list[str], **_: object) -> _Result:
+        """Records the pattern; raises TimeoutExpired on the first call."""
+        calls.append(cmd[-1])
+        if len(calls) == 1:
+          raise real_subprocess.TimeoutExpired(cmd, 1.5)
+        return _Result()
+
+    class _FakeShutil:
+      """Pretends pgrep is installed."""
+
+      @staticmethod
+      def which(_name: str) -> str:
+        """Returns a fixed pgrep path."""
+        return "/usr/bin/pgrep"
+
+    hardware_imac2017.subprocess = _FakeSubprocess
+    hardware_imac2017.shutil = _FakeShutil
+    try:
+      self.assertTrue(hardware_imac2017.is_resolve_running())
+    finally:
+      hardware_imac2017.subprocess = real_subprocess
+      hardware_imac2017.shutil = real_shutil
+    self.assertEqual(calls, ["DaVinci Resolve", "Resolve"])
+
 
 class MachineSettingsTest(unittest.TestCase):
   """Per-machine performance modes, persisted preferences, and benchmarks."""
@@ -335,6 +501,62 @@ class MachineSettingsTest(unittest.TestCase):
     self.assertEqual(
         machine_settings.recommend_from_benchmark("turbo-q8", 4)["model_id"], "turbo-q8"
     )
+
+  def test_update_validates_types_and_load_checks_version(self) -> None:
+    """Bad performance types are ignored; unknown versions merge safely."""
+    prof = hardware_imac2017.IMAC_2017_PROFILE
+    max_t = hardware_imac2017.MAX_WHISPER_THREADS
+    self.assertEqual(hardware_imac2017._MAX_WHISPER_THREADS, max_t)
+    # Direct callers with garbage must not crash either.
+    direct = machine_settings.resolve_performance(
+        prof, {"mode": "custom", "threads": "abc"}
+    )
+    self.assertEqual(direct["threads"], prof.threads_standalone)
+
+    with tempfile.TemporaryDirectory() as tmp:
+      store = machine_settings.MachineSettings(Path(tmp))
+      store.update({"performance": {
+          "mode": "custom", "threads": "abc", "force_no_gpu": "maybe",
+          "fast_beam": "true", "enhance_voice": 0, "model_id": 42,
+      }})
+      perf = store.snapshot()["performance"]
+      self.assertEqual(perf["mode"], "custom")
+      self.assertIsNone(perf["threads"])
+      self.assertIsNone(perf["force_no_gpu"])
+      self.assertIs(perf["fast_beam"], True)
+      self.assertIs(perf["enhance_voice"], False)
+      self.assertIsNone(perf["model_id"])
+      eff = machine_settings.resolve_performance(prof, perf)
+      self.assertEqual(eff["threads"], prof.threads_standalone)
+
+      store.update({"performance": {"threads": "3"}})
+      self.assertEqual(store.snapshot()["performance"]["threads"], 3)
+      store.update({"performance": {"threads": 99}})
+      self.assertEqual(store.snapshot()["performance"]["threads"], max_t)
+      store.update({"performance": {"threads": True, "mode": "turbo"}})
+      self.assertEqual(store.snapshot()["performance"]["threads"], max_t)
+      self.assertEqual(store.snapshot()["performance"]["mode"], "auto")
+
+      bench = {"turbo-q8:cpu": {"realtime_factor": 3.0}}
+      raw = {
+          "performance": {"threads": "abc", "mode": "bogus", "fast_beam": 1},
+          "preferences": {"dialect": "es_ar", "evil": 1},
+          "benchmarks": bench,
+      }
+      path = Path(tmp) / "settings.json"
+      for version, keeps_bench in ((None, False), (99, False), (1, True)):
+        doc = dict(raw)
+        if version is not None:
+          doc["version"] = version
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        data = machine_settings.MachineSettings(Path(tmp)).snapshot()
+        self.assertEqual(data["version"], machine_settings.SETTINGS_VERSION)
+        self.assertIsNone(data["performance"]["threads"])
+        self.assertEqual(data["performance"]["mode"], "auto")
+        self.assertIs(data["performance"]["fast_beam"], True)
+        self.assertEqual(data["preferences"], {"dialect": "es_ar"})
+        self.assertEqual(data["benchmarks"], bench if keeps_bench else {})
+        machine_settings.resolve_performance(prof, data["performance"])
 
 
 class SpanishNlpTest(unittest.TestCase):
@@ -1253,6 +1475,79 @@ class FontManagerAndAnitypeTest(unittest.TestCase):
       self.assertEqual(list(mgr.app_fonts_dir.glob("*")), [])
       self.assertFalse(mac_dir.exists() and any(mac_dir.iterdir()))
 
+  def test_zip_basename_collisions_and_no_macos_overwrite(self) -> None:
+    """Same-name ZIP entries get _N names; user fonts are never clobbered."""
+    font_a = _make_test_sfnt(b"OTTO", "Alpha Sans", "Regular", [(0x20, 0x7E)])
+    font_b = _make_test_sfnt(b"OTTO", "Beta Serif", "Regular", [(0x20, 0x7E)])
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+      zf.writestr("OTF/Font.otf", font_a)
+      zf.writestr("TTF/Font.otf", font_b)
+      zf.writestr("copy/Font.otf", font_a)  # Byte-identical duplicate.
+    with tempfile.TemporaryDirectory() as tmp:
+      tmp_p = Path(tmp)
+      mac_dir = tmp_p / "mac_fonts"
+      mac_dir.mkdir()
+      other = _make_test_sfnt(b"OTTO", "Someone Else", "Bold", [(0x20, 0x7E)])
+      (mac_dir / "Font.otf").write_bytes(other)
+      mgr = font_manager.FontManager(tmp_p / "app", mac_dir)
+      res = mgr.install_upload("pack.zip", buf.getvalue(), True)
+
+      self.assertEqual(res["installed_count"], 2)
+      self.assertEqual((mgr.app_fonts_dir / "Font.otf").read_bytes(), font_a)
+      self.assertEqual((mgr.app_fonts_dir / "Font_2.otf").read_bytes(), font_b)
+      # The pre-existing, different macOS font is untouched.
+      self.assertEqual((mac_dir / "Font.otf").read_bytes(), other)
+      self.assertEqual((mac_dir / "Font_2.otf").read_bytes(), font_a)
+      self.assertEqual((mac_dir / "Font_2_2.otf").read_bytes(), font_b)
+      summary = [
+          (c["location"], c["action"], c["installed_as"])
+          for c in res["collisions"]
+      ]
+      self.assertEqual(summary, [
+          ("zip", "renamed", "Font_2.otf"),
+          ("zip", "skipped_identical", "Font.otf"),
+          ("macos", "renamed", "Font_2.otf"),
+          ("macos", "renamed", "Font_2_2.otf"),
+      ])
+
+      # Re-uploading the same font finds its identical copy: nothing new.
+      again = mgr.install_upload("Font.otf", font_a, install_to_macos=True)
+      self.assertEqual(
+          [(c["action"], c["installed_as"]) for c in again["collisions"]],
+          [("skipped_identical", "Font_2.otf")],
+      )
+      self.assertEqual(
+          sorted(p.name for p in mac_dir.iterdir()),
+          ["Font.otf", "Font_2.otf", "Font_2_2.otf"],
+      )
+
+  def test_cmap_format4_rejects_declared_length_too_short(self) -> None:
+    """A format 4 subtable whose length cannot hold its arrays is ignored."""
+    segs = [(0x41, 0x5A), (0xFFFF, 0xFFFF)]
+    body = (
+        b"".join(struct.pack(">H", e) for _, e in segs)
+        + struct.pack(">H", 0)
+        + b"".join(struct.pack(">H", s) for s, _ in segs)
+        + b"".join(struct.pack(">h", 1) for _ in segs)
+        + b"".join(struct.pack(">H", 0) for _ in segs)
+    )
+    full_len = 16 + 8 * len(segs)
+
+    def _subtable(length: int) -> bytes:
+      """Returns the subtable with `length` written in its header."""
+      header = struct.pack(
+          ">HHHHHHH", 4, length, 0, 2 * len(segs), 0, 0, 0
+      )
+      return header + body
+
+    check = font_manager._check_cmap_format4
+    self.assertEqual(check(_subtable(full_len), 0, {0x41, 0xF1}), {0x41})
+    # Lengths past the end of the file are clamped, not rejected.
+    self.assertEqual(check(_subtable(0xFFFF), 0, {0x41}), {0x41})
+    self.assertEqual(check(_subtable(20), 0, {0x41}), set())
+    self.assertEqual(check(_subtable(full_len)[:24], 0, {0x41}), set())
+
 
 class BridgeAndServerIntegrationTest(unittest.TestCase):
   """End-to-end HTTP tests against a real loopback AutoSubs ES server.
@@ -1928,6 +2223,234 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
       self.assertTrue(ok)
       self.assertEqual(recorded.get("Opacity3"), 0.65)
       self.assertNotIn("Alpha3", recorded)
+
+  def test_extract_waveform_peaks_unsupported_wavs_return_empty(self) -> None:
+    """Float32, truncated and garbage WAVs yield empty peaks, not errors."""
+    empty = {"peaks": [], "duration_ms": 0, "sample_rate": 16000}
+    with tempfile.TemporaryDirectory() as tmp:
+      data = struct.pack("<4f", 0.0, 0.5, -0.5, 1.0)
+      # WAVE_FORMAT_IEEE_FLOAT (tag 3), mono, 16 kHz, 32-bit.
+      fmt = struct.pack("<HHIIHH", 3, 1, 16000, 64000, 4, 32)
+      float_wav = (
+          b"RIFF" + struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(data))
+          + b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt
+          + b"data" + struct.pack("<I", len(data)) + data
+      )
+      cases = {
+          "float32.wav": float_wav,
+          "truncated.wav": float_wav[:22],
+          "garbage.wav": b"RIFF\x00\x00",
+      }
+      for name, payload in cases.items():
+        path = Path(tmp) / name
+        path.write_bytes(payload)
+        with self.subTest(name=name):
+          self.assertEqual(
+              resolve_bridge.extract_waveform_peaks(str(path)), empty
+          )
+
+  def test_find_template_item_prefers_exact_match_anywhere(self) -> None:
+    """An exact template in a later folder beats an earlier fuzzy fallback."""
+
+    class _Clip:
+      """Media Pool clip double with a display name."""
+
+      def __init__(self, name: str) -> None:
+        """Stores the clip name."""
+        self.name = name
+
+      def GetClipProperty(self, _key: str) -> str:
+        """Returns the clip name for "Clip Name"."""
+        return self.name
+
+      def GetName(self) -> str:
+        """Returns the clip name."""
+        return self.name
+
+    class _Folder:
+      """Media Pool folder double."""
+
+      def __init__(self, clips: list[_Clip], subs: list["_Folder"]) -> None:
+        """Stores own clips and subfolders."""
+        self.clips = clips
+        self.subs = subs
+
+      def GetClipList(self) -> list[_Clip]:
+        """Returns own clips."""
+        return self.clips
+
+      def GetSubFolderList(self) -> list["_Folder"]:
+        """Returns subfolders."""
+        return self.subs
+
+    exact = _Clip("AutoSubs_ES_Cine_Netflix")
+    root = _Folder([], [
+        _Folder([_Clip("AutoSubs_Otro")], []),
+        _Folder([exact], []),
+    ])
+    with tempfile.TemporaryDirectory() as tmp:
+      bridge = resolve_bridge.ResolveBridge(app_data_dir=Path(tmp))
+      self.assertIs(
+          bridge._find_template_item(root, "AutoSubs_ES_Cine_Netflix"), exact
+      )
+      partial = _Clip("AutoSubs_ES_Cine_Netflix v2")
+      root2 = _Folder([_Clip("Text+ basico")], [_Folder([partial], [])])
+      self.assertIs(
+          bridge._find_template_item(root2, "AutoSubs_ES_Cine_Netflix"), partial
+      )
+      fallback = _Clip("Mi Text+")
+      root3 = _Folder([_Clip("Logo")], [_Folder([fallback], [])])
+      self.assertIs(bridge._find_template_item(root3, "Nada"), fallback)
+      self.assertIsNone(bridge._find_template_item(_Folder([], []), "Nada"))
+
+  def test_push_textplus_pairs_clips_by_start_frame(self) -> None:
+    """Text+ clips get the text of the cue at their start frame."""
+    cues = [
+        spanish_nlp.SubtitleCue(1, 0, 1000, ["Uno"]),
+        spanish_nlp.SubtitleCue(2, 1000, 2000, ["Dos"]),
+        spanish_nlp.SubtitleCue(3, 2000, 3000, ["Tres"]),
+    ]
+
+    class _Comp:
+      """Fusion comp double remembering which clip it belongs to."""
+
+      def __init__(self, start: int) -> None:
+        """Stores the owning clip's start frame."""
+        self.start = start
+
+    class _Item:
+      """Timeline item double returned by AppendToTimeline."""
+
+      def __init__(self, start: int) -> None:
+        """Stores the record start frame."""
+        self.start = start
+
+      def GetStart(self) -> int:
+        """Returns the record start frame."""
+        return self.start
+
+      def GetFusionCompCount(self) -> int:
+        """Every Text+ clip has one comp."""
+        return 1
+
+      def GetFusionCompByIndex(self, _idx: int) -> _Comp:
+        """Returns a comp tagged with this item's start."""
+        return _Comp(self.start)
+
+    class _MediaPool:
+      """Media Pool double; `drop` removes requested clips by index."""
+
+      def __init__(self, drop: set[int]) -> None:
+        """Stores which requested clips Resolve "fails" to insert."""
+        self.drop = drop
+
+      def GetRootFolder(self) -> object:
+        """Unused: the template lookup is stubbed."""
+        return object()
+
+      def AppendToTimeline(self, infos: list[dict]) -> list[_Item]:
+        """Returns the inserted items in reverse order."""
+        items = [
+            _Item(info["recordFrame"])
+            for idx, info in enumerate(infos)
+            if idx not in self.drop
+        ]
+        return list(reversed(items))
+
+    class _Timeline:
+      """Timeline double starting at frame 90000."""
+
+      def AddTrack(self, _kind: str) -> bool:
+        """Accepts the new track."""
+        return True
+
+      def GetTrackCount(self, _kind: str) -> int:
+        """Reports two video tracks."""
+        return 2
+
+      def SetTrackName(self, *_args: object) -> bool:
+        """Accepts the track name."""
+        return True
+
+      def GetStartFrame(self) -> int:
+        """Timeline starts at 01:00:00:00 at 25 fps."""
+        return 90000
+
+    class _Project:
+      """Project double exposing the media pool and timeline."""
+
+      def __init__(self, pool: _MediaPool) -> None:
+        """Stores the media pool."""
+        self.pool = pool
+
+      def GetMediaPool(self) -> _MediaPool:
+        """Returns the media pool."""
+        return self.pool
+
+      def GetCurrentTimeline(self) -> _Timeline:
+        """Returns the timeline."""
+        return _Timeline()
+
+    class _Resolve:
+      """Resolve double: GetProjectManager().GetCurrentProject()."""
+
+      def __init__(self, pool: _MediaPool) -> None:
+        """Stores the project."""
+        self.project = _Project(pool)
+
+      def GetProjectManager(self) -> "_Resolve":
+        """Acts as its own project manager."""
+        return self
+
+      def GetCurrentProject(self) -> _Project:
+        """Returns the project."""
+        return self.project
+
+    with tempfile.TemporaryDirectory() as tmp:
+      bridge = resolve_bridge.ResolveBridge(app_data_dir=Path(tmp))
+      styled: list[tuple[int, str]] = []
+      bridge._find_template_item = lambda folder, name: object()
+      bridge._apply_style_to_fusion_comp = (
+          lambda comp, cue_text, style: styled.append((comp.start, cue_text))
+      )
+
+      def _push(drop: set[int]) -> tuple[bool, str]:
+        """Runs a textplus push with the given dropped clip indices."""
+        return bridge._push_via_studio(
+            resolve=_Resolve(_MediaPool(drop)),
+            cues=cues,
+            mode="textplus",
+            track_name="Subs",
+            template_name="AutoSubs_ES_Cine_Netflix",
+            srt_path=Path(tmp) / "a.srt",
+            fcpxml_path=Path(tmp) / "a.fcpxml",
+            fps=25.0,
+            start_frame=0,
+            style=exporters.StyleConfig(),
+        )
+
+      ok, msg = _push(set())
+      self.assertTrue(ok, msg)
+      self.assertEqual(
+          sorted(styled), [(90000, "Uno"), (90025, "Dos"), (90050, "Tres")]
+      )
+      styled.clear()
+      ok, msg = _push({1})
+      self.assertTrue(ok, msg)
+      self.assertEqual(sorted(styled), [(90000, "Uno"), (90050, "Tres")])
+      self.assertIn("1 subtítulos", msg)
+
+    pair = resolve_bridge._pair_textplus_items_with_cues
+    # Unreadable starts: index pairing only when the counts match.
+    self.assertEqual(pair(["a", "b"], [0, 10]), [("a", 0), ("b", 1)])
+    self.assertEqual(pair(["a"], [0, 10]), [])
+    # Constant offset in the same order: safe index fallback.
+    shifted = [_Item(500), _Item(510)]
+    self.assertEqual(
+        [idx for _, idx in pair(shifted, [0, 10])], [0, 1]
+    )
+    # Offset plus a missing clip: nothing can be paired safely.
+    self.assertEqual(pair([_Item(500)], [0, 10]), [])
 
 
 if __name__ == "__main__":
