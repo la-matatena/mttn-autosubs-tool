@@ -42,6 +42,8 @@ The `install_imac.sh` script installs the `whisper-cpp`, `ffmpeg`, and `ffmpeg-f
     ./install_imac.sh --model=large-v3-q5
     ```
 
+    If a Homebrew formula or the Python virtual environment for the native window fails, the installer warns and continues (the app then opens in your browser), and lists the missing packages at the end.
+
 4.  Restart DaVinci Resolve 20 if the application is open so the **Workspace** > **Scripts** menu and the **Effects** > **Titles** library load the added files.
 
 The installer places runtime assets, the standalone app bundle, and Resolve extensions in the following standard macOS directories:
@@ -49,7 +51,7 @@ The installer places runtime assets, the standalone app bundle, and Resolve exte
 | Asset group | macOS destination path | Purpose |
 | :--- | :--- | :--- |
 | Standalone macOS app | `~/Applications/MTTN AutoSubs Tool.app` | Launches MTTN AutoSubs Tool in its own native macOS `pywebview` window (or falls back to Chrome, Brave, or Safari at `http://127.0.0.1:55120`). |
-| Whisper models and cache | `~/Library/Application Support/AutoSubsES/` | Stores `.bin` GGML models, per-Mac settings, temporary 16 kHz mono WAV audio, burned-in MP4 renders, and the `bridge/inbox` and `bridge/outbox` directories. |
+| Whisper models and cache | `~/Library/Application Support/AutoSubsES/` | Stores `.bin` GGML models, per-Mac settings, uploaded media (`cache/uploads/`), temporary 16 kHz mono WAV audio, burned-in MP4 renders, and the `bridge/inbox` and `bridge/outbox` directories. |
 | Resolve Lua scripts | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility/` | Registers the three **MTTN AutoSubs** actions under **Workspace** &gt; **Scripts**. |
 | Fusion `Text+` presets | `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Templates/Edit/Titles/MTTN AutoSubs/` | Adds five `UseFrameFormatSettings = 1` title templates for Retina 4K, vertical, and animated flipbook timelines. |
 
@@ -118,12 +120,14 @@ You can feed audio into MTTN AutoSubs Tool directly from a local media file or f
 
 Video files render directly in **Monitor previo** with frame-accurate synchronized subtitles.
 
+Uploads are limited to 8 GiB per file and are stored in `cache/uploads/` inside the app data folder. When you load new media, the app deletes the previous upload and its temporary working WAV automatically (it never deletes the Resolve inbox WAV or rendered MP4s). WAV files that the waveform reader cannot decode, such as 32-bit float WAVs, still load and show an empty waveform until you transcribe them.
+
 ### Export audio in DaVinci Resolve 20 Free or Studio
 
 1.  Open your project and target timeline in DaVinci Resolve 20.
 2.  In the Resolve menu bar, click **Workspace** > **Scripts** > **1 - MTTN AutoSubs - Exportar Audio**.
-3.  Wait until the DaVinci Resolve **Console** prints that the `timeline_audio.wav` bounce finished.
-4.  Return to MTTN AutoSubs Tool and click **Leer buzón** if **Monitor previo** does not refresh automatically.
+3.  Wait until the DaVinci Resolve **Console** prints that the `timeline_audio.wav` bounce finished. Script 1 stops waiting after 180 seconds and then does not notify the app. Afterwards, it restores your project's previous Deliver render settings (a temporary preset named `AutoSubsES_Restaurar_Render_Temporal` may appear briefly).
+4.  Return to MTTN AutoSubs Tool and click **Leer buzón** if **Monitor previo** does not refresh automatically. The app also refreshes its state when its window regains focus.
 
 <img src="images/autosubs-es-step1-resolve.png" width="348" alt="Step 1. Audio de origen on the Timeline de Resolve tab with the Exportar audio (Studio) and Leer buzón buttons">
 
@@ -157,7 +161,7 @@ Configure CPU scheduling, Whisper model precision, board-game terminology, and S
 
 5.  Optional: Enter game titles, publisher names, mechanics, or proper nouns separated by commas in **Glosario personalizado**, or click **+ Términos BGG** to append starter board-game terms (`BoardGameGeek`, `Meeple`, `Worker Placement`, `Deckbuilding`, `Eurogame`, `Kickstarter`, `Devir`, `Zacatrus`, `Maldito Games`).
 6.  Optional: Expand **Reglas de texto** to adjust **Máx car.**, **Líneas**, or **Pausa ms**, or to select **Reparar signos españoles (`¿` y `¡`)**, **Limpiar muletillas aisladas (eh, em, este...)**, or **Convertir a MAYÚSCULAS**.
-7.  Click **Transcribir en Español** and monitor progress in the progress bar. AutoSubs ES passes `--carry-initial-prompt` with `-mc 64` when supported by your `whisper-cli` build so vocabulary biasing persists across the full recording.
+7.  Click **Transcribir en Español** and monitor progress in the progress bar. AutoSubs ES passes `--carry-initial-prompt` with `-mc 64` when supported by your `whisper-cli` build so vocabulary biasing persists across the full recording. Clicking **Transcribir en Español** (or **Probar velocidad**) again while it runs joins the running job instead of starting a second one. When several jobs run at once (for example, a model download, a transcription, and an MP4 render), the progress box shows the newest job plus a count of the others, and **Cancelar** stops the job shown. If the active audio changes before the transcription finishes, the result is discarded and a message explains why.
 8.  Inspect and refine the generated cues in **Monitor previo** and the cue editor:
 
     <img src="images/autosubs-es-monitor-waveform.png" width="782" alt="Monitor previo with the active cue, playback and zoom controls, and the waveform with cue blocks">
@@ -167,6 +171,7 @@ Configure CPU scheduling, Whisper model precision, board-game terminology, and S
     -   Toggle **16:9** or **9:16** framing in **Monitor previo** to preview line breaks and karaoke highlighting.
     -   Click any point on the waveform canvas or cue timestamps to scrub playback.
     -   Edit subtitle text inline, click **Aplicar reglas RAE y glosario** after changing domain, glossary, **Máx car.**, **Líneas**, or **Pausa ms**, or fix recurring terms across all cues with **Reemplazar todo**.
+    -   If the active audio changes while you edit (for example, after re-running Script 1 in Resolve), the app does not save the edit to the new audio: it shows a message and reloads the session.
     -   Choose a template chip (`Cine Netflix`, `Amarillo Clásico`, `Reels Impacto`, `Caja Editorial`, or `★ Anitype Animado (Flipbook)`) in **4. Estilo y tipografía** and fine-tune font family, size, vertical position (`Altura Y`), fill, karaoke, and outline colors, shadow, or background pill box.
 
 ### Set colors and opacity
@@ -185,7 +190,7 @@ Upload custom `.otf`, `.ttf`, `.ttc`, or `.zip` font packs in **4. Estilo y tipo
 
 Multi-font stop-motion typefaces such as `Anitype Journal` ship five separate variant files (`AnitypeJournal-1.otf` through `AnitypeJournal-5.otf`) that draw slightly different outlines per frame index.
 
-1.  In **4. Estilo y tipografía**, select **Instalar en macOS (`~/Library/Fonts`)** so DaVinci Resolve 20 can read the uploaded fonts.
+1.  In **4. Estilo y tipografía**, select **Instalar en macOS (`~/Library/Fonts`)** so DaVinci Resolve 20 can read the uploaded fonts. Existing files in `~/Library/Fonts` are never overwritten: identical files are skipped and different files with the same name are installed as `_2`, `_3`, and so on. Duplicate names inside a `.zip` are renamed the same way.
 2.  Click **+ Subir fuente (.otf / .ttf / .zip)** and select either the `.zip` archive or all `.otf` or `.ttf` variant files together.
 3.  Restart DaVinci Resolve 20 if it was running when you added the font so Fusion indexes the updated `~/Library/Fonts` folder.
 4.  Confirm that **Tipografía** selects the grouped entry under **Packs animados (Flipbook)**, or click the **★ Anitype Animado (Flipbook)** preset chip.
@@ -222,8 +227,8 @@ Select an insertion method in **5. DaVinci Resolve 20** that matches your editin
 
 1.  If you plan to use **Clips Text+ GPU-Light (1 nodo)**, open DaVinci Resolve 20 once, browse to **Effects** > **Titles** > **MTTN AutoSubs**, and drag the matching template (`AutoSubs_ES_Cine_Netflix`, `AutoSubs_ES_Amarillo_Clasico`, `AutoSubs_ES_Reels_Impacto`, `AutoSubs_ES_Caja_Editorial`, or `AutoSubs_ES_Anitype_Animado`) into your **Media Pool** or **Power Bins**.
 2.  In MTTN AutoSubs Tool under **5. DaVinci Resolve 20**, choose **Método en timeline**, enter **Nombre de pista**, select **Plantilla Fusion (Media Pool)**, and click **Enviar a DaVinci Resolve 20**.
-3.  On DaVinci Resolve 20 Studio, MTTN AutoSubs Tool inserts the subtitles directly into your active timeline. On DaVinci Resolve 20 Free, return to Resolve and click **Workspace** > **Scripts** > **2 - MTTN AutoSubs - Insertar Subtitulos**.
-4.  To jump the DaVinci Resolve playhead to a specific subtitle cue, click the Resolve jump action on a cue in the editor, then run **Workspace** > **Scripts** > **3 - MTTN AutoSubs - Ir a Tiempo** inside Resolve Free (Resolve Studio jumps directly).
+3.  On DaVinci Resolve 20 Studio, MTTN AutoSubs Tool inserts the subtitles directly into your active timeline. On DaVinci Resolve 20 Free, return to Resolve and click **Workspace** > **Scripts** > **2 - MTTN AutoSubs - Insertar Subtitulos**. `Text+` clips are paired with subtitles by timeline frame; if Resolve drops or moves some clips, the remaining clips are still styled and the Console (or the Studio push result) reports how many did not match. If insertion fails, Script 2 removes the empty track it added. When several Media Pool clips resemble the template, an exact name match anywhere in the Media Pool wins.
+4.  To jump the DaVinci Resolve playhead to a specific subtitle cue, click the Resolve jump action on a cue in the editor, then run **Workspace** > **Scripts** > **3 - MTTN AutoSubs - Ir a Tiempo** inside Resolve Free (Resolve Studio jumps directly). Script 3 prints an error in the Console if no project or timeline is open or the playhead could not be moved.
 
 ## Export standalone files and burned-in video
 
@@ -236,7 +241,7 @@ Use **6. Exportar** to download subtitle files, clean Spanish transcripts, or an
 | `.SRT Estándar` | SubRip starting at `00:00:00,000` | Universal format for YouTube, social platforms, and external players. |
 | `.SRT (01:00 TC)` | SubRip shifted by timeline `start_frame` | Aligns with DaVinci Resolve's default `01:00:00:00` timeline start timecode for manual import. |
 | `.VTT Web` | WebVTT (`WEBVTT`) | HTML5 video and web player captions. |
-| `.ASS Estilizado` | Advanced SubStation Alpha v4.00+ | Encodes styled subtitles and optional word-by-word `\kf` karaoke fill animations matching your UI style. |
+| `.ASS Estilizado` | Advanced SubStation Alpha v4.00+ | Encodes styled subtitles and optional word-by-word `\kf` karaoke fill animations matching your UI style. Karaoke holds during pauses, so each word lights up at its real start time, as in the preview. |
 | `.TXT Guion` | Plain UTF-8 text | Exports paragraph-formatted Spanish dialogue without timestamps for blog posts or show notes. |
 | `.TXT + Tiempos` | Timestamped UTF-8 text | Exports `[MM:SS] Texto` lines for rapid script review and timecode logging. |
 | `Copiar guion` | System clipboard text | Copies the clean Spanish transcript directly to your macOS clipboard. |

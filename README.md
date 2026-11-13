@@ -68,7 +68,7 @@ Puedes forzar un perfil con la variable de entorno `AUTOSUBS_HW_PROFILE=intel_im
 
 ### Rendimiento de esta Mac (⚙ Esta Mac)
 
-El botón de estado de la barra superior (⚙ con el procesador, la GPU y el estado de Resolve) abre un panel con el equipo detectado y los ajustes de rendimiento. Se guardan **solo en esa Mac** (`~/Library/Application Support/AutoSubsES/settings.json`), así que la iMac puede quedarse en modo seguro mientras una MacBook usa todo su potencial:
+El botón de estado de la barra superior (⚙ con el procesador, la GPU y el estado de Resolve) abre un panel con el equipo detectado y los ajustes de rendimiento. Se guardan **solo en esa Mac** (`~/Library/Application Support/AutoSubsES/settings.json`; si se edita a mano, los valores de rendimiento no válidos se ignoran), así que la iMac puede quedarse en modo seguro mientras una MacBook usa todo su potencial:
 
 <img src="docs/images/autosubs-es-status-button.png" width="490" alt="Botón de estado de la barra superior: Apple M4 Pro · 8 hilos · Metal · Resolve listo, junto a Probar Demo ES, Actualizar y el selector de tema">
 
@@ -122,7 +122,7 @@ El instalador configura automáticamente las herramientas `whisper-cpp`, `ffmpeg
    ./install_imac.sh
    ```
 
-   *Opcional:* Puedes pasar `--model=large-v3-q5` para descargar directamente el modelo de máxima precisión de 32 capas, o `--skip-model` si prefieres descargarlo después desde la interfaz.
+   *Opcional:* Puedes pasar `--model=large-v3-q5` para descargar directamente el modelo de máxima precisión de 32 capas, o `--skip-model` si prefieres descargarlo después desde la interfaz. Si falla alguna fórmula de Homebrew o el entorno de Python, el instalador avisa, continúa (la app se abrirá en el navegador si falta el entorno) y al final lista los paquetes pendientes.
 
 3. Abre **MTTN AutoSubs Tool** desde tu carpeta de **Aplicaciones** (`~/Applications/MTTN AutoSubs Tool.app`) o haz doble clic en `Iniciar AutoSubs ES.command`. Se abre en **su propia ventana de macOS** (con icono en el Dock y diálogo nativo de «Guardar como…» al exportar); al cerrar la ventana se detiene el servidor local. El instalador prepara esa ventana con `pywebview` en un entorno aislado (`~/Library/Application Support/AutoSubsES/venv`); si no está disponible, la app se abre en Chrome, Brave o Safari.
 
@@ -138,10 +138,10 @@ El instalador configura automáticamente las herramientas `whisper-cpp`, `ffmpeg
 No es obligatorio tener DaVinci Resolve abierto ni instalado para subtitular videos, entrevistas, podcasts o reseñas:
 
 1. Selecciona **App Independiente** en el selector de modo de la barra superior (el sistema también activa este modo automáticamente si abres la app y DaVinci Resolve no está en ejecución).
-2. Arrastra cualquier archivo de audio o video local (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov`, `.m4v` o `.mkv`) sobre la zona de carga en **1. Audio de origen**. Los videos se reproducen de inmediato en el **Monitor previo** con subtítulos sincronizados cuadro por cuadro y barra de desplazamiento de audio.
+2. Arrastra cualquier archivo de audio o video local (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.mov`, `.m4v` o `.mkv`, hasta 8 GB) sobre la zona de carga en **1. Audio de origen**. Los videos se reproducen de inmediato en el **Monitor previo** con subtítulos sincronizados cuadro por cuadro y barra de desplazamiento de audio. Al cargar otro archivo, la app borra automáticamente la copia anterior de su caché.
 
    <img src="docs/images/autosubs-es-step1-local.png" width="348" alt="Paso 1. Audio de origen con la pestaña Archivo local y la zona para arrastrar vídeo o audio">
-3. Ajusta las opciones en **2. Motor Whisper** y **3. Español, dominio y reglas RAE**, y haz clic en **Transcribir en Español**.
+3. Ajusta las opciones en **2. Motor Whisper** y **3. Español, dominio y reglas RAE**, y haz clic en **Transcribir en Español**. Si vuelves a pulsarlo mientras transcribe, te unes al trabajo en curso. Con varias tareas a la vez (descarga, transcripción y Render MP4), el cuadro de progreso muestra la más reciente y cuántas quedan en curso, y **Cancelar** detiene la que se muestra.
 4. Exporta tus resultados desde la tarjeta **6. Exportar**. **.SRT Estándar** y **Render MP4** están a la vista; el resto de formatos y **Copiar guion** están en **Más formatos**:
 
    <img src="docs/images/autosubs-es-step6-export.png" width="338" alt="Paso 6. Exportar con .SRT Estándar y Render MP4 a la vista y Más formatos desplegado: .SRT (01:00 TC), .VTT Web, .ASS Estilizado, .TXT Guion, .TXT + Tiempos, .FCPXML 1.9, .JSON Palabras y Copiar guion">
@@ -149,7 +149,7 @@ No es obligatorio tener DaVinci Resolve abierto ni instalado para subtitular vid
    - **Archivos de subtítulos**: Descarga `.SRT Estándar`, `.SRT (01:00 TC)`, `.VTT Web`, `.ASS Estilizado`, `.FCPXML 1.9` o `.JSON Palabras`.
    - **Guiones limpios y transcripciones**: Exporta `.TXT Guion` (texto continuo en párrafos limpios), `.TXT + Tiempos` (guion con marcas de tiempo para revisión) o copia todo el texto al portapapeles con **Copiar guion**.
    - **Video MP4 con subtítulos integrados**: Haz clic en **Render MP4** para codificar un video H.264 `.mp4`: con `libx264` en el procesador (0 MB de VRAM) en Mac Intel, o con `h264_videotoolbox` por hardware en Apple Silicon. Requiere `ffmpeg-full` (`brew install ffmpeg-full`).
-   - **Karaoke palabra por palabra**: está **apagado por defecto**. Actívalo en **4. Estilo y tipografía** para resaltar cada palabra en la vista previa, el `.ASS` y el MP4. Al editar el texto, las palabras que se mantienen conservan sus tiempos de Whisper y las nuevas se reparten el tiempo restante.
+   - **Karaoke palabra por palabra**: está **apagado por defecto**. Actívalo en **4. Estilo y tipografía** para resaltar cada palabra en la vista previa, el `.ASS` y el MP4; tras una pausa, cada palabra se ilumina en su momento real, igual que en la vista previa. Al editar el texto, las palabras que se mantienen conservan sus tiempos de Whisper y las nuevas se reparten el tiempo restante.
 
 ### Transcripción por línea de comandos (CLI sin interfaz)
 
@@ -177,7 +177,7 @@ Selecciona **DaVinci Resolve 20** en la barra superior cuando desees una integra
 
 1. Abre tu proyecto y línea de tiempo activa en DaVinci Resolve 20.
 2. En la barra de menús superior de DaVinci Resolve, haz clic en **Workspace** > **Scripts** > **1 - MTTN AutoSubs - Exportar Audio** (o pulsa **Exportar audio (Studio)** directamente en la interfaz de AutoSubs si tienes Resolve Studio).
-3. Cuando la consola de Resolve confirme la exportación del audio, regresa a MTTN AutoSubs Tool y presiona **Leer buzón**.
+3. Cuando la consola de Resolve confirme la exportación del audio, regresa a MTTN AutoSubs Tool y presiona **Leer buzón** (la app también se actualiza sola al volver a su ventana). El script restaura después tus ajustes de render de la página Deliver y deja de esperar a los 180 s.
 
 <img src="docs/images/autosubs-es-step1-resolve.png" width="348" alt="Paso 1. Audio de origen en la pestaña Timeline de Resolve, con la instrucción del menú Scripts y los botones Exportar audio (Studio) y Leer buzón">
 
@@ -200,6 +200,7 @@ Arrastra fuentes `.otf`, `.ttf`, `.ttc` o archivos comprimidos `.zip` en **4. Es
 <img src="docs/images/autosubs-es-fonts-animation.png" width="338" alt="Paso 4 con el preset Anitype Animado (Flipbook): aviso de glifos faltantes, Fuentes propias y animación desplegado con Subir fuente, Instalar en macOS, Adaptar glifos ASCII y controles de flipbook y vibración">
 
 - Los paquetes con variantes numeradas (como el set de cinco fuentes de `Anitype Journal`) se agrupan automáticamente bajo una sola opción en **Packs animados (Flipbook)**.
+- Nunca se sobrescriben fuentes que ya estén en `~/Library/Fonts`: las idénticas se omiten y las distintas con el mismo nombre se instalan como `_2`, `_3`…, igual que los nombres repetidos dentro de un `.zip`.
 - Si una fuente carece de caracteres en español (`á`, `é`, `í`, `ó`, `ú`, `ü`, `ñ`, `¿`, `¡`), el sistema muestra una advertencia y ofrece el interruptor **Adaptar glifos ASCII** para que `Text+` muestre palabras completas en lugar de caracteres vacíos. En el **Monitor previo** verás el resultado (por ejemplo, «reseñamos» pasa a «resenamos»), mientras el editor conserva el texto original:
 
   <img src="docs/images/autosubs-es-anitype-monitor.png" width="782" alt="Monitor previo con Adaptar glifos ASCII activo: el subtítulo muestra «resenamos» sin eñe mientras la forma de onda conserva «reseñamos»">
@@ -233,7 +234,7 @@ En **4. Estilo y tipografía > Colores y opacidad**, cada capa (texto, karaoke, 
    - **Clips Text+ GPU-Light (1 nodo)**: Inserta clips Fusion `Text+` con estilos avanzados, o anima hasta 5 variantes tipográficas con vibración controlada usando `AutoSubs_ES_Anitype_Animado` (con una sola rama activa por cuadro). Antes de tu primer envío con `Text+`, arrastra una plantilla desde **Effects** > **Titles** > **MTTN AutoSubs** hacia tu **Media Pool**.
    - **FCPXML 1.9 Universal**: Genera e importa un archivo `.fcpxml` con títulos básicos (divididos automáticamente según los fotogramas de retención de cada fuente animada).
 2. Haz clic en **Enviar a DaVinci Resolve 20**.
-3. Si utilizas la versión gratuita (DaVinci Resolve Free), haz clic en **Workspace** > **Scripts** > **2 - MTTN AutoSubs - Insertar Subtitulos** en el menú de DaVinci Resolve para colocar los subtítulos en la línea de tiempo.
+3. Si utilizas la versión gratuita (DaVinci Resolve Free), haz clic en **Workspace** > **Scripts** > **2 - MTTN AutoSubs - Insertar Subtitulos** en el menú de DaVinci Resolve para colocar los subtítulos en la línea de tiempo. Los clips `Text+` se emparejan con los subtítulos por fotograma; si alguno no coincide, la consola de Resolve lo avisa, y si la inserción falla se elimina la pista vacía añadida.
 
 ## Generar paquete de distribución ZIP
 
