@@ -37,10 +37,22 @@ function assertClose(actual, expected, eps = 1e-9) {
 describe("module shape", () => {
   test("exports every helper app.js destructures", () => {
     for (const name of [
-      "computeCueDrag", "computeViewRange", "contrastLevel", "cpsClassName",
-      "createJobPoller", "findPreviewCue", "formatMsReadable", "formatTick",
-      "hexToRgba", "hitTestCueAt", "isStaleJobResult", "msToX", "rescaleWords",
-      "syncCueWordsAfterTextEdit", "transformPreviewText", "worstCaseContrast",
+      "computeCueDrag",
+      "computeViewRange",
+      "contrastLevel",
+      "cpsClassName",
+      "createJobPoller",
+      "findPreviewCue",
+      "formatMsReadable",
+      "formatTick",
+      "hexToRgba",
+      "hitTestCueAt",
+      "isStaleJobResult",
+      "msToX",
+      "rescaleWords",
+      "syncCueWordsAfterTextEdit",
+      "transformPreviewText",
+      "worstCaseContrast",
       "xToMs",
     ]) {
       assert.equal(typeof H[name], "function", name);
@@ -52,7 +64,7 @@ describe("foldSpanishToAsciiPreview", () => {
   test("folds accents, ñ and drops inverted ¿ ¡", () => {
     assert.equal(
       H.foldSpanishToAsciiPreview("¿Qué tal, señor? ¡Año único!"),
-      "Que tal, senor? Ano unico!",
+      "Que tal, senor? Ano unico!"
     );
   });
 
@@ -61,7 +73,10 @@ describe("foldSpanishToAsciiPreview", () => {
   });
 
   test("straightens quotes, dashes and the ellipsis", () => {
-    assert.equal(H.foldSpanishToAsciiPreview("«hola» “sí” ‘no’ — a – b…"), "\"hola\" \"si\" 'no' - a - b...");
+    assert.equal(
+      H.foldSpanishToAsciiPreview("«hola» “sí” ‘no’ — a – b…"),
+      '"hola" "si" \'no\' - a - b...'
+    );
   });
 
   test("decomposed input and other accents fold through NFKD", () => {
@@ -78,7 +93,10 @@ describe("foldSpanishToAsciiPreview", () => {
 
 describe("transformPreviewText", () => {
   test("folds before uppercasing, like the exporters", () => {
-    assert.equal(H.transformPreviewText("¿ñandú?", { ascii_fold: true, uppercase: true }), "NANDU?");
+    assert.equal(
+      H.transformPreviewText("¿ñandú?", { ascii_fold: true, uppercase: true }),
+      "NANDU?"
+    );
   });
 
   test("uppercase alone keeps Spanish letters", () => {
@@ -122,17 +140,28 @@ describe("cpsClassName", () => {
 
 describe("tokens and word sync", () => {
   test("tokenizeLines splits on any whitespace and skips empties", () => {
-    assert.deepEqual(H.tokenizeLines(["  ¿Qué  tal? ", "muy\tbien"]), ["¿Qué", "tal?", "muy", "bien"]);
+    assert.deepEqual(H.tokenizeLines(["  ¿Qué  tal? ", "muy\tbien"]), [
+      "¿Qué",
+      "tal?",
+      "muy",
+      "bien",
+    ]);
     assert.deepEqual(H.tokenizeLines(null), []);
   });
 
   test("word texts follow the edit when the token count matches", () => {
     const c = cue(0, 1000, {
       lines: ["Hola", "Señor"],
-      words: [{ text: "hola", start_ms: 0, end_ms: 400 }, { text: "senor", start_ms: 500, end_ms: 900 }],
+      words: [
+        { text: "hola", start_ms: 0, end_ms: 400 },
+        { text: "senor", start_ms: 500, end_ms: 900 },
+      ],
     });
     H.syncCueWordsAfterTextEdit(c);
-    assert.deepEqual(c.words.map((w) => w.text), ["Hola", "Señor"]);
+    assert.deepEqual(
+      c.words.map((w) => w.text),
+      ["Hola", "Señor"]
+    );
     assert.equal(c.words[1].start_ms, 500);
   });
 
@@ -186,7 +215,11 @@ describe("rescaleWords", () => {
 });
 
 describe("findPreviewCue", () => {
-  const cues = [cue(0, 1000, { text: "a" }), cue(900, 2000, { text: "b" }), cue(3000, 4000, { text: "c" })];
+  const cues = [
+    cue(0, 1000, { text: "a" }),
+    cue(900, 2000, { text: "b" }),
+    cue(3000, 4000, { text: "c" }),
+  ];
 
   test("bounds are inclusive", () => {
     assert.equal(H.findPreviewCue(cues, 0, -1).text, "a");
@@ -284,13 +317,29 @@ describe("waveform geometry", () => {
   });
 
   test("computeViewRange: spanMs 0 fits the whole duration", () => {
-    assert.deepEqual(H.computeViewRange(10000, { startMs: 3000, spanMs: 0 }), { start: 0, span: 10000, dur: 10000 });
+    assert.deepEqual(H.computeViewRange(10000, { startMs: 3000, spanMs: 0 }), {
+      start: 0,
+      span: 10000,
+      dur: 10000,
+    });
   });
 
   test("computeViewRange clamps the span to the duration and the start inside it", () => {
-    assert.deepEqual(H.computeViewRange(10000, { startMs: 9000, spanMs: 4000 }), { start: 6000, span: 4000, dur: 10000 });
-    assert.deepEqual(H.computeViewRange(10000, { startMs: -50, spanMs: 4000 }), { start: 0, span: 4000, dur: 10000 });
-    assert.deepEqual(H.computeViewRange(3000, { startMs: 500, spanMs: 9000 }), { start: 0, span: 3000, dur: 3000 });
+    assert.deepEqual(H.computeViewRange(10000, { startMs: 9000, spanMs: 4000 }), {
+      start: 6000,
+      span: 4000,
+      dur: 10000,
+    });
+    assert.deepEqual(H.computeViewRange(10000, { startMs: -50, spanMs: 4000 }), {
+      start: 0,
+      span: 4000,
+      dur: 10000,
+    });
+    assert.deepEqual(H.computeViewRange(3000, { startMs: 500, spanMs: 9000 }), {
+      start: 0,
+      span: 3000,
+      dur: 3000,
+    });
   });
 });
 
@@ -335,32 +384,69 @@ describe("hitTestCueAt", () => {
 describe("computeCueDrag", () => {
   const MIN = 200;
   const cues = [cue(0, 1000), cue(2000, 3000), cue(4000, 5000)];
-  const drag = (idx, mode) => ({ idx, mode, orig: { start: cues[idx].start_ms, end: cues[idx].end_ms } });
+  const drag = (idx, mode) => ({
+    idx,
+    mode,
+    orig: { start: cues[idx].start_ms, end: cues[idx].end_ms },
+  });
 
   test("snaps to 10 ms", () => {
-    assert.deepEqual(H.computeCueDrag(cues, drag(1, "move"), 123, 10000, MIN), { start: 2120, end: 3120 });
-    assert.deepEqual(H.computeCueDrag(cues, drag(1, "start"), -14, 10000, MIN), { start: 1990, end: 3000 });
+    assert.deepEqual(H.computeCueDrag(cues, drag(1, "move"), 123, 10000, MIN), {
+      start: 2120,
+      end: 3120,
+    });
+    assert.deepEqual(H.computeCueDrag(cues, drag(1, "start"), -14, 10000, MIN), {
+      start: 1990,
+      end: 3000,
+    });
   });
 
   test("start edge stops at the previous cue end and at the minimum length", () => {
-    assert.deepEqual(H.computeCueDrag(cues, drag(1, "start"), -5000, 10000, MIN), { start: 1000, end: 3000 });
-    assert.deepEqual(H.computeCueDrag(cues, drag(1, "start"), 5000, 10000, MIN), { start: 2800, end: 3000 });
+    assert.deepEqual(H.computeCueDrag(cues, drag(1, "start"), -5000, 10000, MIN), {
+      start: 1000,
+      end: 3000,
+    });
+    assert.deepEqual(H.computeCueDrag(cues, drag(1, "start"), 5000, 10000, MIN), {
+      start: 2800,
+      end: 3000,
+    });
   });
 
   test("end edge stops at the next cue start and at the minimum length", () => {
-    assert.deepEqual(H.computeCueDrag(cues, drag(1, "end"), 5000, 10000, MIN), { start: 2000, end: 4000 });
-    assert.deepEqual(H.computeCueDrag(cues, drag(1, "end"), -5000, 10000, MIN), { start: 2000, end: 2200 });
+    assert.deepEqual(H.computeCueDrag(cues, drag(1, "end"), 5000, 10000, MIN), {
+      start: 2000,
+      end: 4000,
+    });
+    assert.deepEqual(H.computeCueDrag(cues, drag(1, "end"), -5000, 10000, MIN), {
+      start: 2000,
+      end: 2200,
+    });
   });
 
   test("move keeps the length and stays between both neighbours", () => {
-    assert.deepEqual(H.computeCueDrag(cues, drag(1, "move"), -5000, 10000, MIN), { start: 1000, end: 2000 });
-    assert.deepEqual(H.computeCueDrag(cues, drag(1, "move"), 5000, 10000, MIN), { start: 3000, end: 4000 });
+    assert.deepEqual(H.computeCueDrag(cues, drag(1, "move"), -5000, 10000, MIN), {
+      start: 1000,
+      end: 2000,
+    });
+    assert.deepEqual(H.computeCueDrag(cues, drag(1, "move"), 5000, 10000, MIN), {
+      start: 3000,
+      end: 4000,
+    });
   });
 
   test("first cue is bounded by 0, last cue by the total duration", () => {
-    assert.deepEqual(H.computeCueDrag(cues, drag(0, "move"), -700, 10000, MIN), { start: 0, end: 1000 });
-    assert.deepEqual(H.computeCueDrag(cues, drag(2, "end"), 99999, 6000, MIN), { start: 4000, end: 6000 });
-    assert.deepEqual(H.computeCueDrag(cues, drag(2, "move"), 99999, 6000, MIN), { start: 5000, end: 6000 });
+    assert.deepEqual(H.computeCueDrag(cues, drag(0, "move"), -700, 10000, MIN), {
+      start: 0,
+      end: 1000,
+    });
+    assert.deepEqual(H.computeCueDrag(cues, drag(2, "end"), 99999, 6000, MIN), {
+      start: 4000,
+      end: 6000,
+    });
+    assert.deepEqual(H.computeCueDrag(cues, drag(2, "move"), 99999, 6000, MIN), {
+      start: 5000,
+      end: 6000,
+    });
   });
 
   test("no room between overlapping neighbours: never crosses the previous cue", () => {

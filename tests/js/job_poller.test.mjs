@@ -101,7 +101,10 @@ describe("createJobPoller: lifecycle", () => {
     h.poller.pollJob("A", (job) => done.push(job));
     assert.equal(h.poller.size, 1);
     assert.equal(h.poller.activeJobId, "A");
-    assert.deepEqual(h.events, [["show", "A"], ["render", null, 0]]);
+    assert.deepEqual(h.events, [
+      ["show", "A"],
+      ["render", null, 0],
+    ]);
     assert.equal([...h.timers.values()][0].ms, 500);
 
     await h.fireTimers();
@@ -115,7 +118,11 @@ describe("createJobPoller: lifecycle", () => {
     assert.equal(h.poller.size, 0);
     assert.equal(h.poller.activeJobId, null);
     assert.equal(h.timers.size, 0);
-    assert.deepEqual(h.events.slice(-3), [["render", "Transcribiendo", 0], ["render", "Listo", 0], ["idle", true]]);
+    assert.deepEqual(h.events.slice(-3), [
+      ["render", "Transcribiendo", 0],
+      ["render", "Listo", 0],
+      ["idle", true],
+    ]);
 
     // Nothing left to fire: no extra request and no second onSuccess.
     await h.fireTimers();
@@ -159,7 +166,13 @@ describe("createJobPoller: lifecycle", () => {
     assert.equal(h.poller.size, 1);
     assert.equal(h.timers.size, 1);
     // The duplicate start brings the job back to the box.
-    assert.deepEqual(h.events.filter((e) => e[0] === "show"), [["show", "A"], ["show", "A"]]);
+    assert.deepEqual(
+      h.events.filter((e) => e[0] === "show"),
+      [
+        ["show", "A"],
+        ["show", "A"],
+      ]
+    );
 
     await h.fireTimers();
     assert.equal(h.requests.length, 1);
@@ -181,12 +194,17 @@ describe("createJobPoller: failures", () => {
   test("cancelled job: toast with the stage, no onSuccess, box stays", async () => {
     const h = harness();
     let succeeded = false;
-    h.poller.pollJob("A", () => { succeeded = true; });
+    h.poller.pollJob("A", () => {
+      succeeded = true;
+    });
     await h.fireTimers();
     await h.respond("A", { status: "cancelled", stage: "Cancelado por el usuario" });
     assert.equal(succeeded, false);
     assert.equal(h.poller.size, 0);
-    assert.deepEqual(h.events.slice(-2), [["idle", false], ["toast", "Cancelado por el usuario", 5000]]);
+    assert.deepEqual(h.events.slice(-2), [
+      ["idle", false],
+      ["toast", "Cancelado por el usuario", 5000],
+    ]);
   });
 
   test("cancelled job with onError: handler instead of toast", async () => {
@@ -196,7 +214,10 @@ describe("createJobPoller: failures", () => {
     await h.fireTimers();
     await h.respond("A", { status: "cancelled" });
     assert.deepEqual(errors, [["cancelled", null]]);
-    assert.equal(h.events.some((e) => e[0] === "toast"), false);
+    assert.equal(
+      h.events.some((e) => e[0] === "toast"),
+      false
+    );
   });
 
   test("error job: toast prefers job.error over the stage", async () => {
@@ -215,7 +236,10 @@ describe("createJobPoller: failures", () => {
     await h.fail("A", new Error("HTTP 500"));
     assert.equal(h.poller.size, 0);
     assert.equal(h.timers.size, 0);
-    assert.deepEqual(h.events.slice(-2), [["idle", false], ["toast", "Error consultando tarea: HTTP 500", undefined]]);
+    assert.deepEqual(h.events.slice(-2), [
+      ["idle", false],
+      ["toast", "Error consultando tarea: HTTP 500", undefined],
+    ]);
   });
 
   test("request failure with onError: receives (null, err)", async () => {
@@ -275,7 +299,10 @@ describe("createJobPoller: which job the box shows", () => {
     assert.equal(h.poller.size, 3);
     // B is rendered with one other boxed job (A) running.
     assert.deepEqual(h.events.at(-1), ["render", null, 1]);
-    assert.equal(h.events.some((e) => e[1] === "bench"), false);
+    assert.equal(
+      h.events.some((e) => e[1] === "bench"),
+      false
+    );
   });
 
   test("when the shown job ends, the newest remaining boxed job takes over", async () => {
@@ -286,8 +313,14 @@ describe("createJobPoller: which job the box shows", () => {
     await h.fireTimers();
     await h.respond("B", { status: "done", stage: "B ok" });
     assert.equal(h.poller.activeJobId, "A");
-    assert.deepEqual(h.events.slice(-2), [["show", "A"], ["render", null, 0]]);
-    assert.equal(h.events.some((e) => e[0] === "idle"), false);
+    assert.deepEqual(h.events.slice(-2), [
+      ["show", "A"],
+      ["render", null, 0],
+    ]);
+    assert.equal(
+      h.events.some((e) => e[0] === "idle"),
+      false
+    );
 
     // The background job finishing does not touch the shown job.
     await h.respond("bench", { status: "done" });
@@ -306,7 +339,10 @@ describe("createJobPoller: which job the box shows", () => {
     await h.respond("B", { status: "running", stage: "B1" });
     await h.respond("A", { status: "error", stage: "A falló" });
     assert.equal(h.poller.activeJobId, "B");
-    assert.deepEqual(h.events.slice(-2), [["render", "B1", 0], ["toast", "A falló", 5000]]);
+    assert.deepEqual(h.events.slice(-2), [
+      ["render", "B1", 0],
+      ["toast", "A falló", 5000],
+    ]);
   });
 
   test("progress of a hidden job does not repaint the box", async () => {

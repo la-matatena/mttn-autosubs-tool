@@ -22,5 +22,6 @@ Contexto rápido para asistentes de código que trabajen en `la-matatena/mttn-au
   ```bash
   python3 -B package_bundle.py --output /tmp/MTTN_AutoSubs_Tool.zip
   ```
+- Ejecuta `tools/lint.sh` (formato y lint; `tools/lint.sh --fix` aplica los formateadores) y deja todas las comprobaciones en verde.
 - Usa Conventional Commits en inglés (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`).
 - No publiques releases, tags ni hagas `push` sin confirmación explícita.

@@ -34,8 +34,10 @@
   --radius-xs: 4px;
 
   /* Typography: Native Apple Font Stack */
-  --font-heading: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
-  --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  --font-heading:
+    -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  --font-body:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
   --font-mono: "SF Mono", Menlo, Monaco, Consolas, monospace;
 
   accent-color: var(--mttn-purple);
@@ -129,17 +131,17 @@
 
     /* Semantic Status Tokens (Calibrated for light background contrast) */
     --ok: #15803d;
-    --ok-bg: rgba(21, 128, 61, 0.10);
-    --ok-border: rgba(21, 128, 61, 0.30);
+    --ok-bg: rgba(21, 128, 61, 0.1);
+    --ok-border: rgba(21, 128, 61, 0.3);
     --warn: #b45309;
-    --warn-bg: rgba(180, 83, 9, 0.10);
-    --warn-border: rgba(180, 83, 9, 0.30);
+    --warn-bg: rgba(180, 83, 9, 0.1);
+    --warn-border: rgba(180, 83, 9, 0.3);
     --danger: #b91c1c;
-    --danger-bg: rgba(185, 28, 28, 0.10);
-    --danger-border: rgba(185, 28, 28, 0.30);
+    --danger-bg: rgba(185, 28, 28, 0.1);
+    --danger-border: rgba(185, 28, 28, 0.3);
     --info: #0284c7;
-    --info-bg: rgba(2, 132, 199, 0.10);
-    --info-border: rgba(2, 132, 199, 0.30);
+    --info-bg: rgba(2, 132, 199, 0.1);
+    --info-border: rgba(2, 132, 199, 0.3);
 
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
     --shadow-topbar: 0 1px 4px rgba(0, 0, 0, 0.06);
@@ -182,17 +184,17 @@
 
   /* Semantic Status Tokens */
   --ok: #15803d;
-  --ok-bg: rgba(21, 128, 61, 0.10);
-  --ok-border: rgba(21, 128, 61, 0.30);
+  --ok-bg: rgba(21, 128, 61, 0.1);
+  --ok-border: rgba(21, 128, 61, 0.3);
   --warn: #b45309;
-  --warn-bg: rgba(180, 83, 9, 0.10);
-  --warn-border: rgba(180, 83, 9, 0.30);
+  --warn-bg: rgba(180, 83, 9, 0.1);
+  --warn-border: rgba(180, 83, 9, 0.3);
   --danger: #b91c1c;
-  --danger-bg: rgba(185, 28, 28, 0.10);
-  --danger-border: rgba(185, 28, 28, 0.30);
+  --danger-bg: rgba(185, 28, 28, 0.1);
+  --danger-border: rgba(185, 28, 28, 0.3);
   --info: #0284c7;
-  --info-bg: rgba(2, 132, 199, 0.10);
-  --info-border: rgba(2, 132, 199, 0.30);
+  --info-bg: rgba(2, 132, 199, 0.1);
+  --info-border: rgba(2, 132, 199, 0.3);
 
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
   --shadow-topbar: 0 1px 4px rgba(0, 0, 0, 0.06);
@@ -348,7 +350,9 @@ code {
   padding: 4px 11px;
   border-radius: var(--radius-xs);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .mode-btn:hover {
@@ -387,7 +391,9 @@ code {
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .status-btn:hover {
@@ -473,17 +479,20 @@ code {
 }
 
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]):not(:has(> head > meta[name="color-scheme"][content="dark"])) .theme-state-to-light {
+  :root:not([data-theme="dark"]):not(:has(> head > meta[name="color-scheme"][content="dark"]))
+    .theme-state-to-light {
     display: none;
   }
-  :root:not([data-theme="dark"]):not(:has(> head > meta[name="color-scheme"][content="dark"])) .theme-state-to-dark {
+  :root:not([data-theme="dark"]):not(:has(> head > meta[name="color-scheme"][content="dark"]))
+    .theme-state-to-dark {
     display: inline-flex;
   }
 }
 
 /* Pills: CPS badges, topbar status and warnings. Colored variants mark
    states that need attention; neutral is the default. */
-.badge, .pill {
+.badge,
+.pill {
   display: inline-flex;
   align-items: center;
   padding: 3px 8px;
@@ -569,7 +578,9 @@ code {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 12px 14px;
-  transition: border-color 0.2s ease, opacity 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    opacity 0.2s ease;
 }
 
 .card h2 {
@@ -635,7 +646,9 @@ textarea {
   padding: 5px 8px;
   font-family: inherit;
   font-size: 12px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 input[type="color"] {
@@ -729,7 +742,10 @@ button:focus-visible,
   cursor: pointer;
   color: var(--text);
   background: var(--surface-elevated);
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.05s ease;
 }
 
 .btn:hover {
@@ -840,7 +856,9 @@ button:focus-visible,
   font-weight: 600;
   font-size: 11.5px;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .tab-btn:hover {
@@ -883,7 +901,9 @@ button:focus-visible,
   color: var(--muted);
   cursor: pointer;
   background: var(--surface-inset);
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .dropzone:hover,
@@ -1155,7 +1175,9 @@ input[type="color"]:disabled {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .cue-item.active {
@@ -1276,7 +1298,10 @@ input[type="color"]:disabled {
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .chip:hover {
@@ -1569,7 +1594,11 @@ input:disabled {
     linear-gradient(45deg, transparent 75%, #c8c8cc 75%),
     linear-gradient(-45deg, transparent 75%, #c8c8cc 75%);
   background-size: 8px 8px;
-  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+  background-position:
+    0 0,
+    0 4px,
+    4px -4px,
+    -4px 0;
 }
 
 .alpha-chip {
@@ -1621,15 +1650,34 @@ input:disabled {
   outline-offset: 1px;
 }
 
-.bg-black { background: #0a0a0c; }
-.bg-gray { background: #6b6b73; }
-.bg-light { background: #e8e8ec; }
+.bg-black {
+  background: #0a0a0c;
+}
+.bg-gray {
+  background: #6b6b73;
+}
+.bg-light {
+  background: #e8e8ec;
+}
 
 /* Monitor test backgrounds (classes set by setStageBg in app.js). */
-.preview-stage.stage-bg-black { background: #0a0a0c; }
-.preview-stage.stage-bg-gray { background: #6b6b73; }
-.preview-stage.stage-bg-light { background: #e8e8ec; }
-.preview-stage.stage-bg-checker { background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0; }
+.preview-stage.stage-bg-black {
+  background: #0a0a0c;
+}
+.preview-stage.stage-bg-gray {
+  background: #6b6b73;
+}
+.preview-stage.stage-bg-light {
+  background: #e8e8ec;
+}
+.preview-stage.stage-bg-checker {
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+}
 
 /* ==========================================================================
    STYLE CARD: USER PRESETS & CONTRAST BADGE

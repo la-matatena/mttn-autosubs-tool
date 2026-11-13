@@ -43,7 +43,6 @@ import difflib
 import re
 from typing import Any
 
-
 # --- Data model ---
 
 
@@ -287,13 +286,19 @@ def align_words_to_lines(
       if left:
         left.end_ms = max(
             left.start_ms,
-            min(left.end_ms, max(left.start_ms + 20, (left.start_ms + left.end_ms) // 2)),
+            min(
+                left.end_ms,
+                max(left.start_ms + 20, (left.start_ms + left.end_ms) // 2),
+            ),
         )
         lo = left.end_ms
       if right:
         right.start_ms = min(
             right.end_ms,
-            max(right.start_ms, min(right.end_ms - 20, (right.start_ms + right.end_ms) // 2)),
+            max(
+                right.start_ms,
+                min(right.end_ms - 20, (right.start_ms + right.end_ms) // 2),
+            ),
         )
         hi = right.start_ms
       hi = max(lo, hi)
@@ -1122,7 +1127,9 @@ def parse_whisper_ojf(ojf_data: dict[str, Any]) -> list[WordTiming]:
   last_end_ms = 0
 
   for seg in ojf_data.get("transcription", []):
-    seg_text = _INLINE_SPECIAL_TOKEN_RE.sub("", str(seg.get("text", ""))).strip()
+    seg_text = _INLINE_SPECIAL_TOKEN_RE.sub(
+        "", str(seg.get("text", ""))
+    ).strip()
     if not seg_text:
       continue
 

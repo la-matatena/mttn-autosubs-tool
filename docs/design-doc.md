@@ -174,6 +174,25 @@ Every file should be understandable by a maintainer who has never seen it. Apply
 -   **Debt markers**: Mark intentional engineering shortcuts with a `shortcut:` comment, which works as a tracked debt ledger. Keep existing markers and `NOLINT` annotations intact.
 -   **Documentation-only changes**: Commits that only touch comments, docstrings, or docs must not change behavior. Do not rename identifiers, routes, JSON keys, DOM IDs, or OpenFX IDs, and do not reorder logic. The full test suite must pass unchanged.
 
+### Formatters and linters
+
+The conventions above are enforced automatically. These are dev-only tools: the product itself still needs only the Python standard library, and none of the tool configs ship in `MTTN_AutoSubs_Tool.zip`.
+
+| Language | Formatter | Linter | Config files |
+| --- | --- | --- | --- |
+| Python (`*.py`) | pyink 26.5.1 (Google style: 2-space indent, 80 columns, majority quotes) | pylint 4.1.3 (Google `pylintrc`) | `pyproject.toml` (`[tool.pyink]`), `.pylintrc` |
+| JavaScript (`ui/*.js`, `tests/js/*.mjs`) and CSS (`ui/styles.css`) | Prettier 3.10.1 (100 columns, double quotes, semicolons) | ESLint 10.14.0 (`no-undef`, `no-unused-vars`, `eqeqeq`, `no-var`, `prefer-const`, `curly`) | `.prettierrc.json`, `.prettierignore`, `eslint.config.mjs` |
+| Shell (`install_imac.sh`, `*.command`, `tools/lint.sh`) | — | ShellCheck 0.11.0 with all optional checks | `.shellcheckrc` |
+| Lua (`lua/`) | StyLua 2.6.0 (100 columns, 2-space indent) | — | `.stylua.toml` |
+
+HTML (`ui/index.html`, `site/`), `site/styles.css`, `templates/*.setting`, and Markdown are not formatted. Prettier would re-indent whole HTML documents and rewrap whitespace-sensitive text, and the tests assert on raw markup.
+
+-   **Check**: Run `tools/lint.sh` before you push. It exits non-zero on any finding.
+-   **Fix**: Run `tools/lint.sh --fix` to apply pyink, Prettier, StyLua, and ESLint autofixes, then rerun every check. Fix the remaining findings by hand.
+-   **Install**: If a tool is missing, the script prints the pinned `pip` and `npm` commands. They install into the git-ignored `.venv-dev/` folder, and `npm` always uses `--registry https://registry.npmjs.org/`.
+-   **Suppressions**: Disable a rule only for a deliberate exception, on the narrowest scope (`# pylint: disable-next=...`, `// eslint-disable-next-line ...`), with a comment that explains why.
+-   **CI**: The `lint` job in `.github/workflows/ci-release.yml` installs the same pinned versions and runs `tools/lint.sh`. A finding fails the workflow, but the job does not gate the release build.
+
 ## What's next
 
 -   Follow daily editing workflows in the [user guide](user-guide.md).

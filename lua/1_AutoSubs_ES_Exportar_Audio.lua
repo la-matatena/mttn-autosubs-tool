@@ -71,13 +71,17 @@ end
 local function getHomeDir()
   if os and os.getenv then
     local h = os.getenv("HOME")
-    if h and h ~= "" then return h end
+    if h and h ~= "" then
+      return h
+    end
   end
   if fusion and fusion.MapPath then
     local userData = fusion:MapPath("UserData:")
     if userData and userData ~= "" then
       local home = userData:match("^(/Users/[^/]+)")
-      if home then return home end
+      if home then
+        return home
+      end
     end
   end
   return ""
@@ -121,8 +125,12 @@ end
 -- the Deliver page, and the editor should land back where they were.
 local prevPage = "edit"
 if resolve.GetCurrentPage then
-  local ok, p = pcall(function() return resolve:GetCurrentPage() end)
-  if ok and p and p ~= "" then prevPage = p end
+  local ok, p = pcall(function()
+    return resolve:GetCurrentPage()
+  end)
+  if ok and p and p ~= "" then
+    prevPage = p
+  end
 end
 
 local projectName = project:GetName() or "Proyecto"
@@ -144,7 +152,9 @@ local templates = {}
 -- (case-insensitive). Matches are appended to the upvalue `templates`.
 -- @param folder Folder|nil Media Pool folder to scan; nil is a no-op.
 local function scanFolder(folder)
-  if not folder then return end
+  if not folder then
+    return
+  end
   local clips = folder:GetClipList() or {}
   for _, clip in ipairs(clips) do
     local name = clip:GetClipProperty("Clip Name") or clip:GetName() or ""
@@ -184,11 +194,19 @@ local RESTORE_PRESET_NAME = "AutoSubsES_Restaurar_Render_Temporal"
 -- @return boolean True when the method exists and returned a truthy value.
 -- @return any The method's first return value (nil on failure).
 local function safeCall(obj, method, ...)
-  if not obj then return false, nil end
-  local hasFn, fn = pcall(function() return obj[method] end)
-  if not hasFn or not fn then return false, nil end
+  if not obj then
+    return false, nil
+  end
+  local hasFn, fn = pcall(function()
+    return obj[method]
+  end)
+  if not hasFn or not fn then
+    return false, nil
+  end
   local ok, result = pcall(fn, obj, ...)
-  if ok and result then return true, result end
+  if ok and result then
+    return true, result
+  end
   return false, nil
 end
 
@@ -217,7 +235,9 @@ local function restoreRenderSettings()
     restored = safeCall(project, "SetCurrentRenderFormatAndCodec", prevFormat, prevCodec)
   end
   if not restored then
-    print("[AutoSubs ES] Aviso: no se pudieron restaurar los ajustes de render anteriores; revísalos en la página Deliver.")
+    print(
+      "[AutoSubs ES] Aviso: no se pudieron restaurar los ajustes de render anteriores; revísalos en la página Deliver."
+    )
   end
 end
 
@@ -240,7 +260,9 @@ local function sleepBriefly(seconds)
     return
   end
   if os and os.execute then
-    pcall(function() os.execute("sleep " .. tostring(seconds)) end)
+    pcall(function()
+      os.execute("sleep " .. tostring(seconds))
+    end)
   end
 end
 
@@ -273,7 +295,9 @@ local function runAudioRender()
 
   local started = project:StartRendering(jobId)
   if not started then
-    pcall(function() project:DeleteRenderJob(jobId) end)
+    pcall(function()
+      project:DeleteRenderJob(jobId)
+    end)
     return "not_started", 0
   end
 
@@ -309,7 +333,9 @@ local renderOk, outcome, elapsed = pcall(runAudioRender)
 restoreRenderSettings()
 
 if prevPage and resolve.OpenPage then
-  pcall(function() resolve:OpenPage(prevPage) end)
+  pcall(function()
+    resolve:OpenPage(prevPage)
+  end)
 end
 
 if not renderOk then
@@ -326,7 +352,12 @@ if outcome == "not_started" then
   return
 end
 if outcome == "timeout" then
-  print(string.format("[AutoSubs ES] Error: el render de audio superó el límite de %.0fs; no se notificó al servidor.", elapsed))
+  print(
+    string.format(
+      "[AutoSubs ES] Error: el render de audio superó el límite de %.0fs; no se notificó al servidor.",
+      elapsed
+    )
+  )
   return
 end
 
@@ -339,17 +370,17 @@ end
 -- Hand-built JSON (Resolve's Lua has no JSON library). Keys must match what
 -- resolve_bridge.read_timeline_meta() and its callers expect.
 local jsonStr = string.format(
-  '{\n' ..
-  '  "project_name": "%s",\n' ..
-  '  "timeline_name": "%s",\n' ..
-  '  "fps": %.4f,\n' ..
-  '  "start_frame": %d,\n' ..
-  '  "end_frame": %d,\n' ..
-  '  "width": %d,\n' ..
-  '  "height": %d,\n' ..
-  '  "audio_path": "%s",\n' ..
-  '  "media_pool_templates": [%s]\n' ..
-  '}\n',
+  "{\n"
+    .. '  "project_name": "%s",\n'
+    .. '  "timeline_name": "%s",\n'
+    .. '  "fps": %.4f,\n'
+    .. '  "start_frame": %d,\n'
+    .. '  "end_frame": %d,\n'
+    .. '  "width": %d,\n'
+    .. '  "height": %d,\n'
+    .. '  "audio_path": "%s",\n'
+    .. '  "media_pool_templates": [%s]\n'
+    .. "}\n",
   jsonEscape(projectName),
   jsonEscape(timelineName),
   fps,
@@ -386,13 +417,17 @@ end
 -- with "&" and capped at 1 s so Resolve never blocks if the app is closed.
 if os and os.execute then
   pcall(function()
-    os.execute('curl -s -m 1 -X POST http://127.0.0.1:55120/api/resolve/notify-export >/dev/null 2>&1 &')
+    os.execute(
+      "curl -s -m 1 -X POST http://127.0.0.1:55120/api/resolve/notify-export >/dev/null 2>&1 &"
+    )
   end)
 end
 
-print(string.format(
-  "[AutoSubs ES] Audio listo en %s (%.1fs, meta=%s). Abre AutoSubs ES en tu navegador.",
-  audioPath,
-  elapsed,
-  tostring(wroteFile)
-))
+print(
+  string.format(
+    "[AutoSubs ES] Audio listo en %s (%.1fs, meta=%s). Abre AutoSubs ES en tu navegador.",
+    audioPath,
+    elapsed,
+    tostring(wroteFile)
+  )
+)

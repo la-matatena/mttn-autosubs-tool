@@ -59,13 +59,17 @@ end
 local function getHomeDir()
   if os and os.getenv then
     local h = os.getenv("HOME")
-    if h and h ~= "" then return h end
+    if h and h ~= "" then
+      return h
+    end
   end
   if fusion and fusion.MapPath then
     local userData = fusion:MapPath("UserData:")
     if userData and userData ~= "" then
       local home = userData:match("^(/Users/[^/]+)")
-      if home then return home end
+      if home then
+        return home
+      end
     end
   end
   return ""
@@ -94,7 +98,9 @@ local function loadLuaModule(path)
   -- @return table|nil The returned table, or nil (lastErr is updated).
   local function runChunk(fn)
     local ok, result = pcall(fn)
-    if ok and type(result) == "table" then return result end
+    if ok and type(result) == "table" then
+      return result
+    end
     lastErr = ok and "el archivo no devolvió una tabla" or tostring(result)
     return nil
   end
@@ -103,7 +109,9 @@ local function loadLuaModule(path)
     local fn, err = loadfile(path)
     if fn then
       local tbl = runChunk(fn)
-      if tbl then return tbl end
+      if tbl then
+        return tbl
+      end
     else
       lastErr = err
     end
@@ -118,10 +126,14 @@ local function loadLuaModule(path)
       local loader = loadstring or load
       if loader and src then
         local okLoad, fn, err = pcall(loader, src)
-        if not okLoad then fn, err = nil, fn end
+        if not okLoad then
+          fn, err = nil, fn
+        end
         if fn then
           local tbl = runChunk(fn)
-          if tbl then return tbl end
+          if tbl then
+            return tbl
+          end
         else
           lastErr = err
         end
@@ -138,7 +150,9 @@ local function loadLuaModule(path)
     end
   end
   local msg = "No se pudo cargar " .. path
-  if lastErr then msg = msg .. " (" .. tostring(lastErr) .. ")" end
+  if lastErr then
+    msg = msg .. " (" .. tostring(lastErr) .. ")"
+  end
   return nil, msg
 end
 
@@ -147,7 +161,8 @@ if homeDir == "" then
   print("[AutoSubs ES] Error: No se pudo determinar el directorio HOME del usuario.")
   return
 end
-local payloadPath = homeDir .. "/Library/Application Support/AutoSubsES/bridge/outbox/push_payload.lua"
+local payloadPath = homeDir
+  .. "/Library/Application Support/AutoSubsES/bridge/outbox/push_payload.lua"
 
 local payload, loadErr = loadLuaModule(payloadPath)
 if not payload then
@@ -199,7 +214,9 @@ local function findTemplateClip(folder, targetName)
   -- @param f Folder|nil Folder to scan.
   -- @return MediaPoolItem|nil Exact-name match, if any.
   local function visit(f)
-    if not f then return nil end
+    if not f then
+      return nil
+    end
     local clips = f:GetClipList() or {}
     for _, clip in ipairs(clips) do
       local name = clip:GetClipProperty("Clip Name") or clip:GetName() or ""
@@ -210,14 +227,19 @@ local function findTemplateClip(folder, targetName)
       if not substringMatch and lowerTarget ~= "" and string.find(lname, lowerTarget, 1, true) then
         substringMatch = clip
       end
-      if not fallback and (string.find(lname, "autosubs", 1, true) or string.find(lname, "text+", 1, true)) then
+      if
+        not fallback
+        and (string.find(lname, "autosubs", 1, true) or string.find(lname, "text+", 1, true))
+      then
         fallback = clip
       end
     end
     local subs = f:GetSubFolderList() or {}
     for _, sub in ipairs(subs) do
       local found = visit(sub)
-      if found then return found end
+      if found then
+        return found
+      end
     end
     return nil
   end
@@ -234,7 +256,9 @@ end
 -- @return number|nil Index of the new track, or nil if it was not added.
 local function addNamedTrack(trackType, name)
   local before = timeline:GetTrackCount(trackType) or 0
-  local okAdd = pcall(function() timeline:AddTrack(trackType) end)
+  local okAdd = pcall(function()
+    timeline:AddTrack(trackType)
+  end)
   local after = timeline:GetTrackCount(trackType) or 0
   if not okAdd or after ~= before + 1 then
     return nil
@@ -251,14 +275,24 @@ end
 -- @param trackType string "video", "audio", or "subtitle".
 -- @param index number Track index returned by addNamedTrack().
 local function removeAddedTrack(trackType, index)
-  if not index then return end
+  if not index then
+    return
+  end
   local items = timeline:GetItemListInTrack(trackType, index) or {}
-  if #items > 0 then return end
+  if #items > 0 then
+    return
+  end
   local ok, deleted = pcall(function()
     return timeline:DeleteTrack(trackType, index)
   end)
   if not ok or not deleted then
-    print(string.format("[AutoSubs ES] Aviso: no se pudo eliminar la pista vacía %s %d; bórrala manualmente.", trackType, index))
+    print(
+      string.format(
+        "[AutoSubs ES] Aviso: no se pudo eliminar la pista vacía %s %d; bórrala manualmente.",
+        trackType,
+        index
+      )
+    )
   end
 end
 
@@ -286,7 +320,7 @@ if mode == "subtitle_srt" then
         startFrame = 0,
         recordFrame = startFrame,
         trackIndex = subCount,
-      }
+      },
     })
     -- Resolve quirk: AppendToTimeline may return an empty table ({}) instead
     -- of nil when it silently refuses the clip, so test `#appended > 0` and
@@ -294,7 +328,14 @@ if mode == "subtitle_srt" then
     if appended and #appended > 0 then
       local trackItems = timeline:GetItemListInTrack("subtitle", subCount) or {}
       if #trackItems > 0 then
-        print(string.format("[AutoSubs ES] Pista SRT '%s' (ST%d) insertada con %d subtítulos.", trackName, subCount, #cues))
+        print(
+          string.format(
+            "[AutoSubs ES] Pista SRT '%s' (ST%d) insertada con %d subtítulos.",
+            trackName,
+            subCount,
+            #cues
+          )
+        )
         return
       end
     end
@@ -302,7 +343,9 @@ if mode == "subtitle_srt" then
   end
   -- Manual fallback: the *_resolve_tc.srt variant uses absolute timeline
   -- timecodes, which is what File > Import > Subtitle expects.
-  print("[AutoSubs ES] Si Resolve ignoró AppendToTimeline en SRT, importa manualmente este archivo desde Archivo > Importar > Subtítulo:")
+  print(
+    "[AutoSubs ES] Si Resolve ignoró AppendToTimeline en SRT, importa manualmente este archivo desde Archivo > Importar > Subtítulo:"
+  )
   print("  " .. tostring(payload.srt_timeline_tc_path or payload.srt_path))
   return
 end
@@ -314,7 +357,10 @@ if mode == "fcpxml" then
   if ok then
     print("[AutoSubs ES] Timeline FCPXML importado con éxito.")
   else
-    print("[AutoSubs ES] Importa manualmente Archivo > Importar > Línea de tiempo...: " .. tostring(payload.fcpxml_path))
+    print(
+      "[AutoSubs ES] Importa manualmente Archivo > Importar > Línea de tiempo...: "
+        .. tostring(payload.fcpxml_path)
+    )
   end
   return
 end
@@ -325,20 +371,27 @@ end
 local templateClip = findTemplateClip(mediaPool:GetRootFolder(), payload.template_name or "")
 if not templateClip then
   print("[AutoSubs ES] No hay ninguna plantilla Text+ en tu Media Pool.")
-  print("[AutoSubs ES] Consejo: Arrastra 'Effects > Titles > MTTN AutoSubs > AutoSubs_ES_Cine_Netflix' (o Anitype_Animado) al Media Pool una vez (o Power Bins).")
+  print(
+    "[AutoSubs ES] Consejo: Arrastra 'Effects > Titles > MTTN AutoSubs > AutoSubs_ES_Cine_Netflix' (o Anitype_Animado) al Media Pool una vez (o Power Bins)."
+  )
   print("[AutoSubs ES] Respaldo automático: importando FCPXML con Basic Titles...")
   local ok = mediaPool:ImportTimelineFromFile(payload.fcpxml_path)
   if ok then
     print("[AutoSubs ES] Subtítulos importados vía FCPXML correctamente.")
   else
-    print("[AutoSubs ES] Importa manualmente Archivo > Importar > Línea de tiempo...: " .. tostring(payload.fcpxml_path))
+    print(
+      "[AutoSubs ES] Importa manualmente Archivo > Importar > Línea de tiempo...: "
+        .. tostring(payload.fcpxml_path)
+    )
   end
   return
 end
 
 local trackIdx = addNamedTrack("video", trackName)
 if not trackIdx then
-  print("[AutoSubs ES] Error: Resolve no permitió crear una pista de vídeo nueva para los clips Text+.")
+  print(
+    "[AutoSubs ES] Error: Resolve no permitió crear una pista de vídeo nueva para los clips Text+."
+  )
   return
 end
 
@@ -390,10 +443,16 @@ local cueClaimed = {}
 -- @return number|nil Index into `cues`, or nil when no cue starts within
 --   MATCH_TOLERANCE_FRAMES of the item's start frame.
 local function matchCueForItem(item)
-  if not item or not item.GetStart then return nil end
-  local ok, start = pcall(function() return item:GetStart() end)
+  if not item or not item.GetStart then
+    return nil
+  end
+  local ok, start = pcall(function()
+    return item:GetStart()
+  end)
   start = ok and tonumber(start) or nil
-  if not start then return nil end
+  if not start then
+    return nil
+  end
   start = math.floor(start + 0.5)
   for delta = 0, MATCH_TOLERANCE_FRAMES do
     local frames = (delta == 0) and { start } or { start - delta, start + delta }
@@ -463,8 +522,12 @@ for _, item in ipairs(appended) do
         end
         -- Center is in normalized frame space (0..1, origin bottom-left), so
         -- pos_y is the fraction of frame height above the bottom edge.
-        if st.size then tp:SetInput("Size", st.size) end
-        if st.pos_y then tp:SetInput("Center", { 0.5, st.pos_y }) end
+        if st.size then
+          tp:SetInput("Size", st.size)
+        end
+        if st.pos_y then
+          tp:SetInput("Center", { 0.5, st.pos_y })
+        end
         -- Text+ shading elements: 1 = fill, 2 = outline, 3 = shadow,
         -- 4 = background box. Colors are normalized 0..1 floats.
         if st.fill_r then
@@ -484,7 +547,9 @@ for _, item in ipairs(appended) do
         tp:SetInput("Enabled3", st.shadow_enabled and 1 or 0)
         -- Shadow transparency is driven by Opacity3, not the shadow color's
         -- alpha channel (kept in sync with resolve_bridge.py; see tests).
-        if st.shadow_a ~= nil then tp:SetInput("Opacity3", st.shadow_a) end
+        if st.shadow_a ~= nil then
+          tp:SetInput("Opacity3", st.shadow_a)
+        end
         tp:SetInput("Enabled4", st.box_enabled and 1 or 0)
         if st.box_enabled then
           tp:SetInput("Red4", st.box_r or 0)
@@ -501,8 +566,12 @@ for _, item in ipairs(appended) do
           if tpK and #variants > 0 then
             local vIdx = cycleActive and (((k - 1) % #variants) + 1) or 1
             local v = variants[vIdx]
-            if v and v.font then tpK:SetInput("Font", v.font) end
-            if v and v.font_style then tpK:SetInput("Style", v.font_style) end
+            if v and v.font then
+              tpK:SetInput("Font", v.font)
+            end
+            if v and v.font_style then
+              tpK:SetInput("Style", v.font_style)
+            end
           end
         end
 
@@ -526,13 +595,33 @@ end
 
 local unmatchedCues = 0
 for i = 1, #cues do
-  if not cueClaimed[i] then unmatchedCues = unmatchedCues + 1 end
+  if not cueClaimed[i] then
+    unmatchedCues = unmatchedCues + 1
+  end
 end
 if unmatchedItems > 0 then
-  print(string.format("[AutoSubs ES] Aviso: %d clips Text+ no coinciden con ningún subtítulo por posición y se dejaron sin texto; revísalos en la pista V%d.", unmatchedItems, trackIdx))
+  print(
+    string.format(
+      "[AutoSubs ES] Aviso: %d clips Text+ no coinciden con ningún subtítulo por posición y se dejaron sin texto; revísalos en la pista V%d.",
+      unmatchedItems,
+      trackIdx
+    )
+  )
 end
 if unmatchedCues > 0 then
-  print(string.format("[AutoSubs ES] Aviso: %d subtítulos no se insertaron (Resolve no colocó su clip en el frame esperado).", unmatchedCues))
+  print(
+    string.format(
+      "[AutoSubs ES] Aviso: %d subtítulos no se insertaron (Resolve no colocó su clip en el frame esperado).",
+      unmatchedCues
+    )
+  )
 end
 
-print(string.format("[AutoSubs ES] ¡Listo! %d clips Text+ insertados en pista V%d (%s).", updated, trackIdx, trackName))
+print(
+  string.format(
+    "[AutoSubs ES] ¡Listo! %d clips Text+ insertados en pista V%d (%s).",
+    updated,
+    trackIdx,
+    trackName
+  )
+)
