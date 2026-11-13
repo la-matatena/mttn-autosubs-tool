@@ -386,7 +386,11 @@ class SpanishFormatConfig:
     if not raw:
       return cls()
     preset_id = str(raw.get("preset_id", "youtube_16_9"))
-    base = dict(FORMAT_PRESETS.get(preset_id, FORMAT_PRESETS["youtube_16_9"]))
+    if preset_id not in FORMAT_PRESETS:
+      # Report the preset whose values are actually used, so the UI and
+      # saved settings never show an id that does not exist.
+      preset_id = "youtube_16_9"
+    base = dict(FORMAT_PRESETS[preset_id])
     for key in (
         "dialect",
         "domain",
@@ -1661,7 +1665,7 @@ def refresh_cue_metrics(
   """
   cfg = config or SpanishFormatConfig()
   joined = " ".join(cue.lines)
-  char_count = len(joined.replace("\n", " "))
+  char_count = len(joined)
   duration_s = max(0.05, (cue.end_ms - cue.start_ms) / 1000.0)
   cue.cps = char_count / duration_s
 

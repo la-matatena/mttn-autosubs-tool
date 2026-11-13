@@ -656,6 +656,24 @@ class SpanishNlpTest(unittest.TestCase):
     for prev, cur in zip(rescaled, rescaled[1:]):
       self.assertLessEqual(prev.end_ms, cur.start_ms)
 
+  def test_unknown_preset_id_normalized_to_youtube(self) -> None:
+    """Unknown preset ids report the youtube_16_9 preset actually applied."""
+    cfg = spanish_nlp.SpanishFormatConfig.from_dict({"preset_id": "nope"})
+    self.assertEqual(cfg.preset_id, "youtube_16_9")
+    self.assertEqual(cfg.max_cpl, 42)
+    known = spanish_nlp.SpanishFormatConfig.from_dict(
+        {"preset_id": "reels_9_16"}
+    )
+    self.assertEqual(known.preset_id, "reels_9_16")
+
+  def test_refresh_cue_metrics_counts_joined_line_chars(self) -> None:
+    """CPS counts the lines joined by single spaces over the duration."""
+    cue = spanish_nlp.SubtitleCue(
+        index=1, start_ms=0, end_ms=1000, lines=["Hola", "mundo"]
+    )
+    spanish_nlp.refresh_cue_metrics(cue)
+    self.assertAlmostEqual(cue.cps, len("Hola mundo"))
+
 
 class ExportersTest(unittest.TestCase):
   """Subtitle serializers (SRT/VTT/ASS/TXT/FCPXML/Lua) and NDF timecodes."""
@@ -928,6 +946,107 @@ class ExportersTest(unittest.TestCase):
           encoding="utf-8"
       )
       self.assertIn("timeline_start_frame = 0,", pushed_lua)
+
+  def _karaoke_syllables(self, ass: str) -> list[tuple[int, int, str]]:
+    """Parses the first Dialogue into (start_cs, kf_cs, text) per \\kf word.
+
+    `start_cs` is the sum of every preceding \\k/\\kf value, i.e. when the
+    renderer starts that word's sweep relative to the event start.
+    """
+    dialogue = next(
+        ln for ln in ass.splitlines() if ln.startswith("Dialogue:")
+    ).split(",", 9)[9]
+    out: list[tuple[int, int, str]] = []
+    elapsed = 0
+    for m in re.finditer(r"\{\\k(f?)(\d+)\}([^{]*)", dialogue):
+      val = int(m.group(2))
+      if m.group(1):
+        out.append((elapsed, val, m.group(3).replace(r"\N", "").strip()))
+      elapsed += val
+    return out
+
+  def test_ass_karaoke_sweeps_start_at_word_start(self) -> None:
+    """Each \\kf sweep starts at its word's start_ms (gaps become spacers)."""
+    words = [
+        spanish_nlp.WordTiming("Hola", 1230, 1500),  # 230 ms lead-in.
+        spanish_nlp.WordTiming("a", 1755, 1755),  # Zero duration.
+        spanish_nlp.WordTiming("todos", 2105, 2600),
+        spanish_nlp.WordTiming("y", 2550, 2700),  # Overlaps previous.
+        spanish_nlp.WordTiming("todas", 3333, 9000),  # Ends past the cue.
+    ]
+    cue = spanish_nlp.SubtitleCue(
+        index=1,
+        start_ms=1000,
+        end_ms=4000,
+        lines=["Hola a todos", "y todas"],
+        words=words,
+    )
+    ass = exporters.export_ass_karaoke(
+        [cue], exporters.StyleConfig(karaoke_enabled=True)
+    )
+    self.assertIn(r"{\k23}{\kf27}Hola", ass)
+    self.assertIn(r"\N", ass)
+    sylls = self._karaoke_syllables(ass)
+    self.assertEqual([s[2] for s in sylls], [w.text for w in words])
+    for (start_cs, dur_cs, _), w in zip(sylls, words):
+      self.assertGreaterEqual(dur_cs, 0)
+      if w.text == "y":
+        # Overlap: starts when the previous sweep ends (never negative).
+        self.assertEqual(start_cs, (2600 - 1000) // 10)
+        continue
+      self.assertLessEqual(abs(start_cs - (w.start_ms - cue.start_ms) / 10), 1)
+    # Sweeps never run past the event end (300 cs).
+    self.assertLessEqual(sylls[-1][0] + sylls[-1][1], 300)
+
+    # Long cue: no cumulative rounding drift across many odd-ms words.
+    many = [
+        spanish_nlp.WordTiming(f"w{i}", 15 + i * 337, 15 + i * 337 + 205)
+        for i in range(60)
+    ]
+    long_cue = spanish_nlp.SubtitleCue(
+        index=1,
+        start_ms=7,
+        end_ms=many[-1].end_ms + 100,
+        lines=[" ".join(w.text for w in many)],
+        words=many,
+    )
+    long_ass = exporters.export_ass_karaoke(
+        [long_cue], exporters.StyleConfig(karaoke_enabled=True)
+    )
+    for (start_cs, _, _), w in zip(self._karaoke_syllables(long_ass), many):
+      self.assertLessEqual(
+          abs(start_cs - (w.start_ms - long_cue.start_ms) / 10), 1
+      )
+
+    # Word/token count mismatch falls back to static fill text.
+    broken = spanish_nlp.SubtitleCue(
+        index=1, start_ms=0, end_ms=1000, lines=["dos palabras"],
+        words=[spanish_nlp.WordTiming("dos", 0, 500)],
+    )
+    ass_broken = exporters.export_ass_karaoke(
+        [broken], exporters.StyleConfig(karaoke_enabled=True)
+    )
+    self.assertNotIn(r"\kf", ass_broken)
+    self.assertIn(r"\1c&H", ass_broken)
+
+  def test_fps_rational_common_rates(self) -> None:
+    """Common UI frame rates map to Resolve's exact rationals."""
+    ntsc24 = (24000, 1001, "1001/24000s")
+    expected = {
+        23.976: ntsc24,
+        23.98: ntsc24,
+        23.984: ntsc24,  # Only matched by the 23.98 table key.
+        24: (2400, 100, "100/2400s"),
+        25: (2500, 100, "100/2500s"),
+        29.97: (30000, 1001, "1001/30000s"),
+        30: (3000, 100, "100/3000s"),
+        50: (5000, 100, "100/5000s"),
+        59.94: (60000, 1001, "1001/60000s"),
+        60: (6000, 100, "100/6000s"),
+        12.5: (1250, 100, "100/1250s"),  # Generic /100 fallback.
+    }
+    for fps, rational in expected.items():
+      self.assertEqual(exporters._fps_rational(fps), rational, fps)
 
 
 class FontManagerAndAnitypeTest(unittest.TestCase):
