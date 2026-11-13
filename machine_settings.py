@@ -17,7 +17,8 @@ Persistence format (`<app_data_dir>/settings.json`, UTF-8, 2-space indent):
   }
 
 Writes are atomic (temp file + rename), so a crash mid-save never leaves a
-truncated file. Unknown or corrupt files fall back to DEFAULT_SETTINGS.
+truncated file. Unknown or corrupt files fall back to DEFAULT_SETTINGS; values
+are validated on load and on update (see _coerce_performance_value).
 
 Main entry points: `MachineSettings` (store used by autosubs_server.py) and
 `resolve_performance` (turns the stored mode into whisper/ffmpeg knobs).
@@ -76,6 +77,101 @@ PREFERENCE_KEYS = frozenset({
 })
 
 
+# --- Value validation ---
+
+# Returned by _coerce_performance_value for a value that must be ignored.
+_INVALID = object()
+
+
+def _coerce_bool(value: Any) -> Any:
+  """Accepts JSON booleans plus 0/1 and "true"/"false" style strings.
+
+  Args:
+    value: Raw value from a request body or settings.json.
+
+  Returns:
+    The bool, or _INVALID for anything else.
+  """
+  if isinstance(value, bool):
+    return value
+  if isinstance(value, int) and value in (0, 1):
+    return bool(value)
+  if isinstance(value, str):
+    lowered = value.strip().lower()
+    if lowered in ("true", "1"):
+      return True
+    if lowered in ("false", "0"):
+      return False
+  return _INVALID
+
+
+def _coerce_performance_value(key: str, value: Any) -> Any:
+  """Validates and normalizes one `performance` value before it is stored.
+
+  resolve_performance() calls int()/bool() on these values, so a bad type
+  (e.g. threads="abc" from a hand-edited file or a buggy client) would make
+  every later request fail. Rules per key:
+    * mode: one of PERFORMANCE_MODES; anything else becomes "auto".
+    * threads: None, or a non-negative int (ints in strings and integral
+      floats accepted; bool rejected), capped at MAX_WHISPER_THREADS.
+      0 keeps its "not set" meaning.
+    * force_no_gpu: None or a bool-like value (see _coerce_bool).
+    * fast_beam, enhance_voice: bool-like value.
+    * model_id: None or a string; blank strings become None. Unknown ids are
+      kept (resolve_performance falls back to the recommended model).
+
+  Args:
+    key: Key of DEFAULT_SETTINGS["performance"].
+    value: Raw value.
+
+  Returns:
+    The normalized value, or _INVALID if it must be ignored.
+  """
+  if key == "mode":
+    return value if value in PERFORMANCE_MODES else "auto"
+  if key == "threads":
+    if value is None:
+      return None
+    if isinstance(value, bool):
+      return _INVALID
+    if isinstance(value, float) and value.is_integer():
+      value = int(value)
+    elif isinstance(value, str) and value.strip().isdigit():
+      value = int(value.strip())
+    if not isinstance(value, int) or value < 0:
+      return _INVALID
+    return min(value, hardware_imac2017.MAX_WHISPER_THREADS)
+  if key == "force_no_gpu":
+    return None if value is None else _coerce_bool(value)
+  if key in ("fast_beam", "enhance_voice"):
+    return _coerce_bool(value)
+  if key == "model_id":
+    if value is None:
+      return None
+    if isinstance(value, str):
+      return value.strip() or None
+    return _INVALID
+  return _INVALID
+
+
+def _sanitize_performance(raw: dict[str, Any]) -> dict[str, Any]:
+  """Keeps only known performance keys whose values pass validation.
+
+  Args:
+    raw: Performance patch or loaded section.
+
+  Returns:
+    {key: normalized value} for every valid known key present in `raw`.
+  """
+  clean: dict[str, Any] = {}
+  for key in DEFAULT_SETTINGS["performance"]:
+    if key in raw:
+      value = _coerce_performance_value(key, raw[key])
+      if value is not _INVALID:
+        clean[key] = value
+  return clean
+
+
 # --- Performance resolution ---
 
 
@@ -115,8 +211,8 @@ def resolve_performance(
     resolve_running: Whether DaVinci Resolve is open right now.
 
   Returns:
-    Dict with mode, threads (clamped to 1..8), force_no_gpu, fast_beam
-    (beam size 2 instead of 5), model_id and enhance_voice.
+    Dict with mode, threads (clamped to 1..MAX_WHISPER_THREADS), force_no_gpu,
+    fast_beam (beam size 2 instead of 5), model_id and enhance_voice.
   """
   mode = performance.get("mode", "auto")
   if mode not in PERFORMANCE_MODES:
@@ -134,9 +230,13 @@ def resolve_performance(
     force_no_gpu = profile.force_no_gpu
     fast_beam = False
   elif mode == "custom":
-    raw_t = performance.get("threads")
+    # Coerced again here so hand-edited files or direct callers cannot make
+    # int() raise; invalid values behave like "not set".
+    raw_t = _coerce_performance_value("threads", performance.get("threads"))
+    if raw_t is _INVALID:
+      raw_t = None
     # 0/None means "not set": follow auto's Resolve-aware choice.
-    threads = int(raw_t) if raw_t else (resolve_t if resolve_running else max_t)
+    threads = raw_t if raw_t else (resolve_t if resolve_running else max_t)
     raw_gpu = performance.get("force_no_gpu")
     force_no_gpu = profile.force_no_gpu if raw_gpu is None else bool(raw_gpu)
     fast_beam = bool(performance.get("fast_beam", False))
@@ -150,8 +250,9 @@ def resolve_performance(
     model_id = recommended_model_id(profile)
   return {
       "mode": mode,
-      # 8 matches hardware_imac2017._MAX_WHISPER_THREADS (poor scaling past 8).
-      "threads": max(1, min(int(threads), 8)),
+      "threads": max(
+          1, min(int(threads), hardware_imac2017.MAX_WHISPER_THREADS)
+      ),
       "force_no_gpu": force_no_gpu,
       "fast_beam": fast_beam,
       "model_id": model_id,
@@ -218,21 +319,40 @@ class MachineSettings:
     """Reads settings.json merged over DEFAULT_SETTINGS.
 
     Only the three known sections are merged (shallow, key by key), so a
-    file written by an older version gains new default keys. The stored
-    "version" is not read yet. A missing or invalid file yields defaults.
+    file written by an older version gains new default keys. Performance
+    values go through the same validation as update() and preferences are
+    filtered by PREFERENCE_KEYS, so a hand-edited file cannot break
+    resolve_performance(). When "version" is missing or is not
+    SETTINGS_VERSION the file's schema is unknown: valid performance and
+    preference values are still kept, but cached benchmarks are dropped
+    (they are cheap to re-run). A missing or invalid file yields defaults.
 
     Returns:
-      The merged settings dict.
+      The merged settings dict (always tagged with SETTINGS_VERSION).
     """
     data = copy.deepcopy(DEFAULT_SETTINGS)
     try:
       raw = json.loads(self.path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
       return data
-    if isinstance(raw, dict):
-      for section in ("performance", "preferences", "benchmarks"):
-        if isinstance(raw.get(section), dict):
-          data[section].update(raw[section])
+    if not isinstance(raw, dict):
+      return data
+    version = raw.get("version")
+    known_version = (
+        isinstance(version, int)
+        and not isinstance(version, bool)
+        and version == SETTINGS_VERSION
+    )
+    if isinstance(raw.get("performance"), dict):
+      data["performance"].update(_sanitize_performance(raw["performance"]))
+    if isinstance(raw.get("preferences"), dict):
+      data["preferences"].update({
+          k: v for k, v in raw["preferences"].items() if k in PREFERENCE_KEYS
+      })
+    if known_version and isinstance(raw.get("benchmarks"), dict):
+      data["benchmarks"].update({
+          k: v for k, v in raw["benchmarks"].items() if isinstance(v, dict)
+      })
     return data
 
   def _save(self) -> None:
@@ -259,8 +379,9 @@ class MachineSettings:
 
     Only keys present in DEFAULT_SETTINGS["performance"] and in
     PREFERENCE_KEYS are accepted; anything else (including `benchmarks`) is
-    ignored. An invalid mode is reset to "auto". Values are not
-    type-checked here; resolve_performance() coerces them on use.
+    ignored. Performance values are validated and coerced with
+    _coerce_performance_value(): invalid ones (e.g. threads="abc") are
+    ignored and keep their previous value; an invalid mode becomes "auto".
 
     Args:
       patch: Partial settings, e.g. {"performance": {"mode": "safe"}}.
@@ -272,9 +393,7 @@ class MachineSettings:
       perf_patch = patch.get("performance")
       if isinstance(perf_patch, dict):
         perf = self._data["performance"]
-        for key in DEFAULT_SETTINGS["performance"]:
-          if key in perf_patch:
-            perf[key] = perf_patch[key]
+        perf.update(_sanitize_performance(perf_patch))
         if perf.get("mode") not in PERFORMANCE_MODES:
           perf["mode"] = "auto"
       prefs_patch = patch.get("preferences")

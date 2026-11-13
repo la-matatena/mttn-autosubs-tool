@@ -28,7 +28,6 @@ import io
 import os
 from pathlib import Path
 import re
-import shutil
 import struct
 import sys
 import threading
@@ -375,7 +374,14 @@ def _check_cmap_format4(
       ">HHHHHHH", data, sub_off
   )
   seg_count = seg_count_x2 // 2
-  if seg_count <= 0 or sub_off + min(sub_len, len(data) - sub_off) > len(data):
+  if seg_count <= 0:
+    return set()
+  # The header plus the four parallel arrays and reservedPad take
+  # 16 + 8 * segCount bytes; they must fit inside the declared subtable
+  # length. Like FreeType, a length running past the end of the file is
+  # first clamped to the bytes actually available.
+  avail_len = min(sub_len, len(data) - sub_off)
+  if 16 + 8 * seg_count > avail_len:
     return set()
 
   # Absolute offsets of the four parallel arrays; "+ 2" skips reservedPad.
@@ -902,6 +908,76 @@ def _safe_font_filename(raw_name: str) -> str:
   return cleaned or "custom_font.otf"
 
 
+def _numbered_font_name(name: str, n: int) -> str:
+  """Returns `name` for n == 1, else "<stem>_<n><ext>" (e.g. Font_2.otf).
+
+  Args:
+    name: Safe font filename.
+    n: 1-based attempt number.
+
+  Returns:
+    Candidate filename for that attempt.
+  """
+  if n == 1:
+    return name
+  path = Path(name)
+  return f"{path.stem}_{n}{path.suffix}"
+
+
+def _same_file_content(path: Path, data: bytes) -> bool:
+  """Returns True if `path` is a regular file whose bytes equal `data`.
+
+  The size is compared first so a different font is rejected without
+  reading it. Unreadable files count as different.
+  """
+  try:
+    return (
+        path.is_file()
+        and path.stat().st_size == len(data)
+        and path.read_bytes() == data
+    )
+  except OSError:
+    return False
+
+
+def _write_font_no_overwrite(
+    dest_dir: Path, name: str, data: bytes
+) -> tuple[str, str]:
+  """Writes a font into `dest_dir` without ever replacing a different file.
+
+  Used for the shared user font folder (~/Library/Fonts), where an existing
+  file with the same name may belong to another app or font. Each candidate
+  name is created with exclusive mode ("xb"), so an existing file is never
+  truncated even if it appears between the check and the write. If the
+  existing file has identical bytes the font is already installed and
+  nothing is written.
+
+  Args:
+    dest_dir: Existing destination folder.
+    name: Preferred safe filename.
+    data: Font bytes.
+
+  Returns:
+    (filename used, action) where action is "installed" (preferred name),
+    "renamed" (a "_N" suffix was needed) or "skipped_identical".
+
+  Raises:
+    ValueError: If no free name is found after 999 attempts.
+  """
+  for n in range(1, 1000):
+    candidate = _numbered_font_name(name, n)
+    path = dest_dir / candidate
+    try:
+      with open(path, "xb") as fh:
+        fh.write(data)
+    except FileExistsError:
+      if _same_file_content(path, data):
+        return candidate, "skipped_identical"
+      continue
+    return candidate, "installed" if n == 1 else "renamed"
+  raise ValueError(f"No hay un nombre libre para instalar {name}.")
+
+
 def _make_font_id(path: Path, family: str, subfamily: str) -> str:
   """Derives a short, stable, URL-safe id for a font face.
 
@@ -1137,9 +1213,14 @@ class FontManager:
     files, hidden entries, ".." components and non-font files, and enforces
     MAX_UPLOAD_BYTES on the declared uncompressed total. Every font is parsed
     in memory first, so one corrupt file aborts the install before anything
-    is written. Files are then written to app_fonts_dir and, if requested,
-    copied to macos_fonts_dir (same name overwrites). Resolve only picks up
-    new fonts after a restart, hence `resolve_running` in the result.
+    is written. ZIP entries whose sanitized basenames collide (same name in
+    different folders) are kept as "<stem>_2<ext>", "_3"... in ZIP order;
+    byte-identical duplicates are written once. Files are then written to
+    app_fonts_dir (same name overwrites the app's own previous upload) and,
+    if requested, to macos_fonts_dir without ever overwriting a different
+    existing file there: identical content is skipped, otherwise a "_N"
+    name is used (see _write_font_no_overwrite). Resolve only picks up new
+    fonts after a restart, hence `resolve_running` in the result.
 
     Args:
       filename: Uploaded filename; its extension selects font vs ZIP.
@@ -1150,6 +1231,8 @@ class FontManager:
     Returns:
       Dict with ok, installed_count, faces, selected_pack_id (pack that
       contains the new fonts, animated packs preferred), installed_to_macos,
+      collisions (list of {"file", "installed_as", "location": "zip" |
+      "macos", "action": "renamed" | "skipped_identical"}),
       resolve_running, plus every list_fonts() key.
 
     Raises:
@@ -1163,6 +1246,11 @@ class FontManager:
 
     lower_name = filename.lower()
     extracted: list[tuple[str, bytes]] = []
+    # Renamed or skipped files, reported to the UI instead of silently
+    # overwriting one font with another.
+    collisions: list[dict[str, str]] = []
+    # Lowercased safe name -> bytes already taken from this ZIP.
+    seen_in_zip: dict[str, bytes] = {}
 
     if lower_name.endswith(".zip"):
       total_extracted = 0
@@ -1189,7 +1277,34 @@ class FontManager:
                   "El ZIP de fuentes descomprimido supera el límite de 64 MB."
               )
             font_data = zf.read(info.filename)
-            extracted.append((_safe_font_filename(base), font_data))
+            safe_name = _safe_font_filename(base)
+            # Same basename in two ZIP folders (e.g. OTF/Font.otf and
+            # TTF/Font.otf): keep both under deterministic "_N" names, in ZIP
+            # order. Keys are lowercased because macOS volumes are usually
+            # case-insensitive.
+            prior = seen_in_zip.get(safe_name.lower())
+            if prior is not None:
+              if prior == font_data:
+                collisions.append({
+                    "file": info.filename,
+                    "installed_as": safe_name,
+                    "location": "zip",
+                    "action": "skipped_identical",
+                })
+                continue
+              n = 2
+              while _numbered_font_name(safe_name, n).lower() in seen_in_zip:
+                n += 1
+              renamed = _numbered_font_name(safe_name, n)
+              collisions.append({
+                  "file": info.filename,
+                  "installed_as": renamed,
+                  "location": "zip",
+                  "action": "renamed",
+              })
+              safe_name = renamed
+            seen_in_zip[safe_name.lower()] = font_data
+            extracted.append((safe_name, font_data))
       except zipfile.BadZipFile as exc:
         raise ValueError(f"Archivo ZIP de fuentes inválido: {exc}") from exc
     elif lower_name.endswith(SUPPORTED_FONT_EXTENSIONS):
@@ -1215,7 +1330,16 @@ class FontManager:
       app_dest.write_bytes(font_bytes)
       if install_to_macos and self.macos_fonts_dir is not None:
         self.macos_fonts_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(app_dest, self.macos_fonts_dir / safe_name)
+        mac_name, action = _write_font_no_overwrite(
+            self.macos_fonts_dir, safe_name, font_bytes
+        )
+        if action != "installed":
+          collisions.append({
+              "file": safe_name,
+              "installed_as": mac_name,
+              "location": "macos",
+              "action": action,
+          })
         copied_to_macos = True
       face = self._load_face(app_dest, "uploaded")
       if face is not None:
@@ -1241,6 +1365,7 @@ class FontManager:
         "faces": [f.to_dict() for f in installed_faces],
         "selected_pack_id": selected_pack_id,
         "installed_to_macos": copied_to_macos,
+        "collisions": collisions,
         "macos_fonts_dir": catalog["macos_fonts_dir"],
         "resolve_running": hardware_imac2017.is_resolve_running(),
         **catalog,

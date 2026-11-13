@@ -104,7 +104,10 @@ IMAC_2017_PROFILE = HardwareProfile(
 )
 
 # whisper.cpp scales poorly past 8 threads; with Metal the GPU does most work.
-_MAX_WHISPER_THREADS = 8
+# Public so machine_settings clamps with the same limit.
+MAX_WHISPER_THREADS = 8
+# Backward-compatible private alias for older imports.
+_MAX_WHISPER_THREADS = MAX_WHISPER_THREADS
 
 
 def _sysctl(key: str) -> str:
@@ -164,7 +167,7 @@ def build_apple_silicon_profile(
     Profile with Metal enabled and h264_videotoolbox burn-in.
   """
   perf = max(1, perf_cores or total_cores or 4)
-  standalone = max(2, min(perf, _MAX_WHISPER_THREADS))
+  standalone = max(2, min(perf, MAX_WHISPER_THREADS))
   # Leave performance cores free for Resolve playback when it is open.
   with_resolve = max(2, min(standalone - 2, perf // 2 + 1))
   return HardwareProfile(
@@ -256,7 +259,7 @@ def build_intel_profile(
     Profile with force_no_gpu=True and libx264 burn-in.
   """
   cores = max(1, physical_cores or 4)
-  standalone = max(2, min(cores, _MAX_WHISPER_THREADS))
+  standalone = max(2, min(cores, MAX_WHISPER_THREADS))
   # Keep one core free for Resolve playback when it is open.
   with_resolve = max(2, min(standalone, cores - 1))
   # Strip trademark marks, "CPU" and the "@ 3.40GHz" clock suffix.
@@ -551,8 +554,10 @@ def is_resolve_running() -> bool:
   """Checks whether DaVinci Resolve is currently running without blocking.
 
   Uses `pgrep -x` (exact process name) with a 1.5 s timeout per pattern.
-  Returns False when pgrep is unavailable or fails, so the caller falls back
-  to the more generous standalone thread budget.
+  A failing pattern (timeout, OSError) does not stop the search: the next
+  pattern is still tried. Returns False when pgrep is unavailable or no
+  pattern matches, so the caller falls back to the more generous standalone
+  thread budget.
   """
   pgrep_bin = shutil.which("pgrep")
   if not pgrep_bin:
@@ -569,7 +574,7 @@ def is_resolve_running() -> bool:
       if result.returncode == 0:
         return True
     except (OSError, subprocess.SubprocessError):
-      return False
+      continue
   return False
 
 
@@ -726,7 +731,7 @@ def build_whisper_command(
       `<prefix>.json`.
     prompt: Initial prompt (glossary / style hint); empty to omit.
     threads: CPU threads; None picks the profile budget depending on
-      whether Resolve is running. Clamped to 1.._MAX_WHISPER_THREADS.
+      whether Resolve is running. Clamped to 1..MAX_WHISPER_THREADS.
     force_no_gpu: True adds -ng; None follows the profile.
     fast_beam: Beam size 2 instead of 5 (faster, slightly less accurate).
     nice_level: Scheduling niceness; 0 disables the `nice` wrapper.
@@ -745,7 +750,7 @@ def build_whisper_command(
         if is_resolve_running()
         else profile.threads_standalone
     )
-  effective_threads = max(1, min(int(threads), _MAX_WHISPER_THREADS))
+  effective_threads = max(1, min(int(threads), MAX_WHISPER_THREADS))
 
   cmd: list[str] = []
   nice_bin = shutil.which("nice")
@@ -801,23 +806,57 @@ def build_whisper_command(
 # --- FFmpeg capability probes and burn-in ---
 
 
-def escape_ffmpeg_filter_path(path_str: str) -> str:
-  """Escapes special characters in a file path for FFmpeg libass filter.
+# Characters escaped with a backslash in a filter option value. FFmpeg parses
+# a -vf string twice with av_get_token() (ffmpeg-filters "Notes on filtergraph
+# escaping"): level 1 is the option value, where "\" and "'" are always
+# special and ":" separates options; level 2 is the filtergraph, where
+# "[],;" are also special. A backslash before any character yields that
+# character, so escaping the level-2 set here too is harmless.
+_FFMPEG_OPTION_SPECIALS = frozenset("\\':[],;")
 
-  Inside a filtergraph, ":" separates options, "," separates filters and
-  "[ ]" delimit pad labels, so they (plus backslash and the quote) are
-  backslash-escaped. The caller still wraps the result in single quotes.
+
+def escape_ffmpeg_filter_path(path_str: str) -> str:
+  """Escapes a path as one FFmpeg filter option value (escaping level 1).
+
+  Backslash-escapes the characters in _FFMPEG_OPTION_SPECIALS plus a leading
+  or trailing whitespace character (av_get_token trims unescaped edge
+  whitespace). The result is still raw for the filtergraph level: wrap it
+  with quote_ffmpeg_filter_value() (which calls this) rather than pasting it
+  between plain single quotes, because a "'" in the path would end the
+  quoted section there (FFmpeg has no "\\'" inside single quotes).
 
   Args:
     path_str: Filesystem path (may contain spaces or accents).
 
   Returns:
-    The escaped path.
+    The level-1 escaped path.
   """
-  out = path_str.replace("\\", "\\\\")
-  for ch in (":", "'", ",", "[", "]"):
-    out = out.replace(ch, f"\\{ch}")
-  return out
+  last = len(path_str) - 1
+  out: list[str] = []
+  for idx, ch in enumerate(path_str):
+    if ch in _FFMPEG_OPTION_SPECIALS or (ch.isspace() and idx in (0, last)):
+      out.append("\\")
+    out.append(ch)
+  return "".join(out)
+
+
+def quote_ffmpeg_filter_value(value: str) -> str:
+  """Returns a filtergraph-safe token for one filter option value.
+
+  Level 1 is escape_ffmpeg_filter_path(); level 2 wraps that in single
+  quotes, inside which FFmpeg copies everything literally (including the
+  level-1 backslashes). A "'" cannot appear inside quotes, so each one is
+  written as close-quote, escaped quote, reopen-quote: "'\\''". Example:
+  "/a/it's:b" -> "'/a/it\\'\\''s\\:b'".
+
+  Args:
+    value: Raw option value, typically a file or folder path.
+
+  Returns:
+    Token ready to follow "name=" in a -vf / -filter_complex string.
+  """
+  level1 = escape_ffmpeg_filter_path(value)
+  return "'" + level1.replace("'", "'\\''") + "'"
 
 
 def ffmpeg_supports_filter(ffmpeg_bin: str, filter_name: str) -> bool:
@@ -938,7 +977,7 @@ def build_ffmpeg_burnin_command(
     input_video_path: Source video.
     ass_path: ASS subtitle file to burn in.
     output_mp4_path: Destination MP4 (overwritten, -y).
-    threads: Encoder threads, clamped to 1.._MAX_WHISPER_THREADS.
+    threads: Encoder threads, clamped to 1..MAX_WHISPER_THREADS.
     nice_level: Scheduling niceness; 0 disables the `nice` wrapper.
     fonts_dir: Extra folder libass searches for fonts (custom uploads).
     video_encoder: "libx264" or "h264_videotoolbox".
@@ -946,16 +985,17 @@ def build_ffmpeg_burnin_command(
   Returns:
     argv list ready for subprocess.
   """
-  effective_threads = max(1, min(int(threads), _MAX_WHISPER_THREADS))
+  effective_threads = max(1, min(int(threads), MAX_WHISPER_THREADS))
   cmd: list[str] = []
   nice_bin = shutil.which("nice")
   if nice_bin and nice_level > 0 and os.name == "posix":
     cmd.extend([nice_bin, "-n", str(nice_level)])
 
-  escaped_ass = escape_ffmpeg_filter_path(ass_path)
-  vf_filter = f"ass='{escaped_ass}'"
+  # quote_ffmpeg_filter_value handles apostrophes, ":", ",", brackets and
+  # backslashes in both paths (see its docstring for the two levels).
+  vf_filter = f"ass={quote_ffmpeg_filter_value(ass_path)}"
   if fonts_dir:
-    vf_filter += f":fontsdir='{escape_ffmpeg_filter_path(fonts_dir)}'"
+    vf_filter += f":fontsdir={quote_ffmpeg_filter_value(fonts_dir)}"
   if video_encoder == "h264_videotoolbox":
     # Constant-quality mode (~CRF 20 equivalent) on the hardware encoder.
     codec_args = ["-c:v", "h264_videotoolbox", "-q:v", "65"]
