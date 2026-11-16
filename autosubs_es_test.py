@@ -2687,6 +2687,182 @@ EOF
         helpers_pos, html_txt.find('<script src="/app.js"></script>')
     )
 
+  # --- Route table, burn-in dedupe and cues_rev (refactor round) ---
+
+  def test_route_table_keeps_unknown_and_prefix_semantics(self) -> None:
+    """Unknown paths 404 (POST parses its body first); prefixes still match."""
+    for method in ("GET", "PUT"):
+      status, payload = self._raw_request(
+          method, "/api/nope", {"Content-Length": "abc"}
+      )
+      self.assertEqual(status, 404, method)
+      self.assertEqual(payload["error"], "Ruta no encontrada")
+    status, payload = self._raw_request(
+        "POST", "/api/nope", {"Content-Length": "abc"}
+    )
+    self.assertEqual(status, 400)
+    self.assertIn("Content-Length", payload["error"])
+    self.assertEqual(
+        self._expect_http_error("/api/nope", "POST", {}, 404)["error"],
+        "Ruta no encontrada",
+    )
+    self.assertEqual(
+        self._expect_http_error("/api/jobs/nope", "GET", None, 404)["error"],
+        "Trabajo no encontrado",
+    )
+    # "/api/jobs/cancel" matches the cancel predicate with an empty job id.
+    _, _, raw = self._request("/api/jobs/cancel", method="POST", body={})
+    self.assertEqual(json.loads(raw), {"ok": False, "status": None})
+    # The query string is ignored when matching.
+    st, _, _ = self._request("/api/settings?x=1")
+    self.assertEqual(st, 200)
+
+  def test_export_video_burnin_is_deduplicated(self) -> None:
+    """A second Exportar MP4 click joins the running burn-in job."""
+    self._request("/api/demo", method="POST", body={})
+    fake_mp4 = self.tmp_path / "app/cache/uploads/clip.mp4"
+    fake_mp4.write_bytes(b"\x00" * 64)
+    with self.state.lock:
+      self.state.media_path = fake_mp4
+    fake_bin_dir = self.tmp_path / "bin"
+    fake_bin_dir.mkdir(exist_ok=True)
+    fake_ffmpeg = fake_bin_dir / "ffmpeg"
+    # Stub burn-in ffmpeg: sleeps, then creates the output MP4 (last arg).
+    fake_ffmpeg.write_text(
+        '#!/bin/sh\nfor last; do :; done\nsleep 0.6\n: > "$last"\n',
+        encoding="utf-8",
+    )
+    fake_ffmpeg.chmod(0o755)
+    orig_find = hardware_imac2017.find_binary
+    orig_burnin = hardware_imac2017.find_burnin_ffmpeg
+    orig_encoder = hardware_imac2017.ffmpeg_supports_encoder
+    hardware_imac2017.find_binary = lambda cands: (
+        str(fake_ffmpeg) if "ffmpeg" in cands else orig_find(cands)
+    )
+    hardware_imac2017.find_burnin_ffmpeg = lambda: str(fake_ffmpeg)
+    hardware_imac2017.ffmpeg_supports_encoder = lambda ffmpeg_bin, enc: False
+    try:
+      _, _, r1 = self._request("/api/export-video", method="POST", body={})
+      _, _, r2 = self._request("/api/export-video", method="POST", body={})
+      job_id = json.loads(r1)["job_id"]
+      self.assertEqual(json.loads(r2)["job_id"], job_id)
+      job = self._wait_job(job_id)
+      self.assertEqual(job["status"], "done", job.get("error"))
+      self.assertTrue(Path(job["result"]["output_path"]).is_file())
+
+      deadline = time.monotonic() + 10
+      while time.monotonic() < deadline:
+        with self.state.lock:
+          if self.state._active_burnin is None:
+            break
+        time.sleep(0.02)
+      # Once the render finished, a new click starts a new job.
+      _, _, r3 = self._request("/api/export-video", method="POST", body={})
+      next_id = json.loads(r3)["job_id"]
+      self.assertNotEqual(next_id, job_id)
+      self.assertEqual(self._wait_job(next_id)["status"], "done")
+    finally:
+      hardware_imac2017.find_binary = orig_find
+      hardware_imac2017.find_burnin_ffmpeg = orig_burnin
+      hardware_imac2017.ffmpeg_supports_encoder = orig_encoder
+
+  def test_put_cues_rejects_stale_cues_rev(self) -> None:
+    """PUT /api/cues with an outdated cues_rev returns 409, cues intact."""
+    _, _, demo_bytes = self._request("/api/demo", method="POST", body={})
+    sess = json.loads(demo_bytes.decode("utf-8"))["session"]
+    rev0 = sess["cues_rev"]
+    cues = sess["cues"]
+    cues[0]["text"] = "Editado"
+    cues[0]["lines"] = ["Editado"]
+
+    _, _, ok_bytes = self._request(
+        "/api/cues", method="PUT", body={"cues": cues, "cues_rev": rev0}
+    )
+    ok_sess = json.loads(ok_bytes.decode("utf-8"))["session"]
+    self.assertEqual(ok_sess["cues"][0]["text"], "Editado")
+    self.assertEqual(ok_sess["cues_rev"], rev0 + 1)
+
+    # An autosave of the old cues sent before a resegment finished.
+    _, _, reseg_bytes = self._request(
+        "/api/resegment",
+        method="POST",
+        body={"format_config": {"preset_id": "reels_9_16"}},
+    )
+    reseg_sess = json.loads(reseg_bytes.decode("utf-8"))["session"]
+    self.assertEqual(reseg_sess["cues_rev"], rev0 + 2)
+    err = self._expect_http_error(
+        "/api/cues", "PUT", {"cues": cues, "cues_rev": rev0 + 1}, 409
+    )
+    self.assertIn("error", err)
+    self.assertEqual(err["session"]["cues_rev"], rev0 + 2)
+    self.assertEqual(err["session"]["cues"], reseg_sess["cues"])
+    self.assertIsNone(err["session"]["peaks"])
+
+    for bad_rev in ("3", 1.5, True):
+      self._expect_http_error(
+          "/api/cues", "PUT", {"cues": cues, "cues_rev": bad_rev}, 400
+      )
+    with self.state.lock:
+      self.assertEqual(self.state.cues_rev, rev0 + 2)
+
+    # Backward compatible: absent or null cues_rev -> no check, still bumps.
+    _, _, legacy = self._request("/api/cues", method="PUT", body={"cues": cues})
+    legacy_sess = json.loads(legacy)["session"]
+    self.assertEqual(legacy_sess["cues"][0]["text"], "Editado")
+    self.assertEqual(legacy_sess["cues_rev"], rev0 + 3)
+    _, _, null_rev = self._request(
+        "/api/cues", method="PUT", body={"cues": cues, "cues_rev": None}
+    )
+    self.assertEqual(json.loads(null_rev)["session"]["cues_rev"], rev0 + 4)
+
+  def test_cues_rev_bumps_whenever_server_replaces_cues(self) -> None:
+    """Upload, notify-export and transcription bump cues_rev; no-ops don't."""
+    fake_whisper = self._install_fake_whisper(sleep_s=0)
+    _, _, st_bytes = self._request("/api/status")
+    rev = json.loads(st_bytes)["session"]["cues_rev"]
+    self.assertEqual(rev, 0)
+
+    sample_wav = self.tmp_path / "rev.wav"
+    resolve_bridge.generate_demo_wav(str(sample_wav), duration_ms=500)
+    _, _, up_bytes = self._request(
+        "/api/upload",
+        method="POST",
+        body=sample_wav.read_bytes(),
+        headers={"X-Filename": "rev.wav"},
+    )
+    self.assertEqual(json.loads(up_bytes)["session"]["cues_rev"], 1)
+
+    inbox_wav = self.state.bridge.inbox_dir / "timeline_export.wav"
+    inbox_wav.parent.mkdir(parents=True, exist_ok=True)
+    resolve_bridge.generate_demo_wav(str(inbox_wav), duration_ms=1500)
+    for _ in range(2):  # The second (unchanged) notify is a no-op.
+      _, _, n_bytes = self._request(
+          "/api/resolve/notify-export", method="POST", body={}
+      )
+      self.assertEqual(json.loads(n_bytes)["session"]["cues_rev"], 2)
+
+    orig_find = hardware_imac2017.find_binary
+    hardware_imac2017.find_binary = lambda cands: (
+        str(fake_whisper)
+        if "whisper-cli" in cands
+        else None
+        if "ffmpeg" in cands
+        else orig_find(cands)
+    )
+    try:
+      _, _, r1 = self._request(
+          "/api/transcribe",
+          method="POST",
+          body={"source": "inbox", "model_id": "turbo-q8"},
+      )
+      job = self._wait_job(json.loads(r1)["job_id"])
+      self.assertEqual(job["status"], "done", job.get("error"))
+      self.assertFalse(job["result"]["stale"])
+      self.assertEqual(job["result"]["cues_rev"], 3)
+      self._wait_transcription_slot_free()
+    finally:
+      hardware_imac2017.find_binary = orig_find
+
 
 class ResolveTemplatesAndBundleTest(unittest.TestCase):
   """Resolve Lua scripts, Fusion templates, UI IDs, ZIP bundle, WAV peaks."""
