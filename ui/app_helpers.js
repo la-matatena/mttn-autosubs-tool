@@ -417,6 +417,38 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Cue autosave (optimistic concurrency)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Reads the server cue revision from a session snapshot. The server bumps
+   * `cues_rev` every time it replaces the cues (transcription, resegment,
+   * demo, upload, media swap, and each successful PUT /api/cues).
+   * @param {?Object} session Session snapshot from any endpoint.
+   * @return {?number} The integer revision, or null when absent or invalid
+   *     (older servers do not send it).
+   */
+  function cuesRevOf(session) {
+    const rev = session ? session.cues_rev : undefined;
+    return Number.isInteger(rev) ? rev : null;
+  }
+
+  /**
+   * Builds the PUT /api/cues body. `media_rev` is always sent (null = no
+   * media); `cues_rev` only when known: the server skips the cue revision
+   * check when it is absent, and older servers never sent one.
+   * @param {!Array<!Object>} cues Full edited cue list.
+   * @param {?string} mediaRev Session media_rev the cues were edited against.
+   * @param {?number} cuesRev Session cues_rev the cues were edited against.
+   * @return {!Object} JSON-serializable request body.
+   */
+  function buildCuesPutBody(cues, mediaRev, cuesRev) {
+    const body = { cues, media_rev: mediaRev };
+    if (Number.isInteger(cuesRev)) body.cues_rev = cuesRev;
+    return body;
+  }
+
+  // ---------------------------------------------------------------------------
   // Background job polling
   // ---------------------------------------------------------------------------
 
@@ -633,12 +665,14 @@
   return {
     ASCII_FOLD_MAP,
     blend,
+    buildCuesPutBody,
     computeCueDrag,
     computeViewRange,
     contrastLevel,
     contrastRatio,
     cpsClassName,
     createJobPoller,
+    cuesRevOf,
     findPreviewCue,
     foldSpanishToAsciiPreview,
     formatMsReadable,

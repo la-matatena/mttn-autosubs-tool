@@ -52,11 +52,13 @@
   // Destructured once here, before any code below runs, so call sites keep
   // their short names.
   const {
+    buildCuesPutBody,
     computeCueDrag,
     computeViewRange,
     contrastLevel,
     cpsClassName,
     createJobPoller,
+    cuesRevOf,
     findPreviewCue,
     formatMsReadable,
     formatTick,
@@ -122,15 +124,16 @@
     isVideo: false,
     // Server says the media can be rendered as a subtitled MP4.
     canBurninVideo: false,
-    // "inbox" (Resolve export) or "uploaded" (file tab). Currently
-    // write-only: the transcribe handler derives the source from the
-    // active tab instead.
-    uploadSource: "resolve",
     // Server media revision (name:mtime:size); a change forces the
     // player to reload its src.
     mediaRev: null,
-    // Unused (kept to avoid churn; safe to remove).
-    threadsInitialized: false,
+    // Server cue revision (integer) the local cues are based on, sent
+    // with PUT /api/cues; null when the server does not send one.
+    cuesRev: null,
+    // Resolves when the PUT /api/cues in flight (and its 409 recovery)
+    // finishes; null when idle. Saves never overlap: each one must carry
+    // the cues_rev of the previous reply (see saveCuesToServer).
+    cuesSaveInFlight: null,
     // Last fonts payload: {packs, builtin_fonts, custom_faces}.
     fontCatalog: null,
     // #st-font <option> value -> font pack. Built-in fonts are
@@ -463,7 +466,6 @@
     $("btn-mode-resolve").classList.toggle("active", state.appMode === "resolve");
 
     const targetTab = state.appMode === "standalone" ? "file" : "resolve";
-    state.uploadSource = targetTab === "resolve" ? "inbox" : "uploaded";
     document
       .querySelectorAll(".tab-btn")
       .forEach((b) => b.classList.toggle("active", b.dataset.tab === targetTab));
@@ -1283,12 +1285,14 @@
    * preview at the first cue. The media src is reassigned only when media_rev
    * changes (or in demo mode) to avoid re-buffering the same file on every
    * refresh; `?v=<rev>` busts the browser cache when the file does change.
-   * @param {!Object} session cues, peaks, duration_ms, is_video,
+   * Also adopts the session's cues_rev as the base of the next cue save.
+   * @param {!Object} session cues, cues_rev, peaks, duration_ms, is_video,
    *     can_burnin_video, media_url, media_rev, media_name, format_config and
    *     demo_mode.
    */
   function applySession(session) {
     state.cues = session.cues || [];
+    state.cuesRev = cuesRevOf(session);
     state.peaks = session.peaks || [];
     state.durationMs = session.duration_ms || 0;
     state.isVideo = Boolean(session.is_video);
@@ -2223,6 +2227,12 @@
   // editSeq is unchanged, i.e. no edit happened while the request was in
   // flight. Otherwise the stale response is dropped and the pending debounced
   // save sends the newer cues.
+  //
+  // Saves are serialized: the server bumps cues_rev on every successful PUT
+  // and rejects a PUT carrying an older one (409), so two overlapping PUTs
+  // would make the second fail. A save requested while another is in flight
+  // waits for it, then sends the latest cues with the cues_rev of that reply;
+  // of several waiting saves only the newest one is sent.
 
   /** Marks cues dirty and (re)starts the 350 ms save debounce. */
   function scheduleSaveCues() {
@@ -2232,30 +2242,56 @@
   }
 
   /**
-   * PUTs state.cues to /api/cues now (cancelling a pending debounce). The
-   * server recomputes CPS, warnings and word alignment; its version is merged
-   * back only if no newer edit exists. With the same cue count, objects are
-   * updated in place so open text areas keep their references and caret;
-   * otherwise the array is replaced and the list re-rendered.
+   * PUTs state.cues to /api/cues now (cancelling a pending debounce), after
+   * any save already in flight. The server recomputes CPS, warnings and word
+   * alignment; its version is merged back only if no newer edit exists. With
+   * the same cue count, objects are updated in place so open text areas keep
+   * their references and caret; otherwise the array is replaced and the list
+   * re-rendered.
    *
-   * The body carries the media_rev the cues were edited against. If the
-   * Resolve script replaced the inbox audio meanwhile, the server answers
-   * 409: the cues belong to the old audio, so the save is dropped (never
-   * retried) and the new session is loaded instead.
+   * The body carries the media_rev and cues_rev the cues were edited
+   * against. If the Resolve script replaced the inbox audio, or the cues
+   * were replaced server-side (another tab, a transcription...), the server
+   * answers 409: the save is dropped (never retried) and the current session
+   * is loaded instead (see handleCuesConflict()).
    * @async
-   * @return {!Promise<void>} Errors are shown as a toast.
+   * @return {!Promise<boolean>} True only when the server accepted these
+   *     cues and its reply was merged back. False when the save was
+   *     superseded (a newer save, edit or session took over; while waiting
+   *     no request is sent), on a 409 conflict, or on an error (shown as a
+   *     toast), so callers can skip their own success toast.
    */
   async function saveCuesToServer() {
     clearTimeout(state.saveTimer);
+    state.saveTimer = null;
     state.editSeq += 1;
     const seq = state.editSeq;
+    while (state.cuesSaveInFlight) {
+      await state.cuesSaveInFlight;
+    }
+    // A newer save or edit (which schedules its own save), or a conflict
+    // reload, happened while waiting: nothing left for this call to send.
+    if (seq !== state.editSeq) return false;
+
+    let applied = false;
+    const baseRev = state.cuesRev;
+    // Released in `finally`, i.e. after a 409 has bumped editSeq, so waiting
+    // saves wake up superseded and send nothing.
+    let release = () => {};
+    state.cuesSaveInFlight = new Promise((resolve) => (release = resolve));
     try {
       const data = await apiJson("/api/cues", {
         method: "PUT",
-        body: JSON.stringify({ cues: state.cues, media_rev: state.mediaRev }),
+        body: JSON.stringify(buildCuesPutBody(state.cues, state.mediaRev, baseRev)),
       });
+      // A session applied while the request was in flight (demo, resegment,
+      // transcription...) carries newer cues and cues_rev than this reply.
+      const superseded = state.cuesRev !== baseRev;
+      // The server accepted these cues, so its new cues_rev is the base of
+      // the next save even when the reply is stale and dropped below.
+      if (data.session && !superseded) state.cuesRev = cuesRevOf(data.session);
       // Ignore stale responses if there were edits while the request was in flight.
-      if (data.session && seq === state.editSeq) {
+      if (data.session && !superseded && seq === state.editSeq) {
         const serverCues = data.session.cues || [];
         if (serverCues.length === state.cues.length) {
           // Update in place: open textareas still point at these objects.
@@ -2267,40 +2303,49 @@
         }
         updateEditorStats();
         drawWaveform((activeMedia().currentTime || 0) * 1000);
+        applied = true;
       }
     } catch (err) {
       if (err.status === 409) {
-        await handleMediaChangedConflict(err.data);
-        return;
+        await handleCuesConflict(err.data);
+        return false;
       }
       showToast(`No se pudo guardar: ${err.message}`);
+    } finally {
+      state.cuesSaveInFlight = null;
+      release();
     }
+    return applied;
   }
 
   /**
-   * Recovers from a 409 on PUT /api/cues (media replaced server-side, e.g.
-   * by the Resolve export script). Drops any pending debounced save of the
-   * stale cues, loads the server session and tells the user why their view
-   * changed. A session without peaks (autosave responses omit them) is not
-   * applied directly, because applySession() would blank the waveform;
-   * refreshStatus() fetches the full one instead.
+   * Recovers from a 409 on PUT /api/cues: the media was replaced server-side
+   * (e.g. by the Resolve export script; media_rev mismatch) or the cues were
+   * replaced (cues_rev mismatch). Drops any pending debounced save of the
+   * stale cues, loads the server session (which also adopts its cues_rev)
+   * and tells the user why their view changed. The 409 session has no peaks
+   * (applySession() would blank the waveform): with the same media_rev the
+   * current peaks still match and are kept; otherwise refreshStatus()
+   * fetches the full session, which it applies because media_rev changed.
    * @async
    * @param {?Object} data Parsed 409 body; may hold the current `session`.
    * @return {!Promise<void>}
    */
-  async function handleMediaChangedConflict(data) {
+  async function handleCuesConflict(data) {
     clearTimeout(state.saveTimer);
     state.saveTimer = null;
     state.editSeq += 1;
     const session = data && data.session;
     if (session && Array.isArray(session.peaks)) {
       applySession(session);
+    } else if (session && session.media_rev === state.mediaRev) {
+      applySession({ ...session, peaks: state.peaks });
     } else {
       await refreshStatus();
     }
     showToast(
-      "El audio de la sesión cambió (p. ej., desde DaVinci Resolve). " +
-        "Se cargó la sesión nueva; los cambios sobre el audio anterior no se guardaron.",
+      "Los subtítulos o el audio cambiaron en el servidor (p. ej., desde DaVinci Resolve " +
+        "u otra pestaña). Se cargó la sesión actual; tus últimos cambios no se guardaron.",
       6500
     );
   }
@@ -3371,7 +3416,6 @@
         body: file,
       });
       const data = await readJsonOrText(resp, "Fallo al subir archivo");
-      state.uploadSource = "uploaded";
       $("upload-status").textContent = `✓ Cargado: ${data.filename}`;
       $("media-name-badge").textContent = data.filename;
       if (data.session) applySession(data.session);
@@ -3385,55 +3429,115 @@
   // ---------------------------------------------------------------------------
   // Event wiring
   // ---------------------------------------------------------------------------
+  // wireEvents() runs once at startup and calls one wire* function per UI
+  // area. Call order is the listener registration order; it matters where two
+  // areas listen to the same element (e.g. #st-font "change" runs
+  // syncFontSelection before updatePresetStatus, and wireMachinePanel() adds
+  // its own #model-select / #preset-select / #cfg-uppercase listeners after
+  // the ones registered before it).
 
   /**
-   * Attaches every UI event handler; called once at startup. Grouped by area:
-   * mode and tabs, Resolve inbox and demo, model download and transcription,
-   * presets, uploads, transport, waveform, aspect ratio, find and replace,
-   * fonts and style, user presets, karaoke, monitor background, machine
-   * panel, Resolve push, exports, keyboard shortcut and theme sync. Also
-   * restores UI-only localStorage state (karaoke, stage background).
+   * Switches the monitor aspect ratio and re-renders the preview.
+   * @param {string} mode "16:9" or "9:16".
    */
-  function wireEvents() {
+  function setAspect(mode) {
+    state.aspect = mode;
+    const stage = $("preview-stage");
+    stage.classList.toggle("aspect-16-9", mode === "16:9");
+    stage.classList.toggle("aspect-9-16", mode === "9:16");
+    $("btn-aspect-16-9").classList.toggle("active", mode === "16:9");
+    $("btn-aspect-9-16").classList.toggle("active", mode === "9:16");
+    invalidateStageSizeCache();
+    renderPreviewAtMs((activeMedia().currentTime || 0) * 1000);
+  }
+
+  /**
+   * Uploads font files (.ttf/.otf or a .zip pack) one at a time, optionally
+   * installing them into ~/Library/Fonts so Resolve can use them, then
+   * refreshes the catalog selecting the last uploaded pack.
+   * @async
+   * @param {?FileList} fileList Files from the input.
+   * @return {!Promise<void>}
+   */
+  async function uploadFontFiles(fileList) {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (!files.length) return;
+    const installMacos = $("opt-install-macos-font").checked ? "1" : "0";
+    $("font-upload-status").textContent = `Instalando ${files.length} archivo(s) de fuente...`;
+    let lastRes = null;
+    let totalFaces = 0;
+    try {
+      for (const file of files) {
+        const resp = await fetch("/api/fonts/upload", {
+          method: "POST",
+          headers: {
+            "X-Filename": encodeURIComponent(file.name),
+            "X-Install-Macos": installMacos,
+          },
+          body: file,
+        });
+        const data = await readJsonOrText(resp, `Error subiendo ${file.name}`);
+        lastRes = data;
+        totalFaces += Number(data.installed_count || 0);
+      }
+      if (lastRes) {
+        updateFontCatalog(lastRes, lastRes.selected_pack_id);
+        const restartNote =
+          lastRes.installed_to_macos && lastRes.resolve_running
+            ? " Reinicia DaVinci Resolve 20 para que detecte la nueva tipografía en ~/Library/Fonts."
+            : "";
+        $("font-upload-status").textContent = `✓ ${totalFaces} variante(s) listas.${restartNote}`;
+        showToast(
+          `Tipografía instalada (${totalFaces}).${restartNote}`,
+          lastRes.resolve_running ? 6500 : 4000
+        );
+      }
+    } catch (err) {
+      $("font-upload-status").textContent = `Error: ${err.message}`;
+      showToast(err.message, 5000);
+    } finally {
+      $("font-input").value = "";
+    }
+  }
+
+  // Monitor test backgrounds (useful to judge transparency); each maps to a
+  // .stage-bg-<name> class in styles.css.
+  const STAGE_BGS = ["black", "gray", "light", "checker"];
+
+  /**
+   * Applies a stage-bg-* class to the monitor and syncs the swatch buttons'
+   * aria-pressed.
+   * @param {string} bg One of STAGE_BGS; anything else falls back to "black".
+   * @param {boolean=} persist Whether to remember it in localStorage.
+   */
+  function setStageBg(bg, persist = true) {
+    const value = STAGE_BGS.includes(bg) ? bg : "black";
+    const stage = $("preview-stage");
+    STAGE_BGS.forEach((b) => stage.classList.toggle(`stage-bg-${b}`, b === value));
+    document.querySelectorAll("#stage-bg-toggle .bg-swatch").forEach((btn) => {
+      btn.setAttribute("aria-pressed", String(btn.dataset.bg === value));
+    });
+    if (persist) {
+      try {
+        localStorage.setItem("autosubs-stage-bg", value);
+      } catch (_) {}
+    }
+  }
+
+  /** Shows the Text+ template field only for the "textplus" push mode. */
+  function syncPushModeVisibility() {
+    $("template-field").classList.toggle("hidden", $("push-mode").value !== "textplus");
+  }
+
+  /** Workflow mode buttons (Resolve / standalone) and the source tabs. */
+  function wireModeAndSourceTabs() {
     $("btn-mode-standalone").addEventListener("click", () => setAppMode("standalone", true));
     $("btn-mode-resolve").addEventListener("click", () => setAppMode("resolve", true));
     $("btn-switch-to-resolve").addEventListener("click", () => setAppMode("resolve", true));
 
-    if ($("btn-fill-bgg-glossary")) {
-      $("btn-fill-bgg-glossary").addEventListener("click", () => {
-        // Board-game (BGG) terms appended to the custom glossary, skipping duplicates.
-        const bggPreset = [
-          "BoardGameGeek",
-          "Meeple",
-          "Worker Placement",
-          "Deckbuilding",
-          "Eurogame",
-          "Kickstarter",
-          "Gamefound",
-          "Devir",
-          "Zacatrus",
-          "Maldito Games",
-        ];
-        const existing = ($("cfg-glossary").value || "")
-          .split(/[,;\n]+/)
-          .map((s) => s.trim())
-          .filter(Boolean);
-        const lowerSet = new Set(existing.map((s) => s.toLowerCase()));
-        bggPreset.forEach((term) => {
-          if (!lowerSet.has(term.toLowerCase())) {
-            existing.push(term);
-            lowerSet.add(term.toLowerCase());
-          }
-        });
-        $("cfg-glossary").value = existing.join(", ");
-        showToast("Glosario BGG / juegos de mesa añadido.");
-      });
-    }
-
     document.querySelectorAll(".tab-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         const tab = btn.dataset.tab;
-        state.uploadSource = tab === "resolve" ? "inbox" : "uploaded";
         document
           .querySelectorAll(".tab-btn")
           .forEach((b) => b.classList.toggle("active", b === btn));
@@ -3441,11 +3545,10 @@
         $("tab-file").classList.toggle("active", tab === "file");
       });
     });
+  }
 
-    $("model-select").addEventListener("change", updateModelHint);
-    if ($("btn-theme-toggle")) {
-      $("btn-theme-toggle").addEventListener("click", toggleTheme);
-    }
+  /** Status refresh, Resolve inbox and audio export buttons, and the demo. */
+  function wireResolveInbox() {
     $("btn-refresh").addEventListener("click", refreshStatus);
     $("btn-check-inbox").addEventListener("click", async () => {
       try {
@@ -3485,6 +3588,11 @@
         showToast(err.message);
       }
     });
+  }
+
+  /** Whisper model select and download, transcription start and job cancel. */
+  function wireTranscription() {
+    $("model-select").addEventListener("change", updateModelHint);
 
     $("btn-download-model").addEventListener("click", async () => {
       try {
@@ -3549,7 +3657,10 @@
         showToast(err.message);
       }
     });
+  }
 
+  /** Subtitle format card: RAE resegmentation, format presets, BGG glossary. */
+  function wireFormatSettings() {
     $("btn-resegment").addEventListener("click", async () => {
       try {
         const data = await apiJson("/api/resegment", {
@@ -3580,7 +3691,40 @@
       }
     });
 
-    // File upload and drag & drop
+    if ($("btn-fill-bgg-glossary")) {
+      $("btn-fill-bgg-glossary").addEventListener("click", () => {
+        // Board-game (BGG) terms appended to the custom glossary, skipping duplicates.
+        const bggPreset = [
+          "BoardGameGeek",
+          "Meeple",
+          "Worker Placement",
+          "Deckbuilding",
+          "Eurogame",
+          "Kickstarter",
+          "Gamefound",
+          "Devir",
+          "Zacatrus",
+          "Maldito Games",
+        ];
+        const existing = ($("cfg-glossary").value || "")
+          .split(/[,;\n]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const lowerSet = new Set(existing.map((s) => s.toLowerCase()));
+        bggPreset.forEach((term) => {
+          if (!lowerSet.has(term.toLowerCase())) {
+            existing.push(term);
+            lowerSet.add(term.toLowerCase());
+          }
+        });
+        $("cfg-glossary").value = existing.join(", ");
+        showToast("Glosario BGG / juegos de mesa añadido.");
+      });
+    }
+  }
+
+  /** Media file input and the drag & drop zone. */
+  function wireUploads() {
     const dz = $("dropzone");
     $("file-input").addEventListener("change", (ev) => uploadFile(ev.target.files[0]));
     dz.addEventListener("dragover", (ev) => {
@@ -3593,8 +3737,10 @@
       dz.classList.remove("dragover");
       if (ev.dataTransfer.files[0]) uploadFile(ev.dataTransfer.files[0]);
     });
+  }
 
-    // Monitor and audio/video transport
+  /** Monitor transport: play/pause, ±1 s, playback rate, media events. */
+  function wireTransport() {
     const audio = $("audio-player");
     const video = $("video-player");
     $("btn-play").addEventListener("click", () => {
@@ -3640,29 +3786,16 @@
       audio.playbackRate = rate;
       video.playbackRate = rate;
     });
+  }
 
-    wireWaveform();
-
-    // Aspect ratio 16:9 / 9:16
-    /**
-     * Switches the monitor aspect ratio. Declared inside wireEvents but
-     * hoisted, so the preset-select handler above can already call it.
-     * @param {string} mode "16:9" or "9:16".
-     */
-    function setAspect(mode) {
-      state.aspect = mode;
-      const stage = $("preview-stage");
-      stage.classList.toggle("aspect-16-9", mode === "16:9");
-      stage.classList.toggle("aspect-9-16", mode === "9:16");
-      $("btn-aspect-16-9").classList.toggle("active", mode === "16:9");
-      $("btn-aspect-9-16").classList.toggle("active", mode === "9:16");
-      invalidateStageSizeCache();
-      renderPreviewAtMs((activeMedia().currentTime || 0) * 1000);
-    }
+  /** Aspect ratio buttons (16:9 / 9:16). */
+  function wireAspectButtons() {
     $("btn-aspect-16-9").addEventListener("click", () => setAspect("16:9"));
     $("btn-aspect-9-16").addEventListener("click", () => setAspect("9:16"));
+  }
 
-    // Find and replace (literal, case-sensitive, across all cues)
+  /** Find and replace (literal, case-sensitive, across all cues). */
+  function wireFindReplace() {
     $("btn-replace-all").addEventListener("click", async () => {
       const find = $("search-input").value;
       const rep = $("replace-input").value;
@@ -3675,61 +3808,15 @@
           .filter(Boolean);
         syncCueWordsAfterTextEdit(cue);
       });
-      await saveCuesToServer();
+      const saved = await saveCuesToServer();
       renderCueList();
-      showToast(`Reemplazado "${find}" por "${rep}".`);
+      // A conflict or save error already showed its own toast; keep it visible.
+      if (saved) showToast(`Reemplazado "${find}" por "${rep}".`);
     });
+  }
 
-    // Chips, custom fonts and style controls
-    /**
-     * Uploads font files (.ttf/.otf or a .zip pack) one at a time, optionally
-     * installing them into ~/Library/Fonts so Resolve can use them, then
-     * refreshes the catalog selecting the last uploaded pack.
-     * @async
-     * @param {?FileList} fileList Files from the input.
-     * @return {!Promise<void>}
-     */
-    async function uploadFontFiles(fileList) {
-      const files = Array.from(fileList || []).filter(Boolean);
-      if (!files.length) return;
-      const installMacos = $("opt-install-macos-font").checked ? "1" : "0";
-      $("font-upload-status").textContent = `Instalando ${files.length} archivo(s) de fuente...`;
-      let lastRes = null;
-      let totalFaces = 0;
-      try {
-        for (const file of files) {
-          const resp = await fetch("/api/fonts/upload", {
-            method: "POST",
-            headers: {
-              "X-Filename": encodeURIComponent(file.name),
-              "X-Install-Macos": installMacos,
-            },
-            body: file,
-          });
-          const data = await readJsonOrText(resp, `Error subiendo ${file.name}`);
-          lastRes = data;
-          totalFaces += Number(data.installed_count || 0);
-        }
-        if (lastRes) {
-          updateFontCatalog(lastRes, lastRes.selected_pack_id);
-          const restartNote =
-            lastRes.installed_to_macos && lastRes.resolve_running
-              ? " Reinicia DaVinci Resolve 20 para que detecte la nueva tipografía en ~/Library/Fonts."
-              : "";
-          $("font-upload-status").textContent = `✓ ${totalFaces} variante(s) listas.${restartNote}`;
-          showToast(
-            `Tipografía instalada (${totalFaces}).${restartNote}`,
-            lastRes.resolve_running ? 6500 : 4000
-          );
-        }
-      } catch (err) {
-        $("font-upload-status").textContent = `Error: ${err.message}`;
-        showToast(err.message, 5000);
-      } finally {
-        $("font-input").value = "";
-      }
-    }
-
+  /** Custom font upload, font select and the animation controls. */
+  function wireFontsAndAnimation() {
     $("font-input").addEventListener("change", (ev) => uploadFontFiles(ev.target.files));
     $("st-font").addEventListener("change", () => syncFontSelection(true));
     $("st-anim-mode").addEventListener("change", () => {
@@ -3749,7 +3836,14 @@
         renderPreviewAtMs((activeMedia().currentTime || 0) * 1000);
       });
     });
+  }
 
+  /**
+   * Style preset chips, the «save style» form, the karaoke toggle and the
+   * preset reset button. Also renders the saved user chips and restores the
+   * karaoke toggle from localStorage.
+   */
+  function wireStylePresets() {
     // Delegated clicks on chip containers: apply a preset or delete a user preset.
     document.querySelectorAll(".style-chips").forEach((box) => {
       box.addEventListener("click", (ev) => {
@@ -3813,23 +3907,10 @@
     $("btn-preset-reset").addEventListener("click", () => {
       if (state.activePreset) applyStylePreset(state.activePreset);
     });
+  }
 
-    // Monitor test background (useful to judge transparency).
-    const STAGE_BGS = ["black", "gray", "light", "checker"];
-    // Applies a stage-bg-* class and syncs the swatch buttons' aria-pressed.
-    const setStageBg = (bg, persist = true) => {
-      const value = STAGE_BGS.includes(bg) ? bg : "black";
-      const stage = $("preview-stage");
-      STAGE_BGS.forEach((b) => stage.classList.toggle(`stage-bg-${b}`, b === value));
-      document.querySelectorAll("#stage-bg-toggle .bg-swatch").forEach((btn) => {
-        btn.setAttribute("aria-pressed", String(btn.dataset.bg === value));
-      });
-      if (persist) {
-        try {
-          localStorage.setItem("autosubs-stage-bg", value);
-        } catch (_) {}
-      }
-    };
+  /** Monitor background swatches; restores the saved background. */
+  function wireStageBackground() {
     document.querySelectorAll("#stage-bg-toggle .bg-swatch").forEach((btn) => {
       btn.addEventListener("click", () => setStageBg(btn.dataset.bg));
     });
@@ -3838,10 +3919,13 @@
       savedBg = localStorage.getItem("autosubs-stage-bg") || "black";
     } catch (_) {}
     setStageBg(savedBg, false);
+  }
 
-    wireMachinePanel();
-    // Every style control re-renders through onStyleControlChanged: "input" for
-    // live slider feedback, "change" for selects, checkboxes and color pickers.
+  /**
+   * Every style control re-renders through onStyleControlChanged: "input" for
+   * live slider feedback, "change" for selects, checkboxes and color pickers.
+   */
+  function wireStyleControls() {
     [
       "st-weight",
       "st-ascii-fold",
@@ -3866,17 +3950,15 @@
       $(id).addEventListener("change", onStyleControlChanged);
     });
     $("st-font").addEventListener("change", updatePresetStatus);
+  }
 
-    /** Shows the Text+ template field only for the "textplus" push mode. */
-    function syncPushModeVisibility() {
-      $("template-field").classList.toggle("hidden", $("push-mode").value !== "textplus");
-    }
+  /** Push to DaVinci Resolve 20: push mode select and the push button. */
+  function wireResolvePush() {
     $("push-mode").addEventListener("change", syncPushModeVisibility);
     $("push-mode").addEventListener("change", updateStyleTargetHint);
     syncPushModeVisibility();
     updateStyleTargetHint();
 
-    // Push to DaVinci Resolve 20
     $("btn-push-resolve").addEventListener("click", async () => {
       try {
         const res = await apiJson("/api/resolve/push", {
@@ -3911,9 +3993,13 @@
         showToast(err.message);
       }
     });
+  }
 
-    // File exports and standalone mode. The server returns the file content,
-    // downloaded through a temporary Blob URL.
+  /**
+   * File exports, copy-script and burned-in MP4 (standalone mode). The server
+   * returns the file content, downloaded through a temporary Blob URL.
+   */
+  function wireExports() {
     document.querySelectorAll(".export-btn").forEach((btn) => {
       btn.addEventListener("click", async () => {
         try {
@@ -3973,7 +4059,10 @@
         }
       });
     }
+  }
 
+  /** Space play/pause shortcut and the throttled refresh on window return. */
+  function wireKeyboardAndFocus() {
     // Space toggles play/pause unless the focus is in a form field
     document.addEventListener("keydown", (ev) => {
       if (
@@ -3988,8 +4077,14 @@
     // Pick up changes made from DaVinci Resolve scripts while away (throttled).
     document.addEventListener("visibilitychange", refreshOnReturn);
     window.addEventListener("focus", refreshOnReturn);
+  }
 
-    // Theme sync across tabs and with the OS setting
+  /** Theme toggle button, plus theme sync across tabs and with the OS. */
+  function wireTheme() {
+    if ($("btn-theme-toggle")) {
+      $("btn-theme-toggle").addEventListener("click", toggleTheme);
+    }
+
     window.addEventListener("storage", (e) => {
       if (e.key === "autosubs-theme") {
         const t = e.newValue;
@@ -4010,6 +4105,33 @@
     }
   }
 
+  /**
+   * Attaches every UI event handler; called once at startup. Also restores
+   * UI-only localStorage state (karaoke, stage background) and syncs the
+   * push-mode dependent fields. See the section comment for why the call
+   * order must be kept.
+   */
+  function wireEvents() {
+    wireModeAndSourceTabs();
+    wireResolveInbox();
+    wireTranscription();
+    wireFormatSettings();
+    wireUploads();
+    wireTransport();
+    wireWaveform();
+    wireAspectButtons();
+    wireFindReplace();
+    wireFontsAndAnimation();
+    wireStylePresets();
+    wireStageBackground();
+    wireMachinePanel();
+    wireStyleControls();
+    wireResolvePush();
+    wireExports();
+    wireKeyboardAndFocus();
+    wireTheme();
+  }
+
   // ---------------------------------------------------------------------------
   // Startup
   // ---------------------------------------------------------------------------
@@ -4022,20 +4144,6 @@
     initialTheme = localStorage.getItem("autosubs-theme");
   } catch (_) {}
   applyTheme(initialTheme, false);
-  // Fallback for engines without accent-color: exposes each slider's fill as
-  // --progress (no rule in styles.css consumes it at the moment).
-  if (typeof CSS !== "undefined" && !CSS.supports("accent-color: #8367c7")) {
-    document.querySelectorAll('input[type="range"]').forEach((slider) => {
-      const updateProgress = () => {
-        const min = Number(slider.min) || 0;
-        const max = Number(slider.max) || 100;
-        const pct = ((Number(slider.value) - min) / (max - min)) * 100;
-        slider.style.setProperty("--progress", `${pct}%`);
-      };
-      slider.addEventListener("input", updateProgress);
-      updateProgress();
-    });
-  }
   applyStylePreset("netflix");
   refreshStatus();
 })();

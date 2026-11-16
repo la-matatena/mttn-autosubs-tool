@@ -1,7 +1,7 @@
 /**
  * @fileoverview Unit tests for the pure helpers in ui/app_helpers.js: text
  * folding and timecodes, WCAG contrast, waveform geometry (x <-> ms, hit
- * testing) and cue drag clamping.
+ * testing), cue drag clamping and the cue autosave revision helpers.
  *
  * Run with the built-in Node test runner (no npm packages):
  *   node --test "tests/js/*.test.mjs"
@@ -37,11 +37,13 @@ function assertClose(actual, expected, eps = 1e-9) {
 describe("module shape", () => {
   test("exports every helper app.js destructures", () => {
     for (const name of [
+      "buildCuesPutBody",
       "computeCueDrag",
       "computeViewRange",
       "contrastLevel",
       "cpsClassName",
       "createJobPoller",
+      "cuesRevOf",
       "findPreviewCue",
       "formatMsReadable",
       "formatTick",
@@ -462,5 +464,39 @@ describe("computeCueDrag", () => {
   test("negative deltas past zero clamp to zero for the first cue start", () => {
     const d = { idx: 0, mode: "start", orig: { start: 300, end: 1000 } };
     assert.deepEqual(H.computeCueDrag(cues, d, -1000, 10000, MIN), { start: 0, end: 1000 });
+  });
+});
+
+describe("cue autosave revisions", () => {
+  test("cuesRevOf reads integer revisions, including 0", () => {
+    assert.equal(H.cuesRevOf({ cues_rev: 0 }), 0);
+    assert.equal(H.cuesRevOf({ cues_rev: 7 }), 7);
+  });
+
+  test("cuesRevOf returns null for older servers and invalid values", () => {
+    assert.equal(H.cuesRevOf({}), null);
+    assert.equal(H.cuesRevOf({ cues_rev: null }), null);
+    assert.equal(H.cuesRevOf({ cues_rev: "3" }), null);
+    assert.equal(H.cuesRevOf({ cues_rev: 1.5 }), null);
+    assert.equal(H.cuesRevOf(null), null);
+    assert.equal(H.cuesRevOf(undefined), null);
+  });
+
+  test("buildCuesPutBody sends cues_rev alongside media_rev when known", () => {
+    const cues = [cue(0, 1000, { text: "Hola" })];
+    assert.deepEqual(H.buildCuesPutBody(cues, "a.wav:1:2", 4), {
+      cues,
+      media_rev: "a.wav:1:2",
+      cues_rev: 4,
+    });
+    assert.deepEqual(H.buildCuesPutBody([], null, 0), { cues: [], media_rev: null, cues_rev: 0 });
+  });
+
+  test("buildCuesPutBody omits cues_rev when the server never sent one", () => {
+    const body = H.buildCuesPutBody([], "a.wav:1:2", null);
+    assert.deepEqual(body, { cues: [], media_rev: "a.wav:1:2" });
+    assert.equal("cues_rev" in body, false);
+    // media_rev keeps being sent even when null (the server checks presence).
+    assert.equal("media_rev" in H.buildCuesPutBody([], null, null), true);
   });
 });

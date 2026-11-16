@@ -114,12 +114,12 @@ Set any of these environment variables before starting `autosubs_server.py` to o
 | `POST` | `/api/demo` | Loads built-in Spanish board-game and Resolve demo cues and synthesizes a local 16 kHz waveform WAV. |
 | `POST` | `/api/resegment` | Re-applies RAE wrapping, domain phonetic fixes, dialects, muletilla cleanup, and punctuation rules in memory without re-running Whisper. |
 | `POST` | `/api/export` | Serializes active cues into `srt`, `srt_tc`, `vtt`, `ass`, `txt`, `txt_tc`, `fcpxml`, or `json`. |
-| `POST` | `/api/export-video` | Starts a CPU `libx264` background job burning styled `.ass` subtitles into the active standalone video file. |
+| `POST` | `/api/export-video` | Starts a CPU `libx264` background job burning styled `.ass` subtitles into the active standalone video file, or returns the job ID of the burn-in already running. |
 | `POST` | `/api/resolve/export-audio` | Triggers Deliver WAV export directly through Resolve Studio scripting or guides Resolve Free users to Script 1. |
 | `POST` | `/api/resolve/notify-export` | Refreshes inbox metadata and waveform peaks when Script 1 completes its audio bounce. |
 | `POST` | `/api/resolve/push` | Writes `outbox/` artifacts (`.srt`, `.ass`, `.fcpxml`, `.lua`, and `.table`) and pushes directly in Studio. |
 | `POST` | `/api/resolve/jump` | Jumps the Resolve Studio playhead directly or stages `jump_tc.lua` and `jump_tc.table` for Script 3. |
-| `PUT` | `/api/cues` | Commits manual cue text and timing edits while enforcing monotonic non-overlapping timestamps. An optional `media_rev` returns `409` with the current session when the active media changed. |
+| `PUT` | `/api/cues` | Commits manual cue text and timing edits while enforcing monotonic non-overlapping timestamps. An optional `media_rev` returns `409` with the current session when the active media changed, and an optional `cues_rev` returns `409` when the server replaced the cues since the client's last sync (every accepted edit bumps it). |
 
 Malformed JSON bodies or invalid parameters return a JSON `400` error.
 
