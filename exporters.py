@@ -761,6 +761,111 @@ def _frames_to_fcpxml_time(frames: int, num: int, den: int) -> str:
   return f"{frames * den}/{num}s"
 
 
+# Motion parameter path of the Basic Title "Position" param in FCPXML.
+_FCPXML_POSITION_KEY = "9999/999166631/999166633/1/100/101"
+
+
+def _xml_tag(tag: str, attrs: dict[str, str], self_closing: bool) -> str:
+  """Builds an XML start tag (or empty-element tag) with escaped attributes.
+
+  Attributes keep the dict's insertion order, so the output is stable.
+
+  Args:
+    tag: Element name, e.g. "title".
+    attrs: Raw (unescaped) attribute values by name.
+    self_closing: Whether to emit `<tag .../>` instead of `<tag ...>`.
+
+  Returns:
+    The tag text, e.g. '<param name="Position" value="0 -389"/>'.
+  """
+  attr_text = "".join(
+      f' {key}="{xml_escape(val)}"' for key, val in attrs.items()
+  )
+  return f"<{tag}{attr_text}{'/' if self_closing else ''}>"
+
+
+def _fcpxml_title(
+    *,
+    name: str,
+    offset: str,
+    duration: str,
+    y_offset_px: int,
+    style_id: str,
+    text: str,
+    font: str,
+    face: str,
+    color: str,
+    font_px: int,
+) -> str:
+  """Serializes one connected Basic Title `<title>` for `export_fcpxml`.
+
+  Each title embeds its own `<text-style-def>` (referenced by `style_id`)
+  after its `<text>`. Indentation is fixed so the element nests under the
+  spine `<gap>` (12 spaces); the style def's shallower 10-space indent is
+  cosmetic only and kept so existing exports stay byte-identical.
+
+  Args:
+    name: Raw title name shown in the timeline (escaped here).
+    offset: Absolute timeline offset (`_frames_to_fcpxml_time` string).
+    duration: Title duration (`_frames_to_fcpxml_time` string).
+    y_offset_px: Vertical position in px from frame centre (positive = up).
+    style_id: Text style id, e.g. "ts1".
+    text: Raw cue text (escaped here); its "\\n" line breaks are kept.
+    font: Raw font family name (escaped here).
+    face: Raw font face, e.g. "Bold" (escaped here).
+    color: Normalized "r g b a" fill colour.
+    font_px: Font size in px.
+
+  Returns:
+    The title XML, without a trailing newline.
+  """
+  title_tag = _xml_tag(
+      "title",
+      {
+          "name": name,
+          "lane": "1",
+          "ref": "r2",
+          "offset": offset,
+          "duration": duration,
+          "start": "0s",
+      },
+      self_closing=False,
+  )
+  position_tag = _xml_tag(
+      "param",
+      {
+          "name": "Position",
+          "key": _FCPXML_POSITION_KEY,
+          "value": f"0 {y_offset_px}",
+      },
+      self_closing=True,
+  )
+  style_tag = _xml_tag(
+      "text-style",
+      {
+          "font": font,
+          "fontSize": str(font_px),
+          "fontFace": face,
+          "fontColor": color,
+          "alignment": "center",
+      },
+      self_closing=True,
+  )
+  text_ref = f'<text-style ref="{style_id}">{xml_escape(text)}</text-style>'
+  lines = [
+      (12, title_tag),
+      (14, position_tag),
+      (14, "<text>"),
+      (16, text_ref),
+      (14, "</text>"),
+      (10, f'<text-style-def id="{style_id}">'),
+      (12, style_tag),
+      (10, "</text-style-def>"),
+      (12, "</title>"),
+  ]
+  return "\n".join(" " * indent + line for indent, line in lines)
+
+
 def export_fcpxml(
     cues: list[SubtitleCue],
     timeline_name: str = "AutoSubs ES",
@@ -836,17 +941,18 @@ def export_fcpxml(
     if est_slices <= _MAX_ANIMATED_FCPXML_SLICES:
       cycle_variants = st.font_variants[:5]
 
-  # Every <title> sets the Basic Title "Position" param; the long `key` is
-  # the fixed Motion parameter path FCPXML uses for it. Text keeps its
-  # "\n" line breaks, which the title renders as separate lines.
+  # Every <title> sets the Basic Title "Position" param (see
+  # `_fcpxml_title`). Text keeps its "\n" line breaks, which the title
+  # renders as separate lines.
   title_nodes: list[str] = []
   style_counter = 0
   hold = max(1, st.anim_hold_frames)
+  color = f"{r:.3f} {g:.3f} {b:.3f} {fill_a}"
   for idx, cue in enumerate(cues, start=1):
     s_frame = max(0, int(round((cue.start_ms / 1000.0) * eff_fps)))
     e_frame = max(s_frame + 1, int(round((cue.end_ms / 1000.0) * eff_fps)))
-    text_body = xml_escape(_cue_text(cue, st))
-    short_name = xml_escape(" ".join(cue.lines)[:32] or f"Sub {idx}")
+    text = _cue_text(cue, st)
+    short_name = " ".join(cue.lines)[:32] or f"Sub {idx}"
 
     if cycle_variants:
       # One title per hold-slice, rotating fonts (a flipbook effect).
@@ -856,50 +962,40 @@ def export_fcpxml(
         next_frame = min(e_frame, cur_frame + hold)
         slice_dur = max(1, next_frame - cur_frame)
         variant = cycle_variants[var_idx % len(cycle_variants)]
-        v_font = variant.get("font") or st.font
-        v_face = variant.get("font_style") or st.font_style
         style_counter += 1
-        style_id = f"ts{style_counter}"
-        offset_str = _frames_to_fcpxml_time(start_frame + cur_frame, num, den)
-        dur_str = _frames_to_fcpxml_time(slice_dur, num, den)
-        style_block = (
-            f'          <text-style-def id="{style_id}">\n           '
-            f' <text-style font="{xml_escape(v_font)}" fontSize="{font_px}"'
-            f' fontFace="{xml_escape(v_face)}" fontColor="{r:.3f} {g:.3f}'
-            f' {b:.3f} {fill_a}" alignment="center"/>\n         '
-            " </text-style-def>"
-        )
         title_nodes.append(
-            f'            <title name="{short_name}" lane="1" ref="r2"'
-            f' offset="{offset_str}" duration="{dur_str}" start="0s">\n        '
-            '      <param name="Position"'
-            ' key="9999/999166631/999166633/1/100/101" value="0'
-            f' {y_offset_px}"/>\n              <text>\n               '
-            f' <text-style ref="{style_id}">{text_body}</text-style>\n         '
-            f"     </text>\n{style_block}\n            </title>"
+            _fcpxml_title(
+                name=short_name,
+                offset=_frames_to_fcpxml_time(
+                    start_frame + cur_frame, num, den
+                ),
+                duration=_frames_to_fcpxml_time(slice_dur, num, den),
+                y_offset_px=y_offset_px,
+                style_id=f"ts{style_counter}",
+                text=text,
+                font=variant.get("font") or st.font,
+                face=variant.get("font_style") or st.font_style,
+                color=color,
+                font_px=font_px,
+            )
         )
         cur_frame = next_frame
         var_idx += 1
     else:
-      dur_frames = e_frame - s_frame
-      offset_str = _frames_to_fcpxml_time(start_frame + s_frame, num, den)
-      dur_str = _frames_to_fcpxml_time(dur_frames, num, den)
       style_counter += 1
-      style_id = f"ts{style_counter}"
-      style_block = (
-          f'          <text-style-def id="{style_id}">\n            <text-style'
-          f' font="{xml_escape(st.font)}" fontSize="{font_px}"'
-          f' fontFace="{xml_escape(st.font_style)}" fontColor="{r:.3f} {g:.3f}'
-          f' {b:.3f} {fill_a}" alignment="center"/>\n         '
-          " </text-style-def>"
-      )
       title_nodes.append(
-          f'            <title name="{short_name}" lane="1" ref="r2"'
-          f' offset="{offset_str}" duration="{dur_str}" start="0s">\n          '
-          '    <param name="Position" key="9999/999166631/999166633/1/100/101"'
-          f' value="0 {y_offset_px}"/>\n              <text>\n               '
-          f' <text-style ref="{style_id}">{text_body}</text-style>\n           '
-          f"   </text>\n{style_block}\n            </title>"
+          _fcpxml_title(
+              name=short_name,
+              offset=_frames_to_fcpxml_time(start_frame + s_frame, num, den),
+              duration=_frames_to_fcpxml_time(e_frame - s_frame, num, den),
+              y_offset_px=y_offset_px,
+              style_id=f"ts{style_counter}",
+              text=text,
+              font=st.font,
+              face=st.font_style,
+              color=color,
+              font_px=font_px,
+          )
       )
 
   titles_xml = "\n".join(title_nodes)

@@ -71,7 +71,7 @@ jobs:
           python3 -B package_bundle.py --output dist/MTTN_AutoSubs_Tool.zip
 
       - name: Upload workflow build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: MTTN_AutoSubs_Tool
           path: dist/MTTN_AutoSubs_Tool.zip
