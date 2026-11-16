@@ -10,7 +10,7 @@
  * Pure, DOM-free helpers (text folding, contrast math, waveform geometry,
  * cue drag clamping and the job poller factory) live in ui/app_helpers.js,
  * which index.html loads first as window.AutoSubsHelpers. They are unit
- * tested with `node --test tests/js/`.
+ * tested with `node --test "tests/js/*.test.mjs"`.
  *
  * Server: everything talks to the local Python server (autosubs_server.py,
  * http://127.0.0.1:55120 by default) through same-origin relative URLs.

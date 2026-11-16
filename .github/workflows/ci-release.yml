@@ -25,15 +25,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "24"
 
@@ -50,17 +50,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Node is a dev-only dependency: it runs the UI helper unit tests with
       # the built-in test runner (no npm install, no package.json).
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "24"
 
       - name: Run UI JavaScript unit tests
-        run: node --test tests/js/
+        run: node --test "tests/js/*.test.mjs"
 
       - name: Run MTTN AutoSubs Tool unit & integration tests
         run: python3 -B autosubs_es_test.py -v
