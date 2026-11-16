@@ -158,7 +158,7 @@ Automated offline verification runs via `python3 -B autosubs_es_test.py -v` in l
 
 Physical macOS execution with real downloaded GGML weights, Homebrew `whisper-cli`/`ffmpeg`, and DaVinci Resolve 20 Media Pool rendering must still be exercised directly on the target 2017 iMac hardware.
 
-The Studio UI's pure helpers in `ui/app_helpers.js` (ASCII folding, WCAG contrast, waveform hit testing, cue drag clamping, and the per-job poller) are unit tested with Node's built-in runner: run `node --test tests/js/` (Node 20 or later, no npm packages). CI runs it before the Python suite.
+The Studio UI's pure helpers in `ui/app_helpers.js` (ASCII folding, WCAG contrast, waveform hit testing, cue drag clamping, and the per-job poller) are unit tested with Node's built-in runner: run `node --test "tests/js/*.test.mjs"` (Node 22 or later, no npm packages; the quoted glob is expanded by Node so it works the same in every shell). CI runs it before the Python suite.
 
 ## Code style and documentation conventions
 

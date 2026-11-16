@@ -4,7 +4,7 @@
  * testing) and cue drag clamping.
  *
  * Run with the built-in Node test runner (no npm packages):
- *   node --test tests/js/
+ *   node --test "tests/js/*.test.mjs"
  */
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";

@@ -6,7 +6,7 @@
  * everywhere, so its math could not be tested without a browser. Everything
  * here takes plain values and returns plain values (or, for
  * createJobPoller(), receives its side effects as injected callbacks), so
- * `node --test tests/js/` can exercise it with no dependencies.
+ * `node --test "tests/js/*.test.mjs"` can exercise it with no dependencies.
  *
  * Loading: UMD-style, no build step. index.html loads this file with a plain
  * <script> before app.js, which attaches the API to `window.AutoSubsHelpers`;
