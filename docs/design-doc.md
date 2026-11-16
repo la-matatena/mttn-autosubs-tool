@@ -185,7 +185,7 @@ The conventions above are enforced automatically. These are dev-only tools: the 
 | Shell (`install_imac.sh`, `*.command`, `tools/lint.sh`) | — | ShellCheck 0.11.0 with all optional checks | `.shellcheckrc` |
 | Lua (`lua/`) | StyLua 2.6.0 (100 columns, 2-space indent) | — | `.stylua.toml` |
 
-HTML (`ui/index.html`, `site/`), `site/styles.css`, `templates/*.setting`, and Markdown are not formatted. Prettier would re-indent whole HTML documents and rewrap whitespace-sensitive text, and the tests assert on raw markup.
+HTML (`ui/index.html`, `site/`), `site/styles.css`, `templates/*.setting`, and Markdown are not formatted. For HTML, even Prettier's `htmlWhitespaceSensitivity: "strict"` changes the parsed DOM (compared node by node with parse5): it re-indents whitespace text nodes, including the `#preview-caption` placeholder that renders with `white-space: pre-line`, turns spaces into newlines when it rewraps prose in `site/`, reformats the inline `<script>`, and rewrites a `style` attribute. It also leaves dangling `>` characters on their own lines (`</h1` + newline + `>`), which are hard to read.
 
 -   **Check**: Run `tools/lint.sh` before you push. It exits non-zero on any finding.
 -   **Fix**: Run `tools/lint.sh --fix` to apply pyink, Prettier, StyLua, and ESLint autofixes, then rerun every check. Fix the remaining findings by hand.

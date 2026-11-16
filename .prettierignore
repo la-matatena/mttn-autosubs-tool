@@ -1,6 +1,10 @@
 # Prettier formats only the first-party JS/CSS listed in tools/lint.sh.
-# HTML is excluded on purpose: Prettier re-indents whole documents, rewraps
-# whitespace-sensitive text and inline SVG, and tests assert on raw markup.
+# HTML is excluded on purpose. Even with htmlWhitespaceSensitivity "strict",
+# Prettier 3.10.1 changes the parsed DOM (checked with parse5): it re-indents
+# ~1,000 whitespace text nodes (including the #preview-caption placeholder,
+# which uses `white-space: pre-line`), rewraps prose in site/ by turning
+# spaces into newlines, reformats the inline <script>, and rewrites a style
+# attribute. It also emits hard-to-read dangling `>` hugs (`</h1\n>`).
 *.html
 # site/ is the marketing page; its styles follow the org-wide brand sheet.
 site/
