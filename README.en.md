@@ -4,6 +4,7 @@
 
 [![CI & Release](https://github.com/la-matatena/mttn-autosubs-tool/actions/workflows/ci-release.yml/badge.svg)](https://github.com/la-matatena/mttn-autosubs-tool/actions/workflows/ci-release.yml)
 [![Latest Release](https://img.shields.io/github/v/release/la-matatena/mttn-autosubs-tool?color=8367c7&label=release)](https://github.com/la-matatena/mttn-autosubs-tool/releases/latest)
+[![Website](https://img.shields.io/badge/website-la--matatena.github.io-8367c7.svg)](https://la-matatena.github.io/mttn-autosubs-tool/en/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-8367c7.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-6a4fb3.svg)](pyproject.toml)
 [![DaVinci Resolve 20](https://img.shields.io/badge/DaVinci%20Resolve-20%20Free%20%7C%20Studio-8367c7.svg)](docs/user-guide.md)
