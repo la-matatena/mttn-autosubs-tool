@@ -6,17 +6,17 @@
   <meta name="color-scheme" content="dark">
   <title>MTTN AutoSubs Tool · Subtítulos en español 100% locales para macOS y DaVinci Resolve</title>
   <meta name="description" content="Genera subtítulos precisos en español de forma 100% local en macOS con Whisper, como app independiente o sincronizados con DaVinci Resolve 20 Free y Studio.">
-  <meta name="theme-color" content="#141415">
+  <meta name="theme-color" content="#080a0f">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="alternate" hreflang="es" href="https://la-matatena.github.io/mttn-autosubs-tool/">
   <link rel="alternate" hreflang="en" href="https://la-matatena.github.io/mttn-autosubs-tool/en/">
   <meta property="og:title" content="MTTN AutoSubs Tool">
   <meta property="og:description" content="Subtítulos en español 100% locales para macOS y DaVinci Resolve 20.">
-  <meta property="og:image" content="https://la-matatena.github.io/mttn-autosubs-tool/images/autosubs-es-overview.png">
+  <meta property="og:image" content="https://la-matatena.github.io/mttn-autosubs-tool/images/hero-mic.webp">
   <meta property="og:type" content="website">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&family=Space+Grotesk:wght@400;500&display=swap">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -49,36 +49,71 @@
 
   <main id="main">
     <section class="hero">
-      <div class="wrap">
-        <div class="hero-head">
-          <div class="hero-copy">
+      <div class="hero-scene">
+        <div class="hero-media">
+          <img src="images/hero-mic.webp" width="1376" height="768" fetchpriority="high"
+               alt="Micrófono de condensador de estudio negro mate en brazo articulado bajo iluminación cinematográfica sobre fondo azul medianoche">
+        </div>
+        <div class="wrap">
+          <div class="hero-content">
             <h1>Subtítulos en español, 100% en tu Mac</h1>
-          </div>
-          <div class="hero-aside">
-            <p class="lead">Transcribe, corrige con reglas RAE y exporta subtítulos con Whisper sin subir tu audio a la nube ni saturar la VRAM. Funciona como app independiente o sincronizado con DaVinci Resolve 20 Free y Studio.</p>
+            <p class="lead">Transcribe, corrige con reglas RAE y exporta subtítulos con Whisper sin subir tu audio a la nube ni saturar la VRAM. Úsalo como app independiente o sincronizado con DaVinci Resolve 20 Free y Studio.</p>
             <div class="actions">
               <a class="btn primary" href="https://github.com/la-matatena/mttn-autosubs-tool/releases/latest">Descargar v1.2</a>
               <a class="btn" href="https://github.com/la-matatena/mttn-autosubs-tool">Ver en GitHub</a>
             </div>
           </div>
         </div>
+      </div>
 
-        <div class="studio-frame">
-          <div class="studio-bar">
-            <span class="studio-status">
-              <span class="status-dot" aria-hidden="true"></span>
-              <span>TC 00:01:20 · 14.0 CPS · Whisper Large-v3-Turbo Q8_0</span>
+      <div class="wrap cue-stage">
+        <div class="cue-card" aria-label="Ejemplo real de subtítulo generado con reglas RAE y glosario BGG">
+          <div class="cue-meta">
+            <span class="cue-tc">
+              <span class="cue-dot" aria-hidden="true"></span>
+              <span>#02 · 00:00:04.22 → 00:00:09.16 · 15.2 CPS</span>
             </span>
-            <ul class="studio-specs" aria-label="Compatibilidad">
-              <li>macOS Intel y Apple Silicon</li>
-              <li>DaVinci Resolve 20 Free y Studio</li>
-              <li>Python 3.10+ · MIT</li>
-            </ul>
+            <span class="cue-tags">
+              <span>Whisper Large-v3-Turbo Q8_0</span>
+              <span>RAE · Juegos de Mesa (BGG)</span>
+            </span>
           </div>
-          <figure class="studio-screen">
-            <img src="images/autosubs-es-overview.png" width="1440" height="940" fetchpriority="high"
-                 alt="Estudio MTTN AutoSubs en modo DaVinci Resolve 20 con el modelo Large-v3-Turbo Q8_0, monitor previo 16:9 con karaoke, forma de onda y editor de subtítulos en español">
-          </figure>
+          <div class="cue-body">
+            <div>
+              <p class="cue-line">¿Sabías que el setup en <span class="cue-karaoke">playmat</span><br>reduce el downtime del worker placement?</p>
+              <p class="cue-note">Signos ¿ ¡ reparados · 2 líneas ≤ 42 car. · sin finales débiles · 0 KB en la nube</p>
+            </div>
+            <div class="cue-timeline" aria-hidden="true">
+              <div class="cue-ruler">
+                <span>00:02</span>
+                <span>00:04</span>
+                <span>00:06</span>
+                <span>00:08</span>
+                <span>00:10</span>
+              </div>
+              <div class="cue-wave-box">
+                <svg class="cue-wave-svg" viewBox="0 0 320 32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                  <path stroke="#3b4357" d="M4 16v0M10 13v6M16 10v12M22 14v4M28 11v10M34 8v16M40 12v8M46 15v2M52 13v6M58 11v10M64 14v4M70 15v2M76 12v8M82 9v14"/>
+                  <path stroke="#b9a7ea" d="M92 10v12M98 6v20M104 4v24M110 9v14M116 5v22M122 11v10M128 7v18M134 3v26M140 8v16M146 12v8M152 6v20M158 4v24M164 10v12M170 7v18M176 5v22M182 11v10M188 8v16M194 4v24M200 9v14M206 12v8M212 7v18M218 10v12M224 13v6"/>
+                  <path stroke="#3b4357" d="M236 14v4M242 12v8M248 15v2M254 11v10M260 9v14M266 13v6M272 15v2M278 12v8M284 10v12M290 14v4M296 15v2M302 13v6M308 15v2M314 16v0"/>
+                </svg>
+                <span class="cue-active-span"></span>
+                <span class="cue-playhead"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-rail">
+        <div class="wrap hero-rail-inner">
+          <span>v1.2 · Código abierto · MIT</span>
+          <ul class="rail-list" aria-label="Compatibilidad">
+            <li>macOS Intel y Apple Silicon</li>
+            <li>DaVinci Resolve 20 Free y Studio</li>
+            <li>Whisper Large-v3 · GGML 8 bits</li>
+            <li>Python 3.10+</li>
+          </ul>
         </div>
       </div>
     </section>
@@ -91,37 +126,38 @@
           <p>Un flujo de 6 pasos numerados del audio al subtítulo final, con reglas de la RAE y vocabulario de tu nicho incluidos.</p>
         </div>
 
-        <div class="cap-lead">
-          <article class="cap-card">
-            <div class="cap-meta">
-              <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <div class="spec-ledger">
+          <article class="spec-row">
+            <span class="spec-num">01</span>
+            <div class="spec-title">
+              <svg class="line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <rect x="4" y="11" width="16" height="9" rx="2"/>
                 <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
               </svg>
-              <span class="cap-tag">0 KB en la nube</span>
+              <h3>Privado y local</h3>
             </div>
-            <h3>Privado y local</h3>
-            <p>Todo el procesamiento ocurre en tu equipo con biblioteca estándar de Python y binarios locales de Whisper y FFmpeg. Ningún archivo de audio sale de tu Mac.</p>
+            <p>Todo el procesamiento ocurre en tu equipo. Ningún archivo de audio sale de tu Mac.</p>
+            <span class="spec-meta">0 KB en la nube</span>
           </article>
 
-          <article class="cap-card">
-            <div class="cap-meta">
-              <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <article class="spec-row">
+            <span class="spec-num">02</span>
+            <div class="spec-title">
+              <svg class="line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
                 <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
                 <line x1="12" y1="19" x2="12" y2="22"/>
               </svg>
-              <span class="cap-tag">GGML 8-bit · Q8_0</span>
+              <h3>Whisper optimizado</h3>
             </div>
-            <h3>Whisper optimizado</h3>
             <p>Modelos GGML Large-v3-Turbo Q8_0 y Large-v3 completo con persistencia de contexto entre segmentos.</p>
+            <span class="spec-meta">GGML 8-bit · Q8_0</span>
           </article>
-        </div>
 
-        <div class="cap-matrix">
-          <article class="cap-cell">
-            <div class="cap-cell-head">
-              <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <article class="spec-row">
+            <span class="spec-num">03</span>
+            <div class="spec-title">
+              <svg class="line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <rect x="3" y="3" width="18" height="18" rx="3"/>
                 <circle cx="8.5" cy="8.5" r="1" fill="currentColor" stroke="none"/>
                 <circle cx="15.5" cy="8.5" r="1" fill="currentColor" stroke="none"/>
@@ -132,31 +168,37 @@
               <h3>Juegos de mesa y anglicismos</h3>
             </div>
             <p>Corrección fonética automática de términos lúdicos (BGG), glosario personalizado y acentos regionales.</p>
+            <span class="spec-meta">BGG · 4 acentos</span>
           </article>
 
-          <article class="cap-cell">
-            <div class="cap-cell-head">
-              <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <article class="spec-row">
+            <span class="spec-num">04</span>
+            <div class="spec-title">
+              <svg class="line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M4 6h16M4 12h10M4 18h14"/>
               </svg>
               <h3>Reglas RAE</h3>
             </div>
             <p>Signos de apertura, cortes de línea sin finales débiles, reparación UTF-8 y control de CPS por subtítulo.</p>
+            <span class="spec-meta">¿ ¡ · UTF-8 · CPS</span>
           </article>
 
-          <article class="cap-cell">
-            <div class="cap-cell-head">
-              <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <article class="spec-row">
+            <span class="spec-num">05</span>
+            <div class="spec-title">
+              <svg class="line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M4 7V4h16v3M9 20h6M12 4v16"/>
               </svg>
               <h3>Estilo y karaoke</h3>
             </div>
             <p>Tipografías propias, packs animados y resaltado palabra por palabra opcional en vista previa, .ASS y MP4.</p>
+            <span class="spec-meta">5 plantillas · .ASS</span>
           </article>
 
-          <article class="cap-cell">
-            <div class="cap-cell-head">
-              <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <article class="spec-row">
+            <span class="spec-num">06</span>
+            <div class="spec-title">
+              <svg class="line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                 <polyline points="7 10 12 15 17 10"/>
                 <line x1="12" y1="15" x2="12" y2="3"/>
@@ -164,6 +206,7 @@
               <h3>Exporta a todo</h3>
             </div>
             <p>.SRT, .VTT, .ASS, .FCPXML 1.9, .JSON por palabra, guiones .TXT y MP4 con subtítulos quemados.</p>
+            <span class="spec-meta">7 formatos · H.264</span>
           </article>
         </div>
       </div>
@@ -174,10 +217,19 @@
         <div class="section-head">
           <span class="section-index">02 · Flujo de trabajo</span>
           <h2>De la línea de tiempo al subtítulo final</h2>
-          <p>Cada paso se adapta a tu modo de trabajo, desde la extracción de audio hasta el perfil de hardware de tu Mac.</p>
+          <p>Un estudio completo de 6 pasos en macOS que se adapta a tu modo de trabajo, desde la extracción de audio hasta el perfil de hardware.</p>
         </div>
 
         <div class="workflow-stack">
+          <figure class="shot">
+            <img src="images/autosubs-es-overview.png" width="1440" height="940" loading="lazy"
+                 alt="Vista completa del estudio MTTN AutoSubs en modo DaVinci Resolve 20 con los 6 pasos, monitor previo 16:9, forma de onda y editor de subtítulos">
+            <figcaption class="shot-caption">
+              <span>Estudio MTTN AutoSubs · Modo DaVinci Resolve 20</span>
+              <span>Apple Silicon Metal · Intel iMac CPU-safe</span>
+            </figcaption>
+          </figure>
+
           <div class="workflow-split">
             <div class="workflow-copy">
               <span class="tc">Paso 01 · Origen</span>
@@ -230,7 +282,7 @@
           </div>
 
           <div class="portrait-duo">
-            <article class="portrait-panel">
+            <article class="portrait-col">
               <div class="workflow-copy">
                 <span class="tc">Paso 03 · Reglas RAE</span>
                 <h3>Español de verdad, no traducido</h3>
@@ -248,7 +300,7 @@
               </figure>
             </article>
 
-            <article class="portrait-panel">
+            <article class="portrait-col">
               <div class="workflow-copy">
                 <span class="tc">Hardware · CPU / VRAM</span>
                 <h3>Afinado para tu Mac</h3>
