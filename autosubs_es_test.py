@@ -2687,6 +2687,13 @@ EOF
         helpers_pos, html_txt.find('<script src="/app.js"></script>')
     )
 
+  def test_static_ui_serves_demo_stage_webp(self) -> None:
+    """/demo-stage.webp is served as WebP for the Demo ES monitor backdrop."""
+    st, hdrs, body = self._request("/demo-stage.webp")
+    self.assertEqual(st, 200)
+    self.assertEqual(hdrs.get("Content-Type"), "image/webp")
+    self.assertTrue(body.startswith(b"RIFF") and body[8:12] == b"WEBP")
+
   # --- Route table, burn-in dedupe and cues_rev (refactor round) ---
 
   def test_route_table_keeps_unknown_and_prefix_semantics(self) -> None:
@@ -2976,9 +2983,9 @@ class ResolveTemplatesAndBundleTest(unittest.TestCase):
     return cls._cached_bundle_meta
 
   def test_zip_bundle_file_count_and_exclusions(self) -> None:
-    """The ZIP has exactly 52 files and excludes __init__.py and site/."""
+    """The ZIP has exactly 53 files and excludes __init__.py and site/."""
     meta = self._bundle_meta()
-    self.assertEqual(meta["file_count"], 52, meta["entries"])
+    self.assertEqual(meta["file_count"], 53, meta["entries"])
     self.assertNotIn("AutoSubs_ES/__init__.py", meta["entries"])
     self.assertFalse(
         any(e.startswith("AutoSubs_ES/site/") for e in meta["entries"])

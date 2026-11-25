@@ -1981,6 +1981,8 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       ctype = "text/css; charset=utf-8"
     elif target.suffix == ".html":
       ctype = "text/html; charset=utf-8"
+    elif target.suffix == ".webp":
+      ctype = "image/webp"
     data = target.read_bytes()
     try:
       self.send_response(HTTPStatus.OK)
@@ -2240,10 +2242,10 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
   # --- GET routes ---
 
   def _handle_static(self, path: str, _body: dict[str, Any]) -> None:
-    """GET / | /index.html | /styles.css | /app_helpers.js | /app.js.
+    """GET / | /index.html | /styles.css | /app_helpers.js | /app.js | demo.
 
-    Serves the static Studio UI files. Fixed allowlist (one exact route
-    per file): no other file under ui/ is reachable.
+    Serves the static Studio UI files (including /demo-stage.webp). Fixed
+    allowlist (one exact route per file): no other file under ui/ is reachable.
     """
     self._serve_static(path)
 
@@ -2971,6 +2973,7 @@ class AutoSubsHandler(BaseHTTPRequestHandler):
       ("GET", "/styles.css", _handle_static, _BODY_NONE),
       ("GET", "/app_helpers.js", _handle_static, _BODY_NONE),
       ("GET", "/app.js", _handle_static, _BODY_NONE),
+      ("GET", "/demo-stage.webp", _handle_static, _BODY_NONE),
       ("GET", "/api/media", _handle_media, _BODY_NONE),
       ("GET", "/api/exported-video", _handle_exported_video, _BODY_NONE),
       ("GET", "/api/status", _handle_status, _BODY_NONE),

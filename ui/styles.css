@@ -1,6 +1,6 @@
 /* ==========================================================================
    MTTN AutoSubs Tool: stylesheet of ui/index.html, served by the local
-   Python server. macOS-native look, dark by default.
+   Python server. macOS post-production cabin look, dark by default.
    Theme switching: the token blocks below react to three sources that
    app.js keeps in sync (applyTheme): the data-theme attribute on <html>,
    the <meta name="color-scheme"> content (matched with :has()), and the
@@ -9,31 +9,35 @@
    controls, left panel, center panel (monitor, waveform, editor), right
    panel (style, exports), shared utilities, style card details, monitor
    backgrounds, user presets, machine dialog.
-   Brand purple (--mttn-purple) is reserved for primary actions and
-   active states (AGENTS.md).
+   Brand purple (--mttn-purple / --mttn-purple-deep) is restrained to
+   primary execution CTAs and subtle focus/active cues (AGENTS.md).
    ========================================================================== */
 
-/* Brand, radius and font tokens shared by every theme. */
+/* Brand, radius, motion and font tokens shared by every theme. */
 :root {
   color-scheme: light dark;
 
-  /* Official La Matatena Brand Highlights (Used strictly for accents, active states, and primary CTAs) */
+  /* Official La Matatena Brand Highlights (restrained to primary CTAs & active/focus cues) */
   --mttn-purple: #8367c7;
   --mttn-purple-deep: #6a4fb3;
-  --mttn-purple-hover: #7356b7;
-  --mttn-purple-active: #6345a7;
+  --mttn-purple-hover: #765bc0;
+  --mttn-purple-active: #5d43a2;
   --mttn-purple-subtle: rgba(131, 103, 199, 0.12);
-  --mttn-purple-border: rgba(131, 103, 199, 0.45);
+  --mttn-purple-border: rgba(131, 103, 199, 0.4);
   --mttn-purple-control: #9f85e3;
   --mttn-purple-tint: #d5c7f7;
 
-  /* Dimensions & macOS Radii */
+  /* Nested Radii Scale (4px grid) */
+  --radius-dialog: 12px;
   --radius-lg: 10px;
-  --radius: 8px;
+  --radius: 6px;
   --radius-sm: 6px;
   --radius-xs: 4px;
 
-  /* Typography: Native Apple Font Stack */
+  /* Motion */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Typography: Native Apple Font Stack (100% local, zero external fonts) */
   --font-heading:
     -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
   --font-body:
@@ -47,164 +51,174 @@
 /* ==========================================================================
    THEME TOKENS: MACOS DARK MODE (DEFAULT)
    ========================================================================== */
-/* Dark is the base (plain :root always matches). The light media query
-   below excludes explicit dark choices with :not(), and :has() lets the
-   color-scheme meta tag select a theme on its own. */
 :root,
 :root[data-theme="dark"],
 :root:has(> head > meta[name="color-scheme"][content="dark"]) {
   color-scheme: dark;
 
-  /* Native macOS Dark Surfaces (Neutral Charcoal & Zinc) */
-  --bg: #18181b;
-  --topbar-bg: #202024;
-  --panel: #1b1b1e;
-  --card: #232328;
+  /* Graphite neutral ramp with 8% hairlines */
+  --bg: #121214;
+  --topbar-bg: #161618;
+  --panel: #161618;
+  --card: #1b1b1e;
   --card-header: #f4f4f6;
-  --surface-inset: #141417;
-  --surface-elevated: #2a2a30;
-  --surface-hover: #34343c;
+  --surface-inset: #0e0e10;
+  --surface-elevated: #242428;
+  --surface-hover: #2c2c32;
 
-  /* Neutral Borders */
-  --border: #2e2e34;
-  --border-control: #3a3a44;
+  /* Neutral Hairline Borders */
+  --border: rgba(244, 244, 246, 0.08);
+  --border-control: rgba(244, 244, 246, 0.14);
   --border-focus: var(--mttn-purple);
-  /* Hovered control borders: buttons, and the stronger one for chips. */
-  --border-hover: #4c4c58;
-  --border-hover-strong: #555562;
+  --border-hover: rgba(244, 244, 246, 0.22);
+  --border-hover-strong: rgba(244, 244, 246, 0.28);
+  --top-hairline: inset 0 1px 0 rgba(255, 255, 255, 0.07);
 
   /* Typography Colors */
   --text: #f4f4f6;
-  --text-secondary: #d4d4d8;
-  --muted: #92929c;
+  --text-secondary: #c8c8d0;
+  --muted: #8e8e98;
+
+  /* High-contrast neutral transport play button */
+  --transport-play-bg: #ededed;
+  --transport-play-fg: #121214;
+  --transport-play-hover: #ffffff;
+
+  /* Neutral range sliders */
+  --slider-track: rgba(244, 244, 246, 0.16);
+  --slider-fill: #8e8e98;
+  --slider-thumb: #f4f4f6;
 
   /* Semantic Status Tokens */
-  --ok: #2ecc71;
-  --ok-bg: rgba(46, 204, 113, 0.12);
-  --ok-border: rgba(46, 204, 113, 0.35);
-  --warn: #f1c40f;
-  --warn-bg: rgba(241, 196, 15, 0.12);
-  --warn-border: rgba(241, 196, 15, 0.35);
-  --danger: #ef4444;
-  --danger-bg: rgba(239, 68, 68, 0.12);
-  --danger-border: rgba(239, 68, 68, 0.35);
-  --info: #38bdf8;
-  --info-bg: rgba(56, 189, 248, 0.12);
-  --info-border: rgba(56, 189, 248, 0.35);
+  --ok: #34d399;
+  --ok-bg: rgba(52, 211, 153, 0.1);
+  --ok-border: rgba(52, 211, 153, 0.28);
+  --warn: #eab308;
+  --warn-bg: rgba(234, 179, 8, 0.1);
+  --warn-border: rgba(234, 179, 8, 0.3);
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.12);
+  --danger-border: rgba(248, 113, 113, 0.32);
+  --info: #93c5fd;
+  --info-bg: rgba(147, 197, 253, 0.1);
+  --info-border: rgba(147, 197, 253, 0.28);
 
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-topbar: 0 1px 4px rgba(0, 0, 0, 0.25);
-  --waveform-bg: #141417;
-  --waveform-peak: #555562;
-  scrollbar-color: #4a4a55 var(--surface-inset);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --waveform-bg: #0e0e10;
+  --waveform-peak: #4e4e58;
+  scrollbar-color: #3a3a42 var(--surface-inset);
 }
 
 /* ==========================================================================
    THEME TOKENS: MACOS LIGHT MODE (SYSTEM AUTO)
    ========================================================================== */
-/* Only when the OS is light and the user has not forced dark. */
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]):not(:has(> head > meta[name="color-scheme"][content="dark"])) {
     color-scheme: light;
 
-    /* Native macOS Light Surfaces (Clean Silver & White) */
-    --bg: #f4f4f6;
+    --bg: #f5f5f7;
     --topbar-bg: #ffffff;
-    --panel: #f4f4f6;
+    --panel: #fafafc;
     --card: #ffffff;
     --card-header: #18181b;
-    --surface-inset: #f0f0f3;
-    --surface-elevated: #e4e4e7;
-    --surface-hover: #ececee;
+    --surface-inset: #ededf0;
+    --surface-elevated: #e5e5ea;
+    --surface-hover: #dcdce2;
 
-    /* Neutral Borders */
-    --border: #d4d4d8;
-    --border-control: #c4c4c8;
+    --border: rgba(24, 24, 27, 0.09);
+    --border-control: rgba(24, 24, 27, 0.16);
     --border-focus: var(--mttn-purple);
-    --border-hover: #a1a1aa;
-    --border-hover-strong: #94949e;
+    --border-hover: rgba(24, 24, 27, 0.26);
+    --border-hover-strong: rgba(24, 24, 27, 0.34);
+    --top-hairline: inset 0 1px 0 rgba(255, 255, 255, 0.8);
 
-    /* Typography Colors */
     --text: #18181b;
     --text-secondary: #3f3f46;
-    --muted: #71717a;
+    --muted: #6e6e77;
 
-    /* Semantic Status Tokens (Calibrated for light background contrast) */
+    --transport-play-bg: #18181b;
+    --transport-play-fg: #ffffff;
+    --transport-play-hover: #2c2c32;
+
+    --slider-track: rgba(24, 24, 27, 0.16);
+    --slider-fill: #52525b;
+    --slider-thumb: #18181b;
+
     --ok: #15803d;
-    --ok-bg: rgba(21, 128, 61, 0.1);
-    --ok-border: rgba(21, 128, 61, 0.3);
-    --warn: #b45309;
-    --warn-bg: rgba(180, 83, 9, 0.1);
-    --warn-border: rgba(180, 83, 9, 0.3);
+    --ok-bg: rgba(21, 128, 61, 0.08);
+    --ok-border: rgba(21, 128, 61, 0.26);
+    --warn: #a16207;
+    --warn-bg: rgba(161, 98, 7, 0.08);
+    --warn-border: rgba(161, 98, 7, 0.26);
     --danger: #b91c1c;
-    --danger-bg: rgba(185, 28, 28, 0.1);
-    --danger-border: rgba(185, 28, 28, 0.3);
-    --info: #0284c7;
-    --info-bg: rgba(2, 132, 199, 0.1);
-    --info-border: rgba(2, 132, 199, 0.3);
+    --danger-bg: rgba(185, 28, 28, 0.08);
+    --danger-border: rgba(185, 28, 28, 0.26);
+    --info: #0369a1;
+    --info-bg: rgba(3, 105, 161, 0.08);
+    --info-border: rgba(3, 105, 161, 0.26);
 
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
-    --shadow-topbar: 0 1px 4px rgba(0, 0, 0, 0.06);
-    --waveform-bg: #f0f0f3;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+    --waveform-bg: #ededf0;
     --waveform-peak: #94949e;
-    scrollbar-color: #b0b0b8 var(--surface-inset);
+    scrollbar-color: #b4b4bc var(--surface-inset);
   }
 }
 
 /* ==========================================================================
    THEME TOKENS: MACOS LIGHT MODE (EXPLICIT OVERRIDE)
    ========================================================================== */
-/* User forced light (data-theme or meta tag), whatever the OS says.
-   Values duplicate the system-light block above; keep both in sync. */
 :root[data-theme="light"],
 :root:has(> head > meta[name="color-scheme"][content="light"]) {
   color-scheme: light;
 
-  /* Native macOS Light Surfaces (Clean Silver & White) */
-  --bg: #f4f4f6;
+  --bg: #f5f5f7;
   --topbar-bg: #ffffff;
-  --panel: #f4f4f6;
+  --panel: #fafafc;
   --card: #ffffff;
   --card-header: #18181b;
-  --surface-inset: #f0f0f3;
-  --surface-elevated: #e4e4e7;
-  --surface-hover: #ececee;
+  --surface-inset: #ededf0;
+  --surface-elevated: #e5e5ea;
+  --surface-hover: #dcdce2;
 
-  /* Neutral Borders */
-  --border: #d4d4d8;
-  --border-control: #c4c4c8;
+  --border: rgba(24, 24, 27, 0.09);
+  --border-control: rgba(24, 24, 27, 0.16);
   --border-focus: var(--mttn-purple);
-  --border-hover: #a1a1aa;
-  --border-hover-strong: #94949e;
+  --border-hover: rgba(24, 24, 27, 0.26);
+  --border-hover-strong: rgba(24, 24, 27, 0.34);
+  --top-hairline: inset 0 1px 0 rgba(255, 255, 255, 0.8);
 
-  /* Typography Colors */
   --text: #18181b;
   --text-secondary: #3f3f46;
-  --muted: #71717a;
+  --muted: #6e6e77;
 
-  /* Semantic Status Tokens */
+  --transport-play-bg: #18181b;
+  --transport-play-fg: #ffffff;
+  --transport-play-hover: #2c2c32;
+
+  --slider-track: rgba(24, 24, 27, 0.16);
+  --slider-fill: #52525b;
+  --slider-thumb: #18181b;
+
   --ok: #15803d;
-  --ok-bg: rgba(21, 128, 61, 0.1);
-  --ok-border: rgba(21, 128, 61, 0.3);
-  --warn: #b45309;
-  --warn-bg: rgba(180, 83, 9, 0.1);
-  --warn-border: rgba(180, 83, 9, 0.3);
+  --ok-bg: rgba(21, 128, 61, 0.08);
+  --ok-border: rgba(21, 128, 61, 0.26);
+  --warn: #a16207;
+  --warn-bg: rgba(161, 98, 7, 0.08);
+  --warn-border: rgba(161, 98, 7, 0.26);
   --danger: #b91c1c;
-  --danger-bg: rgba(185, 28, 28, 0.1);
-  --danger-border: rgba(185, 28, 28, 0.3);
-  --info: #0284c7;
-  --info-bg: rgba(2, 132, 199, 0.1);
-  --info-border: rgba(2, 132, 199, 0.3);
+  --danger-bg: rgba(185, 28, 28, 0.08);
+  --danger-border: rgba(185, 28, 28, 0.26);
+  --info: #0369a1;
+  --info-bg: rgba(3, 105, 161, 0.08);
+  --info-border: rgba(3, 105, 161, 0.26);
 
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
-  --shadow-topbar: 0 1px 4px rgba(0, 0, 0, 0.06);
-  --waveform-bg: #f0f0f3;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --waveform-bg: #ededf0;
   --waveform-peak: #94949e;
-  scrollbar-color: #b0b0b8 var(--surface-inset);
+  scrollbar-color: #b4b4bc var(--surface-inset);
 }
 
-/* Forced colors (high-contrast modes): map tokens to system colors and keep
-   brand-filled controls readable with Highlight / HighlightText. */
+/* Forced colors (high-contrast modes): map tokens to system keywords. */
 @media (forced-colors: active) {
   :root {
     --bg: Canvas;
@@ -216,19 +230,42 @@
     --border: CanvasText;
     --border-control: ButtonText;
     --text: CanvasText;
+    --text-secondary: CanvasText;
     --muted: GrayText;
     --mttn-purple: Highlight;
     --mttn-purple-deep: Highlight;
+    --transport-play-bg: Highlight;
+    --transport-play-fg: HighlightText;
+    --slider-track: ButtonText;
+    --slider-fill: Highlight;
+    --slider-thumb: Highlight;
   }
 
   .btn-primary,
+  .btn-transport,
   .mode-btn.active,
-  .chip.active,
-  .mttn-prefix {
+  .chip.active {
     forced-color-adjust: none;
     background: Highlight;
     color: HighlightText;
     border-color: HighlightText;
+  }
+
+  .chip.active::before {
+    background: HighlightText;
+  }
+
+  .cue-item.active {
+    border-left: 3px solid Highlight;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
   }
 }
 
@@ -250,7 +287,9 @@ body {
   color: var(--text);
   font-family: var(--font-body);
   font-size: 13px;
+  font-weight: 400;
   line-height: 1.45;
+  letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -264,6 +303,17 @@ code {
   border-radius: var(--radius-xs);
 }
 
+kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 5px;
+  background: var(--surface-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-xs);
+}
+
 /* ==========================================================================
    TOPBAR & BRANDING
    ========================================================================== */
@@ -273,11 +323,11 @@ code {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  min-height: 52px;
   gap: 12px;
-  padding: 10px 18px;
+  padding: 8px 16px;
   background: var(--topbar-bg);
   border-bottom: 1px solid var(--border);
-  box-shadow: var(--shadow-topbar);
 }
 
 .brand {
@@ -287,11 +337,10 @@ code {
 }
 
 .brand-logo {
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
   border-radius: var(--radius-sm);
-  background: var(--mttn-purple);
-  box-shadow: 0 2px 8px rgba(131, 103, 199, 0.35);
+  background: var(--mttn-purple-deep);
   color: #ffffff;
   display: grid;
   place-items: center;
@@ -299,38 +348,31 @@ code {
 }
 
 .matatena-icon {
-  width: 24px;
-  height: 24px;
+  width: 18px;
+  height: 18px;
   display: block;
 }
 
 .brand h1 {
   margin: 0;
   font-family: var(--font-heading);
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
   color: var(--text);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   white-space: nowrap;
 }
 
 .mttn-prefix {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 6px;
-  border-radius: var(--radius-xs);
-  background: var(--mttn-purple);
-  color: #ffffff;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0;
 }
 
-/* Native macOS Segmented Control */
+/* Native macOS Segmented Control (neutral surface, no purple fill) */
 .mode-switch {
   display: inline-flex;
   background: var(--surface-inset);
@@ -345,14 +387,15 @@ code {
   background: transparent;
   color: var(--muted);
   font-family: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 4px 11px;
+  font-size: 12px;
+  font-weight: 500;
+  min-height: 26px;
+  padding: 4px 12px;
   border-radius: var(--radius-xs);
   cursor: pointer;
   transition:
-    background 0.15s ease,
-    color 0.15s ease;
+    background-color 150ms var(--ease),
+    color 150ms var(--ease);
 }
 
 .mode-btn:hover {
@@ -360,50 +403,65 @@ code {
 }
 
 .mode-btn.active {
-  background: var(--mttn-purple);
-  color: #ffffff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  background: var(--surface-elevated);
+  color: var(--text);
+  box-shadow: var(--top-hairline);
+}
+
+:root[data-theme="light"] .mode-btn.active,
+:root:has(> head > meta[name="color-scheme"][content="light"]) .mode-btn.active {
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not(:has(> head > meta[name="color-scheme"][content="dark"]))
+    .mode-btn.active {
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
 }
 
 .topbar-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
 }
 
-/* Status button: CPU · GPU · Resolve as discreet text. Only what needs
-   attention is colored (pill-warn / pill-danger); "all good" stays neutral.
-   It opens the «Esta Mac» dialog. */
+/* Status button: CPU · GPU · Resolve as calm inline readout */
 .status-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 46ch;
+  max-width: 48ch;
+  min-height: 28px;
   padding: 4px 10px;
-  margin-inline-end: 4px;
   border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
   color: var(--text-secondary);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   transition:
-    background 0.15s ease,
-    color 0.15s ease;
+    background-color 150ms var(--ease),
+    border-color 150ms var(--ease),
+    color 150ms var(--ease);
 }
 
 .status-btn:hover {
   background: var(--surface-elevated);
+  border-color: var(--border-control);
   color: var(--text);
 }
 
 .status-gear {
   flex: none;
-  opacity: 0.7;
+  color: var(--muted);
 }
 
 .status-btn .pill {
@@ -426,7 +484,7 @@ code {
 .status-btn .pill-warn,
 .status-btn .pill-danger {
   color: var(--warn);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .status-btn .pill-danger {
@@ -438,7 +496,8 @@ code {
   align-items: center;
   justify-content: center;
   width: 28px;
-  height: 26px;
+  height: 28px;
+  min-height: 28px;
   padding: 0;
 }
 
@@ -446,16 +505,15 @@ code {
 .theme-toggle-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
   cursor: pointer;
   user-select: none;
-  font-weight: 600;
 }
 
 .theme-state {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
 }
 
 .theme-state-to-dark {
@@ -466,8 +524,6 @@ code {
   display: inline-flex;
 }
 
-/* The toggle shows the action ("switch to light/dark"), so its visible label
-   flips with the effective theme, from any of the three theme sources. */
 :root[data-theme="light"] .theme-state-to-light,
 :root:has(> head > meta[name="color-scheme"][content="light"]) .theme-state-to-light {
   display: none;
@@ -489,21 +545,21 @@ code {
   }
 }
 
-/* Pills: CPS badges, topbar status and warnings. Colored variants mark
-   states that need attention; neutral is the default. */
+/* Badges / Pills: consistent 4px radius (no 999px lozenges) */
 .badge,
 .pill {
   display: inline-flex;
   align-items: center;
-  padding: 3px 8px;
-  border-radius: 999px;
+  padding: 2px 8px;
+  border-radius: var(--radius-xs);
   font-size: 11px;
   font-weight: 500;
+  font-variant-numeric: tabular-nums;
   border: 1px solid transparent;
 }
 
 .pill-neutral {
-  background: var(--surface-elevated);
+  background: var(--surface-inset);
   color: var(--text-secondary);
   border-color: var(--border);
 }
@@ -515,9 +571,9 @@ code {
 }
 
 .pill-info {
-  background: var(--info-bg);
-  color: var(--info);
-  border-color: var(--info-border);
+  background: var(--surface-inset);
+  color: var(--text-secondary);
+  border-color: var(--border);
 }
 
 .pill-warn {
@@ -533,67 +589,115 @@ code {
 }
 
 /* ==========================================================================
-   WORKSPACE LAYOUT
+   WORKSPACE LAYOUT (Continuous Inspector Sidebars + Priority Center Canvas)
    ========================================================================== */
 
-/* Three columns: source and settings (320px), monitor + editor (fluid,
-   min 440px), style and exports (310px). 62px is about the topbar height. */
 .workspace {
   display: grid;
-  grid-template-columns: 320px minmax(440px, 1fr) 310px;
-  gap: 14px;
-  padding: 14px;
-  max-width: 1840px;
-  margin: 0 auto;
-  min-height: calc(100vh - 62px);
-}
-
-/* Medium windows: the right panel moves below as an auto-fit card grid. */
-@media (max-width: 1220px) {
-  .workspace {
-    grid-template-columns: 300px 1fr;
-  }
-  .panel-right {
-    grid-column: 1 / -1;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  }
-}
-
-/* Narrow windows: single column. */
-@media (max-width: 840px) {
-  .workspace {
-    grid-template-columns: 1fr;
-  }
+  grid-template-columns: 304px minmax(440px, 1fr) 296px;
+  gap: 0;
+  padding: 0;
+  width: 100%;
+  min-height: calc(100vh - 52px);
 }
 
 .panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
 
-.card {
+.panel-left {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+
+.panel-right {
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+}
+
+.panel-center {
+  background: var(--bg);
+  padding: 16px;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* Sidebar sections divided by horizontal hairlines (no box-in-box nesting) */
+.panel-left .card,
+.panel-right .card {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 16px;
+  transition:
+    background-color 150ms var(--ease),
+    opacity 150ms var(--ease);
+}
+
+.panel-left .card + .card,
+.panel-right .card + .card {
+  border-top: 1px solid var(--border);
+}
+
+/* Center cards stay distinct elevated canvases */
+.panel-center .card {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  padding: 16px;
   transition:
-    border-color 0.2s ease,
-    opacity 0.2s ease;
+    border-color 150ms var(--ease),
+    opacity 150ms var(--ease);
 }
 
 .card h2 {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   font-family: var(--font-heading);
   font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.005em;
+  font-weight: 500;
+  letter-spacing: 0;
   color: var(--card-header);
 }
 
-/* Card that does not apply to the current mode: collapses to its title and
-   a note (class toggled by setAppMode() in app.js). */
+/* Medium windows: right inspector moves below as a clean multi-column strip */
+@media (max-width: 1220px) {
+  .workspace {
+    grid-template-columns: 296px 1fr;
+  }
+  .panel-right {
+    grid-column: 1 / -1;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+  .panel-right .card + .card {
+    border-top: none;
+    border-left: 1px solid var(--border);
+  }
+}
+
+/* Narrow windows: single column */
+@media (max-width: 840px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .panel-left {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-right {
+    display: flex;
+    flex-direction: column;
+  }
+  .panel-right .card + .card {
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+}
+
+/* Card that does not apply to the current mode */
 .card-muted > :not(h2, .card-collapsed-note) {
   display: none;
 }
@@ -605,7 +709,7 @@ code {
 .card-collapsed-note {
   display: none;
   margin: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -613,25 +717,29 @@ code {
   display: block;
 }
 
-/* Card holding the primary action of the current mode (setAppMode). */
+/* Subtle section cue without any purple halo */
 .card-highlight {
-  border-color: var(--mttn-purple-border);
-  box-shadow: 0 0 0 1px rgba(131, 103, 199, 0.25);
+  background: var(--card);
 }
 
 /* ==========================================================================
-   FORM CONTROLS & INPUTS
+   FORM CONTROLS & INPUTS (4px scale, neutral sliders)
    ========================================================================== */
 
 .field {
-  margin-bottom: 9px;
+  margin-bottom: 12px;
+}
+
+.field:last-child {
+  margin-bottom: 0;
 }
 
 .field label {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 400;
   color: var(--muted);
-  margin-bottom: 3px;
+  margin-bottom: 4px;
 }
 
 input[type="text"],
@@ -639,37 +747,134 @@ input[type="number"],
 select,
 textarea {
   width: 100%;
+  min-height: 32px;
   background: var(--surface-inset);
   color: var(--text);
   border: 1px solid var(--border-control);
   border-radius: var(--radius-sm);
-  padding: 5px 8px;
+  padding: 6px 8px;
   font-family: inherit;
   font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
   transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
+    border-color 150ms var(--ease),
+    background-color 150ms var(--ease);
+}
+
+textarea {
+  min-height: 56px;
+  line-height: 1.4;
+}
+
+input[type="number"] {
+  font-variant-numeric: tabular-nums;
 }
 
 input[type="color"] {
   width: 100%;
   height: 28px;
   padding: 2px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border-control);
   background: var(--surface-inset);
   cursor: pointer;
 }
 
+input[type="color"]:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 input[type="checkbox"],
-input[type="range"],
 progress {
   accent-color: var(--mttn-purple);
 }
 
+/* Custom neutral range sliders (4px track, 12px circular thumb in primary text color).
+   WebKit and Firefox pseudo-elements are declared in separate rule blocks. */
 input[type="range"] {
+  --slider-track-size: 4px;
+  --slider-thumb-size: 12px;
+  --slider-track-radius: 4px;
+  --slider-thumb-radius: 50%;
+  --slider-direction: to right;
+  --attr-min: attr(min type(<number>), 0);
+  --attr-max: attr(max type(<number>), 100);
+  --control-value: attr(value type(<number>), 50);
+  --slider-progress: calc(progress(var(--control-value), var(--attr-min), var(--attr-max)) * 100%);
+
+  appearance: none;
+  -webkit-appearance: none;
   width: 100%;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
   cursor: pointer;
+}
+
+@supports not (opacity: progress(1, 0, 100)) {
+  input[type="range"] {
+    --slider-progress: calc(
+      (var(--control-value, 50) - var(--attr-min, 0)) /
+        max(0.0001, (var(--attr-max, 100) - var(--attr-min, 0))) * 100%
+    );
+  }
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: var(--slider-track-size);
+  border: 0;
+  border-radius: var(--slider-track-radius);
+  background: linear-gradient(
+    var(--slider-direction),
+    var(--slider-fill) var(--slider-progress),
+    var(--slider-track) var(--slider-progress)
+  );
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: var(--slider-thumb-size);
+  height: var(--slider-thumb-size);
+  margin-block-start: calc((var(--slider-track-size) - var(--slider-thumb-size)) / 2);
+  border: 0;
+  border-radius: var(--slider-thumb-radius);
+  background: var(--slider-thumb);
+  transition: transform 140ms var(--ease);
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+  transform: scale(1.1);
+}
+
+input[type="range"]::-moz-range-track {
+  height: var(--slider-track-size);
+  border: 0;
+  border-radius: var(--slider-track-radius);
+  background: var(--slider-track);
+}
+
+input[type="range"]::-moz-range-progress {
+  height: var(--slider-track-size);
+  border-radius: var(--slider-track-radius);
+  background: var(--slider-fill);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: var(--slider-thumb-size);
+  height: var(--slider-thumb-size);
+  border: 0;
+  border-radius: var(--slider-thumb-radius);
+  background: var(--slider-thumb);
+}
+
+input[type="range"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 input:not([type="range"]):user-invalid,
@@ -689,9 +894,15 @@ button:focus-visible,
   border-color: var(--mttn-purple);
 }
 
+input[type="range"]:focus-visible {
+  outline: 2px solid var(--mttn-purple);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
 .inline-field {
   display: flex;
-  gap: 6px;
+  gap: 8px;
 }
 
 .grid-2 {
@@ -709,8 +920,8 @@ button:focus-visible,
 .check-row {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-bottom: 7px;
+  gap: 8px;
+  margin-bottom: 8px;
   cursor: pointer;
   font-size: 12px;
   color: var(--text-secondary);
@@ -718,6 +929,7 @@ button:focus-visible,
 
 .check-row input[type="checkbox"] {
   cursor: pointer;
+  margin: 0;
 }
 
 .box-row {
@@ -733,19 +945,27 @@ button:focus-visible,
 
 /* Buttons */
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 32px;
   border: 1px solid var(--border-control);
   border-radius: var(--radius-sm);
-  padding: 6px 12px;
+  padding: 6px 10px;
   font-family: inherit;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
+  letter-spacing: 0;
   cursor: pointer;
   color: var(--text);
   background: var(--surface-elevated);
+  white-space: nowrap;
   transition:
-    background 0.15s ease,
-    border-color 0.15s ease,
-    transform 0.05s ease;
+    background-color 150ms var(--ease),
+    border-color 150ms var(--ease),
+    color 150ms var(--ease),
+    transform 140ms var(--ease);
 }
 
 .btn:hover {
@@ -754,7 +974,7 @@ button:focus-visible,
 }
 
 .btn:active {
-  transform: translateY(1px);
+  transform: scale(0.98);
 }
 
 .btn:disabled {
@@ -763,20 +983,35 @@ button:focus-visible,
   transform: none;
 }
 
-/* Primary Accent CTA (The brand highlight!) */
+/* Primary Execution CTA (#6a4fb3, >6:1 with white, crisp top hairline, zero glow) */
 .btn-primary {
-  background: var(--mttn-purple);
-  border-color: var(--mttn-purple-deep);
+  background: var(--mttn-purple-deep);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   color: #ffffff;
 }
 
 .btn-primary:hover {
   background: var(--mttn-purple-hover);
-  border-color: var(--mttn-purple-hover);
+  border-color: rgba(255, 255, 255, 0.16);
 }
 
 .btn-primary:active {
   background: var(--mttn-purple-active);
+  transform: scale(0.98);
+}
+
+/* Neutral high-contrast transport play button (does not compete with Transcribe) */
+.btn-transport {
+  background: var(--transport-play-bg);
+  border-color: transparent;
+  color: var(--transport-play-fg);
+}
+
+.btn-transport:hover {
+  background: var(--transport-play-hover);
+  border-color: transparent;
+  color: var(--transport-play-fg);
 }
 
 .btn-secondary {
@@ -803,18 +1038,20 @@ button:focus-visible,
 }
 
 .btn-danger:hover {
-  background: rgba(239, 68, 68, 0.22);
+  background: rgba(248, 113, 113, 0.2);
   border-color: var(--danger);
 }
 
 .btn-sm {
-  padding: 4px 8px;
-  font-size: 11px;
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .btn-xs {
-  padding: 2px 6px;
-  font-size: 10px;
+  min-height: 24px;
+  padding: 2px 8px;
+  font-size: 11px;
 }
 
 .full-width {
@@ -824,7 +1061,7 @@ button:focus-visible,
 .btn-row {
   display: flex;
   gap: 8px;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
 .btn-row .btn:first-child {
@@ -835,30 +1072,32 @@ button:focus-visible,
    LEFT PANEL: SOURCE TABS, DROPZONE, JOB PROGRESS, GLOSSARY
    ========================================================================== */
 
-/* Tabs */
 .tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 4px;
+  gap: 2px;
   background: var(--surface-inset);
   border: 1px solid var(--border);
-  padding: 3px;
+  padding: 2px;
   border-radius: var(--radius-sm);
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .tab-btn {
   border: none;
   background: transparent;
   color: var(--muted);
-  padding: 5px;
+  min-height: 26px;
+  padding: 4px 6px;
   border-radius: var(--radius-xs);
-  font-weight: 600;
+  font-family: inherit;
+  font-weight: 500;
   font-size: 11.5px;
+  white-space: nowrap;
   cursor: pointer;
   transition:
-    background 0.15s ease,
-    color 0.15s ease;
+    background-color 150ms var(--ease),
+    color 150ms var(--ease);
 }
 
 .tab-btn:hover {
@@ -868,7 +1107,21 @@ button:focus-visible,
 .tab-btn.active {
   background: var(--surface-elevated);
   color: var(--text);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--top-hairline);
+}
+
+:root[data-theme="light"] .tab-btn.active,
+:root:has(> head > meta[name="color-scheme"][content="light"]) .tab-btn.active {
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not(:has(> head > meta[name="color-scheme"][content="dark"]))
+    .tab-btn.active {
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
 }
 
 .tab-content {
@@ -883,8 +1136,8 @@ button:focus-visible,
   background: var(--surface-inset);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 7px 10px;
-  font-size: 11.5px;
+  padding: 8px 10px;
+  font-size: 12px;
   color: var(--text-secondary);
   margin-top: 8px;
 }
@@ -894,16 +1147,17 @@ button:focus-visible,
   align-items: center;
   justify-content: center;
   text-align: center;
-  min-height: 72px;
-  border: 1.5px dashed var(--border-control);
-  border-radius: var(--radius);
+  min-height: 76px;
+  border: 1px dashed var(--border-control);
+  border-radius: var(--radius-sm);
   padding: 12px;
   color: var(--muted);
   cursor: pointer;
   background: var(--surface-inset);
   transition:
-    border-color 0.15s ease,
-    background 0.15s ease;
+    border-color 150ms var(--ease),
+    background-color 150ms var(--ease),
+    color 150ms var(--ease);
 }
 
 .dropzone:hover,
@@ -913,35 +1167,41 @@ button:focus-visible,
   background: rgba(131, 103, 199, 0.06);
 }
 
-/* Native file input stays hidden; the surrounding label is the target. */
 .dropzone input {
   display: none;
 }
 
 .hint {
-  margin: 5px 0 0;
+  margin: 4px 0 0;
   font-size: 11px;
   color: var(--muted);
+  line-height: 1.45;
 }
 
 .job-box {
-  margin-top: 10px;
+  margin-top: 12px;
   background: var(--surface-inset);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  padding: 8px 12px;
 }
 
 .job-top {
   display: flex;
   justify-content: space-between;
   font-size: 11px;
-  margin-bottom: 5px;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 6px;
+}
+
+#job-pct {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .progress-track {
-  height: 6px;
-  border-radius: 999px;
+  height: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-elevated);
   overflow: hidden;
 }
@@ -949,7 +1209,7 @@ button:focus-visible,
 .progress-fill {
   height: 100%;
   background: var(--mttn-purple);
-  transition: width 0.2s ease;
+  transition: width 160ms var(--ease);
 }
 
 .glossary-head {
@@ -969,20 +1229,22 @@ button:focus-visible,
    ========================================================================== */
 
 .preview-card {
-  padding-bottom: 12px;
+  padding: 16px;
 }
 
 .preview-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
 .preview-title {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .preview-title h2 {
@@ -994,12 +1256,12 @@ button:focus-visible,
   gap: 4px;
 }
 
-/* The monitor stays dark in both themes, like a video viewer. */
+/* The monitor stays dark in both themes, like a broadcast video viewer. */
 .stage-wrap {
   display: flex;
   justify-content: center;
-  background: #0e0e11;
-  border-radius: var(--radius);
+  background: #0a0a0c;
+  border-radius: var(--radius-sm);
   padding: 8px;
   border: 1px solid var(--border);
 }
@@ -1007,10 +1269,20 @@ button:focus-visible,
 .preview-stage {
   position: relative;
   width: 100%;
-  max-height: 270px;
-  background: #0a0a0c;
+  max-height: 288px;
+  background: #09090b;
   border-radius: var(--radius-xs);
   overflow: hidden;
+}
+
+.preview-demo-scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  display: block;
 }
 
 .preview-video {
@@ -1024,32 +1296,29 @@ button:focus-visible,
 
 .preview-stage.aspect-16-9 {
   aspect-ratio: 16 / 9;
-  max-width: 480px;
+  max-width: 512px;
 }
 
-/* Vertical (Reels) preview, kept narrow so the card does not grow tall. */
 .preview-stage.aspect-9-16 {
   aspect-ratio: 9 / 16;
   max-width: 180px;
 }
 
-/* Title-safe guide (7% inset); never intercepts pointer events. */
 .stage-grid {
   position: absolute;
   inset: 7%;
-  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border: 1px dashed rgba(255, 255, 255, 0.12);
   pointer-events: none;
 }
 
-/* Caption overlay. renderPreviewAtMs() in app.js sets font, size, bottom %,
-   colors, stroke and transform inline on every frame; these are defaults. */
+/* Caption overlay inside the video frame (inherits user-chosen subtitle weight). */
 .preview-caption {
   position: absolute;
   left: 6%;
   right: 6%;
   bottom: 12%;
   text-align: center;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.25;
   white-space: pre-line;
   padding: 4px 10px;
@@ -1058,41 +1327,40 @@ button:focus-visible,
   margin: 0 auto;
 }
 
-/* flex-wrap lets the transport controls wrap on narrow panels. */
 .transport {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin: 8px 0 6px;
+  margin: 12px 0 8px;
 }
 
 .mono {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
   margin-left: auto;
 }
 
 .rate-select {
-  width: 70px;
+  width: 72px;
+  min-height: 28px;
+  padding: 4px 6px;
 }
 
 .zoom-group {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
 }
 
 .zoom-readout {
   margin-left: 0;
-  min-width: 42px;
+  min-width: 44px;
   text-align: center;
 }
 
-/* Sized in CSS px; app.js scales the backing store by devicePixelRatio and
-   assumes 96px before layout (waveSize). touch-action and user-select stop
-   pointer drags from panning the page or selecting text. */
 #waveform-canvas {
   width: 100%;
   height: 96px;
@@ -1106,20 +1374,7 @@ button:focus-visible,
 }
 
 .waveform-hint {
-  margin: 4px 0 0;
-}
-
-input[type="color"]:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.waveform-hint kbd {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  padding: 0 4px;
-  border: 1px solid var(--border-control);
-  border-radius: 3px;
+  margin: 8px 0 0;
 }
 
 .editor-card {
@@ -1135,27 +1390,27 @@ input[type="color"]:disabled {
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 .stats-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .search-replace {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
 }
 
 .search-replace input {
-  width: 110px;
+  width: 116px;
+  min-height: 28px;
+  padding: 4px 8px;
 }
 
-/* Scrolls internally; app.js scrolls only this box (scrollCueIntoList) so
-   the page and the waveform never move under the pointer. */
 .cue-list {
   display: flex;
   flex-direction: column;
@@ -1165,7 +1420,6 @@ input[type="color"]:disabled {
   padding-right: 4px;
 }
 
-/* No per-cue Resolve jump button in standalone mode. */
 .cue-list.mode-standalone .cue-btn-resolve {
   display: none;
 }
@@ -1173,16 +1427,19 @@ input[type="color"]:disabled {
 .cue-item {
   background: var(--surface-inset);
   border: 1px solid var(--border);
+  border-left: 2px solid transparent;
   border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  padding: 10px 12px;
   transition:
-    border-color 0.15s ease,
-    background 0.15s ease;
+    border-color 150ms var(--ease),
+    background-color 150ms var(--ease);
 }
 
+/* Active cue: 2px purple left bar + subtle surface step (no purple flood) */
 .cue-item.active {
-  border-color: var(--mttn-purple-border);
-  background: var(--mttn-purple-subtle);
+  border-color: var(--border-control);
+  border-left-color: var(--mttn-purple);
+  background: var(--surface-elevated);
 }
 
 .cue-head {
@@ -1190,27 +1447,34 @@ input[type="color"]:disabled {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  margin-bottom: 5px;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .cue-times {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-family: var(--font-mono);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
+}
+
+.cue-times strong {
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 
 .cue-times input {
   width: 68px;
-  padding: 2px 4px;
+  min-height: 24px;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
-/* Editable milliseconds only appear on the active or focused cue; elsewhere
-   the readable «00:04.22 → 00:09.16» is enough. */
 .cue-item:not(.active, :focus-within) .cue-times input {
   display: none;
 }
@@ -1218,6 +1482,7 @@ input[type="color"]:disabled {
 .cue-cps {
   font-family: var(--font-mono);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
   padding-inline: 4px;
 }
@@ -1226,49 +1491,61 @@ input[type="color"]:disabled {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  transition: opacity 0.15s ease;
+  transition: opacity 150ms var(--ease);
 }
 
-/* Dim cue tools only where hover exists; touch screens always show them. */
+.cue-tools .btn {
+  min-height: 24px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.cue-tools .btn-icon-mini {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+}
+
 @media (hover: hover) {
   .cue-item:not(.active, :hover, :focus-within) .cue-tools {
-    opacity: 0.25;
+    opacity: 0.35;
   }
 }
 
 .stats-row .stat {
-  font-size: 11.5px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
 
-/* Middle-dot separator between consecutive stats. */
 .stats-row .stat + .stat::before {
   content: "·";
-  margin-inline-end: 6px;
+  margin-inline-end: 8px;
 }
 
 .stats-row .stat-warn {
   color: var(--warn);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .cue-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
 .cue-text {
   width: 100%;
   resize: vertical;
-  min-height: 42px;
+  min-height: 44px;
   font-size: 13px;
-  font-weight: 500;
-  line-height: 1.35;
+  font-weight: 400;
+  line-height: 1.4;
 }
 
 .cue-warns {
-  margin-top: 4px;
+  margin-top: 6px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -1281,8 +1558,8 @@ input[type="color"]:disabled {
 .style-chips {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  margin-bottom: 10px;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .chip-wide {
@@ -1290,44 +1567,66 @@ input[type="color"]:disabled {
 }
 
 .chip {
-  border: 1px solid var(--border-control);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  border: 1px solid var(--border);
   background: var(--surface-inset);
   color: var(--text-secondary);
   border-radius: var(--radius-sm);
-  padding: 5px 8px;
-  font-size: 11px;
-  font-weight: 600;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
   transition:
-    border-color 0.15s ease,
-    background 0.15s ease,
-    color 0.15s ease;
+    border-color 150ms var(--ease),
+    background-color 150ms var(--ease),
+    color 150ms var(--ease);
 }
 
 .chip:hover {
-  border-color: var(--border-hover-strong);
+  border-color: var(--border-hover);
   color: var(--text);
 }
 
+/* Active style chip: elevated neutral surface + 6px brand purple dot (no purple brick) */
 .chip.active {
-  border-color: var(--mttn-purple);
+  border-color: var(--border-hover-strong);
+  background: var(--surface-elevated);
+  color: var(--text);
+  box-shadow: var(--top-hairline);
+}
+
+.chip.active::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
   background: var(--mttn-purple);
-  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.chip.modified {
+  border-style: dashed;
+  border-color: var(--mttn-purple-border);
 }
 
 .font-upload-box {
   background: var(--surface-inset);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 7px 8px;
-  margin-bottom: 9px;
+  padding: 8px;
+  margin-bottom: 12px;
 }
 
 .font-upload-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 5px;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .font-upload-btn {
@@ -1353,7 +1652,7 @@ input[type="color"]:disabled {
   border: 1px solid var(--warn-border);
   color: var(--warn);
   border-radius: var(--radius-sm);
-  padding: 6px 9px;
+  padding: 8px 10px;
   font-size: 11px;
   margin-bottom: 8px;
 }
@@ -1362,8 +1661,8 @@ input[type="color"]:disabled {
   background: var(--surface-inset);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 7px 8px;
-  margin-bottom: 9px;
+  padding: 8px;
+  margin-bottom: 8px;
 }
 
 .anim-section .field:last-child {
@@ -1374,11 +1673,11 @@ input[type="color"]:disabled {
 .export-main {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
+  gap: 8px;
 }
 
 .export-main {
-  margin-bottom: 4px;
+  margin-bottom: 8px;
 }
 
 /* ==========================================================================
@@ -1389,28 +1688,25 @@ input[type="color"]:disabled {
   text-align: center;
   color: var(--muted);
   border: 1px dashed var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
 }
 
-/* z-index 999 keeps it above page content; an open modal <dialog> lives in
-   the top layer and still covers it. */
 .toast {
   position: fixed;
-  right: 18px;
-  bottom: 18px;
+  right: 16px;
+  bottom: 16px;
   background: var(--surface-elevated);
-  border: 1px solid var(--mttn-purple);
+  border: 1px solid var(--border-control);
+  border-left: 2px solid var(--mttn-purple);
   color: var(--text);
-  padding: 9px 14px;
-  border-radius: var(--radius);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   max-width: 380px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
   z-index: 999;
 }
 
-/* Visibility utility toggled from app.js; !important beats any component
-   display rule. */
 .hidden {
   display: none !important;
 }
@@ -1419,7 +1715,6 @@ input[type="color"]:disabled {
    STYLE CARD: PRESET STATUS, SECTIONS, COLOR + OPACITY ROWS
    ========================================================================== */
 
-/* Screen-reader-only text (standard clip pattern). */
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -1432,15 +1727,14 @@ input[type="color"]:disabled {
   border: 0;
 }
 
-/* flex-wrap lets the reset/save links wrap under the status text. */
 .preset-status {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 18px;
-  margin: -4px 0 10px;
+  min-height: 20px;
+  margin: -4px 0 12px;
 }
 
 .preset-status .hint {
@@ -1455,43 +1749,49 @@ input[type="color"]:disabled {
   padding: 0;
   font: inherit;
   font-size: 11px;
-  font-weight: 600;
-  color: var(--mttn-purple);
+  font-weight: 500;
+  color: var(--mttn-purple-control);
   cursor: pointer;
+}
+
+:root[data-theme="light"] .link-btn,
+:root:has(> head > meta[name="color-scheme"][content="light"]) .link-btn {
+  color: var(--mttn-purple-deep);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not(:has(> head > meta[name="color-scheme"][content="dark"]))
+    .link-btn {
+    color: var(--mttn-purple-deep);
+  }
 }
 
 .link-btn:hover {
   text-decoration: underline;
 }
 
-.chip.modified {
-  background: var(--mttn-purple-subtle);
-  color: var(--text);
-  border-style: dashed;
-}
-
 .range-val {
   float: right;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
 }
 
 .style-section {
   border-top: 1px solid var(--border);
-  padding-top: 8px;
-  margin-top: 6px;
+  padding-top: 10px;
+  margin-top: 10px;
 }
 
-/* Custom disclosure chevron (::before) replaces the native marker. */
 .style-section > summary {
   cursor: pointer;
   list-style: none;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-secondary);
   padding: 2px 0 8px;
   user-select: none;
@@ -1508,34 +1808,33 @@ input[type="color"]:disabled {
   border-right: 1.5px solid currentColor;
   border-bottom: 1.5px solid currentColor;
   transform: rotate(-45deg);
-  transition: transform 0.15s ease;
+  transition: transform 150ms var(--ease);
 }
 
 .style-section[open] > summary::before {
   transform: rotate(45deg);
 }
 
-/* Columns: label 74px | color 34px | opacity slider | readout 62px. */
 .color-grid-head,
 .color-row {
   display: grid;
-  grid-template-columns: 74px 34px 1fr 62px;
+  grid-template-columns: 72px 32px 1fr 60px;
   align-items: center;
   gap: 8px;
 }
 
 .color-grid-head {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .color-row {
-  margin-bottom: 7px;
+  margin-bottom: 8px;
 }
 
 .color-row-label {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-secondary);
   margin: 0;
 }
@@ -1543,47 +1842,53 @@ input[type="color"]:disabled {
 .check-inline {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   cursor: pointer;
 }
 
+.check-inline input[type="checkbox"] {
+  margin: 0;
+}
+
 .color-row input[type="color"] {
-  width: 34px;
+  width: 32px;
   height: 24px;
   padding: 2px;
   cursor: pointer;
 }
 
 .color-placeholder {
-  width: 34px;
+  width: 32px;
 }
 
 .color-row.is-disabled .alpha-val,
 .color-row.is-disabled input[type="color"]:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
 }
 
 input:disabled {
   cursor: not-allowed;
 }
 
-/* 82px = 74px label column + 8px gap, aligned with the color rows. */
 .field-indent {
-  padding-left: 82px;
+  padding-left: 80px;
 }
 
 .alpha-val {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 5px;
+  gap: 4px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
 }
 
-/* Checkerboard: reveals the real transparency of the color. Also a monitor
-   test background (with larger squares, see .stage-bg-checker below). */
+.alpha-num {
+  font-variant-numeric: tabular-nums;
+}
+
 .alpha-chip,
 .bg-checker,
 .preview-stage.stage-bg-checker {
@@ -1605,13 +1910,12 @@ input:disabled {
   position: relative;
   width: 14px;
   height: 14px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border-control);
   overflow: hidden;
   flex-shrink: 0;
 }
 
-/* Color layer over the checkerboard; app.js sets its rgba() background. */
 .alpha-chip i {
   position: absolute;
   inset: 0;
@@ -1624,7 +1928,7 @@ input:disabled {
 .preview-tools {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .stage-bg-toggle {
@@ -1637,9 +1941,9 @@ input:disabled {
 }
 
 .bg-swatch {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border-control);
   cursor: pointer;
   padding: 0;
@@ -1660,9 +1964,8 @@ input:disabled {
   background: #e8e8ec;
 }
 
-/* Monitor test backgrounds (classes set by setStageBg in app.js). */
 .preview-stage.stage-bg-black {
-  background: #0a0a0c;
+  background: #09090b;
 }
 .preview-stage.stage-bg-gray {
   background: #6b6b73;
@@ -1694,7 +1997,8 @@ input:disabled {
 
 .custom-chip-wrap .chip {
   flex: 1;
-  padding-right: 22px;
+  justify-content: flex-start;
+  padding-right: 24px;
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1703,17 +2007,18 @@ input:disabled {
 
 .chip-delete {
   position: absolute;
-  right: 3px;
+  right: 4px;
   top: 50%;
   transform: translateY(-50%);
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border: none;
-  border-radius: 50%;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
 }
 
@@ -1724,15 +2029,15 @@ input:disabled {
 
 .preset-actions {
   display: inline-flex;
-  gap: 10px;
+  gap: 12px;
   flex-shrink: 0;
   white-space: nowrap;
 }
 
 .preset-save-form {
   display: flex;
-  gap: 6px;
-  margin: -4px 0 10px;
+  gap: 8px;
+  margin: -4px 0 12px;
 }
 
 .preset-save-form input {
@@ -1741,7 +2046,7 @@ input:disabled {
 
 .contrast-badge {
   margin: 0 0 8px;
-  padding: 4px 8px;
+  padding: 6px 8px;
   border-radius: var(--radius-sm);
   font-size: 11px;
   border: 1px solid var(--ok-border);
@@ -1749,7 +2054,6 @@ input:disabled {
   color: var(--ok);
 }
 
-/* Hidden when there is nothing to report (data-level is set by app.js). */
 .contrast-badge:empty,
 .contrast-badge[data-level="ok"] {
   display: none;
@@ -1770,13 +2074,17 @@ input:disabled {
 /* ==========================================================================
    MACHINE PERFORMANCE («Esta Mac» native modal dialog)
    ========================================================================== */
-/* Card 2 summary line: mode pill + effective settings (ellipsized). */
 .perf-summary {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
-  margin: -2px 0 8px;
+  margin: 0 0 12px;
+}
+
+#perf-mode-pill {
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .perf-summary .hint {
@@ -1794,24 +2102,21 @@ input:disabled {
   padding: 0;
   background: var(--card);
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-dialog);
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
 }
 
-/* Keeps scrolling inside the dialog or over the backdrop from moving the page. */
 .machine-dialog:modal {
   overscroll-behavior: contain;
 }
 
 .machine-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.55);
   overflow: hidden;
   overscroll-behavior: contain;
 }
 
-/* Header and footer stay pinned while the dialog body scrolls; z-index 1
-   keeps them above the scrolling sections. */
 .machine-head,
 .machine-foot {
   display: flex;
@@ -1831,7 +2136,8 @@ input:disabled {
 
 .machine-head h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .machine-foot {
@@ -1840,7 +2146,7 @@ input:disabled {
 }
 
 .machine-section {
-  padding: 12px 16px 4px;
+  padding: 16px;
 }
 
 .machine-section + .machine-section {
@@ -1848,19 +2154,19 @@ input:disabled {
 }
 
 .machine-section h3 {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-weight: 500;
+  letter-spacing: 0;
   color: var(--muted);
 }
 
 .machine-hw {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 4px 12px;
-  margin: 0 0 8px;
-  font-size: 12.5px;
+  gap: 4px 16px;
+  margin: 0;
+  font-size: 12px;
 }
 
 .machine-hw dt {
@@ -1869,23 +2175,27 @@ input:disabled {
 
 .machine-hw dd {
   margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .mode-cards {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .mode-card {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 2px 8px;
-  padding: 8px 10px;
+  gap: 4px 8px;
+  padding: 10px 12px;
   border: 1px solid var(--border-control);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   cursor: pointer;
+  transition:
+    border-color 150ms var(--ease),
+    background-color 150ms var(--ease);
 }
 
 .mode-card input {
@@ -1894,10 +2204,9 @@ input:disabled {
   accent-color: var(--mttn-purple);
 }
 
-/* The selected profile card highlights from the radio state (no JS). */
 .mode-card:has(input:checked) {
   border-color: var(--mttn-purple);
-  background: color-mix(in srgb, var(--mttn-purple) 12%, transparent);
+  background: color-mix(in oklab, var(--mttn-purple) 10%, transparent);
 }
 
 .mode-card:has(input:focus-visible) {
@@ -1906,17 +2215,19 @@ input:disabled {
 }
 
 .mode-card-title {
-  font-weight: 600;
-  font-size: 12.5px;
+  font-weight: 500;
+  font-size: 12px;
 }
 
-.mode-card-title em {
+.mode-card-tag {
   font-weight: 400;
+  font-size: 11px;
   color: var(--muted);
+  margin-left: 4px;
 }
 
 .mode-card-desc {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--text-secondary);
 }
 
@@ -1924,33 +2235,33 @@ input:disabled {
   display: grid;
   grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1.6fr);
   gap: 8px;
+  margin-bottom: 8px;
 }
 
 .bench-history {
   list-style: none;
   margin: 8px 0 0;
   padding: 0;
-  font-size: 11.5px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
 }
 
 .bench-history li + li {
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
-/* Native file input hidden inside a styled label button. */
 .file-btn input {
   display: none;
 }
 
 .mono-path {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   overflow-wrap: anywhere;
   text-align: right;
 }
 
-/* Small windows: single-column dialog grids. */
 @media (max-width: 560px) {
   .mode-cards,
   .machine-grid {

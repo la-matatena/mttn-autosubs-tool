@@ -89,6 +89,7 @@ REQUIRED_BUNDLE_ENTRIES = (
     f"{ARCHIVE_PREFIX}/ui/styles.css",
     f"{ARCHIVE_PREFIX}/ui/app.js",
     f"{ARCHIVE_PREFIX}/ui/app_helpers.js",
+    f"{ARCHIVE_PREFIX}/ui/demo-stage.webp",
     f"{ARCHIVE_PREFIX}/assets/AppIcon.icns",
     f"{ARCHIVE_PREFIX}/assets/icon.png",
     f"{ARCHIVE_PREFIX}/assets/icon.svg",
@@ -184,6 +185,7 @@ _ALLOWED_EXTENSIONS = (
     ".sh",
     ".command",
     ".png",
+    ".webp",
     ".icns",
     ".svg",
 )

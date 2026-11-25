@@ -122,6 +122,10 @@
     userChoseMode: false,
     // True when the session media is video (<video> player, burn-in).
     isVideo: false,
+    // True when the active session is the built-in Spanish demo.
+    demoMode: false,
+    // Shows the demo tabletop backdrop until the user selects a test swatch.
+    showDemoScene: false,
     // Server says the media can be rendered as a subtitled MP4.
     canBurninVideo: false,
     // Server media revision (name:mtime:size); a change forces the
@@ -544,6 +548,23 @@
       out.querySelector(".alpha-chip i").style.background = hexToRgba(color, pct / 100);
       $(alphaId).setAttribute("aria-valuetext", `${pct} por ciento`);
     });
+    syncAllRangeSliders();
+  }
+
+  /**
+   * Syncs a native <input type="range"> value and bounds into CSS custom
+   * properties so WebKit/Blink can paint the filled portion of the track.
+   * @param {!HTMLInputElement} el Range input element.
+   */
+  function syncRangeSlider(el) {
+    el.style.setProperty("--attr-min", el.min || "0");
+    el.style.setProperty("--attr-max", el.max || "100");
+    el.style.setProperty("--control-value", el.value);
+  }
+
+  /** Syncs CSS track-fill variables for every range slider in the document. */
+  function syncAllRangeSliders() {
+    document.querySelectorAll('input[type="range"]').forEach(syncRangeSlider);
   }
 
   /**
@@ -632,7 +653,10 @@
       del.className = "chip-delete";
       del.dataset.deletePreset = id;
       del.setAttribute("aria-label", `Borrar estilo ${map[id].preset_name || id}`);
-      del.textContent = "×";
+      del.innerHTML =
+        '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" ' +
+        'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg>';
       wrap.append(chip, del);
       box.appendChild(wrap);
     });
@@ -1000,6 +1024,7 @@
     $("anim-params-row").classList.toggle("hidden", !active);
     $("st-anim-hold-val").textContent = String($("st-anim-hold").value || 3);
     $("st-anim-jitter-val").textContent = Number($("st-anim-jitter").value || 0.15).toFixed(2);
+    syncAllRangeSliders();
 
     const hintEl = $("anim-hint");
     const pack = state.selectedPack;
@@ -1258,7 +1283,7 @@
       if (!m) return;
       const opt = document.createElement("option");
       opt.value = id;
-      opt.textContent = `${m.installed ? "✓ " : "↓ "}${m.label} (${m.size_mb} MB)`;
+      opt.textContent = `${m.label} (${m.size_mb} MB)${m.installed ? " · instalado" : ""}`;
       sel.appendChild(opt);
     });
     if (prev && env.models[prev]) sel.value = prev;
@@ -1296,12 +1321,15 @@
     state.peaks = session.peaks || [];
     state.durationMs = session.duration_ms || 0;
     state.isVideo = Boolean(session.is_video);
+    state.demoMode = Boolean(session.demo_mode);
+    state.showDemoScene = state.demoMode && !state.isVideo;
     state.canBurninVideo = Boolean(session.can_burnin_video);
     $("media-name-badge").textContent = session.media_name || "Sin audio";
 
     const audio = $("audio-player");
     const video = $("video-player");
     video.classList.toggle("hidden", !state.isVideo);
+    syncDemoStageVisibility();
     if ($("btn-burn-video")) {
       $("btn-burn-video").title = state.canBurninVideo
         ? "Exportar MP4 con subtítulos incrustados"
@@ -1360,6 +1388,14 @@
     renderCueList();
     drawWaveform(previewMs);
     renderPreviewAtMs(previewMs);
+  }
+
+  /** Shows the demo frame image only in Demo ES mode when no video or test swatch overrides it. */
+  function syncDemoStageVisibility() {
+    const demoImg = $("demo-stage-img");
+    if (demoImg) {
+      demoImg.classList.toggle("hidden", !(state.showDemoScene && !state.isVideo));
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1468,7 +1504,7 @@
       if (!m) return;
       const opt = document.createElement("option");
       opt.value = id;
-      opt.textContent = `${m.installed ? "✓ " : "↓ "}${m.label}${id === recommendedId ? " · recomendado" : ""}`;
+      opt.textContent = `${m.label}${m.installed ? " (instalado)" : ""}${id === recommendedId ? " · recomendado" : ""}`;
       sel.appendChild(opt);
     });
     if (prev) sel.value = prev;
@@ -1555,7 +1591,7 @@
     const radio = document.querySelector(`input[name="perf-mode"][value="${mode}"]`);
     if (radio) radio.checked = true;
     $("perf-mode-pill").textContent = PERF_MODE_LABELS[mode] || mode;
-    $("perf-mode-pill").className = "pill " + (mode === "auto" ? "pill-info" : "pill-neutral");
+    $("perf-mode-pill").className = "pill pill-neutral";
     // Summary of what will be applied; the controls live in the «Esta Mac» dialog.
     $("hw-profile-note").textContent = [
       `${eff.threads} hilos`,
@@ -2145,12 +2181,22 @@
       cpsBadge.textContent = `${Number(cue.cps || 0).toFixed(1)} CPS`;
       actions.appendChild(cpsBadge);
 
-      const btnPlayCue = makeMiniBtn("▶", "Escuchar este subtítulo", () =>
-        seekAndPlay(cue.start_ms, cue.end_ms)
+      const btnPlayCue = makeMiniIconBtn(
+        '<polygon points="4.5 3 12.5 8 4.5 13 4.5 3"/>',
+        "Escuchar este subtítulo",
+        () => seekAndPlay(cue.start_ms, cue.end_ms)
       );
-      const btnSplit = makeMiniBtn("÷", "Dividir en dos subtítulos", () => splitCue(idx));
-      const btnMerge = makeMiniBtn("+Unir", "Unir con el siguiente", () => mergeCue(idx));
-      const btnDel = makeMiniBtn("×", "Eliminar subtítulo", () => deleteCue(idx));
+      const btnSplit = makeMiniIconBtn(
+        '<line x1="8" y1="2.5" x2="8" y2="13.5"/><path d="M5 5.5L2.5 8 5 10.5M11 5.5L13.5 8 11 10.5"/>',
+        "Dividir en dos subtítulos",
+        () => splitCue(idx)
+      );
+      const btnMerge = makeMiniBtn("Unir", "Unir con el siguiente", () => mergeCue(idx));
+      const btnDel = makeMiniIconBtn(
+        '<line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/>',
+        "Eliminar subtítulo",
+        () => deleteCue(idx)
+      );
 
       // Tools dimmed until the row is hovered or focused (still in the tab order).
       const tools = document.createElement("span");
@@ -2217,6 +2263,28 @@
     b.textContent = label;
     b.title = title;
     b.setAttribute("aria-label", title);
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  /**
+   * Creates a small stroke-SVG icon ghost button for cue rows.
+   * @param {string} svgInner Inner SVG paths (16x16 viewBox).
+   * @param {string} title Tooltip and aria-label.
+   * @param {function(!Event)} onClick Click handler.
+   * @return {!HTMLButtonElement}
+   */
+  function makeMiniIconBtn(svgInner, title, onClick) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn btn-ghost btn-sm btn-icon-mini";
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    b.innerHTML =
+      '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      svgInner +
+      "</svg>";
     b.addEventListener("click", onClick);
     return b;
   }
@@ -2837,7 +2905,7 @@
     ];
     const step = steps.find((st) => (st / vr.span) * w >= 70) || 600000;
     offCtx.fillStyle = mutedText;
-    offCtx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
+    offCtx.font = '10px "SF Mono", Menlo, Monaco, Consolas, monospace';
     offCtx.textBaseline = "top";
     for (let t = Math.ceil(vr.start / step) * step; t <= vr.start + vr.span; t += step) {
       const x = Math.round(msToX(t, w, vr));
@@ -2845,13 +2913,17 @@
       offCtx.fillText(formatTick(t, step), x + 3, 2);
     }
 
-    // Cue regions over the waveform
+    // Cue regions over the waveform: neutral except active cue
     state.cues.forEach((cue, idx) => {
       const x1 = msToX(cue.start_ms, w, vr);
       const x2 = msToX(cue.end_ms, w, vr);
       if (x2 < 0 || x1 > w) return;
       offCtx.fillStyle =
-        idx === state.activeCueIndex ? "rgba(131,103,199,0.16)" : "rgba(131,103,199,0.06)";
+        idx === state.activeCueIndex
+          ? "rgba(131,103,199,0.14)"
+          : isLight
+            ? "rgba(24,24,27,0.035)"
+            : "rgba(244,244,246,0.035)";
       offCtx.fillRect(x1, waveTop, Math.max(1, x2 - x1), waveBottom - waveTop);
     });
 
@@ -2871,37 +2943,41 @@
       }
     }
 
-    // Lane of draggable cue blocks
+    // Lane of draggable cue blocks: neutral with hairline border; only active/dragged uses brand purple
+    offCtx.font = "11px -apple-system, BlinkMacSystemFont, sans-serif";
     offCtx.textBaseline = "middle";
     state.cues.forEach((cue, idx) => {
       const x1 = msToX(cue.start_ms, w, vr);
       const x2 = msToX(cue.end_ms, w, vr);
       if (x2 < 0 || x1 > w) return;
       const active = idx === state.activeCueIndex || (state.drag && state.drag.idx === idx);
-      const bw = Math.max(2, x2 - x1 - 1);
-      offCtx.fillStyle = active
-        ? "rgba(131,103,199,0.92)"
+      const bw = Math.max(2, x2 - x1 - 2);
+      offCtx.fillStyle = active ? "#6a4fb3" : isLight ? "#e2e2e8" : "#1e1e23";
+      offCtx.strokeStyle = active
+        ? "rgba(213,199,247,0.45)"
         : isLight
-          ? "rgba(131,103,199,0.35)"
-          : "rgba(131,103,199,0.32)";
+          ? "rgba(24,24,27,0.14)"
+          : "rgba(244,244,246,0.10)";
+      offCtx.lineWidth = 1;
       offCtx.beginPath();
-      if (offCtx.roundRect) offCtx.roundRect(x1 + 0.5, laneTop + 2, bw, WAVE_LANE_H - 4, 4);
-      else offCtx.rect(x1 + 0.5, laneTop + 2, bw, WAVE_LANE_H - 4);
+      if (offCtx.roundRect) offCtx.roundRect(x1 + 1, laneTop + 2.5, bw, WAVE_LANE_H - 5, 4);
+      else offCtx.rect(x1 + 1, laneTop + 2.5, bw, WAVE_LANE_H - 5);
       offCtx.fill();
+      offCtx.stroke();
       if (active && bw > 10) {
         offCtx.fillStyle = "rgba(255,255,255,0.85)";
-        offCtx.fillRect(x1 + 2, laneTop + 8, 2, WAVE_LANE_H - 16);
-        offCtx.fillRect(x2 - 4, laneTop + 8, 2, WAVE_LANE_H - 16);
+        offCtx.fillRect(x1 + 3, laneTop + 8, 2, WAVE_LANE_H - 16);
+        offCtx.fillRect(x2 - 5, laneTop + 8, 2, WAVE_LANE_H - 16);
       }
       if (bw > 34) {
         offCtx.save();
         offCtx.beginPath();
-        offCtx.rect(x1 + 6, laneTop, bw - 12, WAVE_LANE_H);
+        offCtx.rect(x1 + 7, laneTop, bw - 14, WAVE_LANE_H);
         offCtx.clip();
-        offCtx.fillStyle = active ? "#ffffff" : isLight ? "#3f3f46" : "#d4d4d8";
+        offCtx.fillStyle = active ? "#ffffff" : isLight ? "#3f3f46" : "#c8c8d0";
         offCtx.fillText(
           `#${idx + 1} ${(cue.text || "").replace(/\n/g, " ")}`,
-          x1 + 7,
+          x1 + 8,
           laneTop + WAVE_LANE_H / 2
         );
         offCtx.restore();
@@ -3749,8 +3825,18 @@
       if (m.paused) m.play().catch(() => {});
       else m.pause();
     });
-    const onPlay = () => ($("btn-play").textContent = "II Pausar");
-    const onPause = () => ($("btn-play").textContent = "▶ Reproducir");
+    const setPlayBtnState = (playing) => {
+      const btn = $("btn-play");
+      if (!btn) return;
+      const playIcon = btn.querySelector(".icon-play");
+      const pauseIcon = btn.querySelector(".icon-pause");
+      const lbl = btn.querySelector(".btn-label");
+      if (playIcon) playIcon.classList.toggle("hidden", playing);
+      if (pauseIcon) pauseIcon.classList.toggle("hidden", !playing);
+      if (lbl) lbl.textContent = playing ? "Pausar" : "Reproducir";
+    };
+    const onPlay = () => setPlayBtnState(true);
+    const onPause = () => setPlayBtnState(false);
     // Hot path (~4 Hz while playing): time readout, active cue, auto-scroll of a
     // zoomed waveform (not while dragging), preview and waveform.
     const onTimeUpdate = () => {
@@ -3912,7 +3998,11 @@
   /** Monitor background swatches; restores the saved background. */
   function wireStageBackground() {
     document.querySelectorAll("#stage-bg-toggle .bg-swatch").forEach((btn) => {
-      btn.addEventListener("click", () => setStageBg(btn.dataset.bg));
+      btn.addEventListener("click", () => {
+        state.showDemoScene = false;
+        syncDemoStageVisibility();
+        setStageBg(btn.dataset.bg);
+      });
     });
     let savedBg = "black";
     try {
