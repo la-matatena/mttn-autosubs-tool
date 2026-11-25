@@ -108,6 +108,21 @@ En los canales y contenidos de juegos de mesa en español es habitual mezclar t�
 
 ## Instalación en macOS
 
+### Requisitos previos
+
+Necesitas **macOS**, **Python 3.10+** y **[Homebrew](https://brew.sh/es/)** (DaVinci Resolve es opcional).
+
+- **¿Qué es Homebrew?** Es el gestor gratuito de paquetes de código abierto más usado en macOS (funciona como una tienda de utilidades desde la app **Terminal**). Nuestro instalador lo utiliza para descargar e instalar de forma segura el motor local de transcripción (`whisper-cpp`) y el procesador de audio y vídeo (`ffmpeg` y `ffmpeg-full`) sin que tengas que compilar ni buscar archivos manualmente.
+- **Cómo instalar Homebrew (solo una vez en tu Mac):** abre **Terminal** (`⌘ + Espacio` → escribe *Terminal*), pega el comando oficial de [brew.sh](https://brew.sh/es/) y sigue las instrucciones en pantalla:
+
+  ```bash
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  ```
+
+  En Macs con Apple Silicon (`M1`–`M4`), al finalizar Homebrew mostrará dos comandos en pantalla para añadir `brew` a tu `PATH`; ejecútalos antes de continuar.
+
+### Pasos de instalación
+
 El instalador configura automáticamente las herramientas `whisper-cpp`, `ffmpeg` y `ffmpeg-full` (necesario para quemar subtítulos en MP4, porque incluye `libass`) mediante Homebrew, crea el paquete de aplicación nativo `~/Applications/MTTN AutoSubs Tool.app`, instala los scripts Lua y plantillas Fusion para DaVinci Resolve 20, y descarga el modelo predeterminado `ggml-large-v3-turbo-q8_0.bin`:
 
 1. Abre **Terminal** y clona o ingresa a la carpeta del repositorio:

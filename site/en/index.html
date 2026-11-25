@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&family=Space+Grotesk:wght@400;500&display=swap">
-  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="../styles.css?v=3">
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -71,7 +71,7 @@
           <div class="cue-meta">
             <span class="cue-tc">
               <span class="cue-dot" aria-hidden="true"></span>
-              <span>#02 · 00:00:04.22 → 00:00:09.16 · 15.2 CPS</span>
+              <span>#02 · 00:00:04.22 → 00:00:09.16 · <span class="nowrap">15.2 CPS</span></span>
             </span>
             <span class="cue-tags">
               <span>Whisper Large-v3-Turbo Q8_0</span>
@@ -240,16 +240,16 @@
             </div>
             <div class="media-stack">
               <figure class="shot">
-                <img src="../images/autosubs-es-mode-switch.png" width="999" height="116" loading="lazy"
+                <img src="../images/autosubs-es-mode-switch.png" width="999" height="104" loading="lazy"
                      alt="Top bar with the mode switcher: App Independiente and DaVinci Resolve 20 active">
               </figure>
               <div class="media-pair">
                 <figure class="shot">
-                  <img src="../images/autosubs-es-step1-resolve.png" width="696" height="414" loading="lazy"
+                  <img src="../images/autosubs-es-step1-resolve.png" width="608" height="399" loading="lazy"
                        alt="Step 1 Audio de origen on the Timeline de Resolve tab with Exportar audio and Leer buzón buttons">
                 </figure>
                 <figure class="shot">
-                  <img src="../images/autosubs-es-step1-local.png" width="696" height="400" loading="lazy"
+                  <img src="../images/autosubs-es-step1-local.png" width="608" height="374" loading="lazy"
                        alt="Step 1 Audio de origen on the Archivo local tab with drag-and-drop zone for video or audio">
                 </figure>
               </div>
@@ -271,11 +271,11 @@
             </div>
             <div class="media-stack">
               <figure class="shot">
-                <img src="../images/autosubs-es-monitor-waveform.png" width="1564" height="1066" loading="lazy"
+                <img src="../images/autosubs-es-monitor-waveform.png" width="1632" height="1112" loading="lazy"
                      alt="16:9 preview monitor with the active cue, playback and zoom controls, and the waveform with draggable cue blocks">
               </figure>
               <figure class="shot">
-                <img src="../images/autosubs-es-cue-editor.png" width="1564" height="744" loading="lazy"
+                <img src="../images/autosubs-es-cue-editor.png" width="1632" height="1204" loading="lazy"
                      alt="Cue editor with search and replace, in and out times, CPS, and per-cue actions">
               </figure>
             </div>
@@ -295,7 +295,7 @@
                 </ul>
               </div>
               <figure class="shot">
-                <img src="../images/autosubs-es-step3-spanish.png" width="696" height="946" loading="lazy"
+                <img src="../images/autosubs-es-step3-spanish.png" width="608" height="1009" loading="lazy"
                      alt="Step 3 Spanish, domain, and RAE rules with the board games and anglicisms topic, regional accent, custom glossary, and text rules">
               </figure>
             </article>
@@ -313,7 +313,7 @@
                 </ul>
               </div>
               <figure class="shot">
-                <img src="../images/autosubs-es-machine-panel.png" width="1280" height="1549" loading="lazy"
+                <img src="../images/autosubs-es-machine-panel.png" width="1280" height="1784" loading="lazy"
                      alt="Rendimiento de esta Mac panel with detected hardware, Automatic, Safe, Maximum, and Custom profiles, speed test, and portable preferences">
               </figure>
             </article>
@@ -331,7 +331,7 @@
               </ul>
             </div>
             <figure class="shot compact">
-              <img src="../images/autosubs-es-step6-export.png" width="676" height="516" loading="lazy"
+              <img src="../images/autosubs-es-step6-export.png" width="592" height="550" loading="lazy"
                    alt="Step 6 Exportar with .SRT Estándar and Render MP4 visible and Más formatos expanded">
             </figure>
           </div>
@@ -344,24 +344,38 @@
         <div class="section-head">
           <span class="section-index">03 · Installation</span>
           <h2>Get started in minutes</h2>
-          <p>Requires macOS, Python 3.10+, and Homebrew. DaVinci Resolve is optional.</p>
+          <p>Requires macOS, Python 3.10+, and <a href="https://brew.sh/">Homebrew</a>. DaVinci Resolve is optional.</p>
         </div>
+
+        <aside class="prereq" aria-labelledby="homebrew-heading">
+          <div class="prereq-copy">
+            <span class="prereq-label">Prerequisite · macOS</span>
+            <h3 id="homebrew-heading">What is Homebrew and why do you need it?</h3>
+            <p><strong>Homebrew</strong> is a free package manager for macOS (like a command-line app store for open-source tools run inside the <strong>Terminal</strong> app). Our installer uses it to safely fetch the local speech engine (<code>whisper-cpp</code>) and video processor (<code>ffmpeg</code>) for you, without hunting for binaries by hand.</p>
+          </div>
+          <div class="prereq-cmd">
+            <p class="prereq-hint">If you don't have it yet, open <strong>Terminal</strong> (<kbd>⌘</kbd> + Space and type <strong>Terminal</strong>), paste the official command from <a href="https://brew.sh/">brew.sh</a>, and follow the prompts:</p>
+            <pre><code>/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"</code></pre>
+            <p class="prereq-hint">You only install it once on your Mac. On Apple Silicon, run the two lines Terminal prints at the end to activate it.</p>
+          </div>
+        </aside>
+
         <ol class="steps">
           <li>
             <span class="step-num">01</span>
             <h3>Download</h3>
-            <p>Download <code>MTTN_AutoSubs_Tool.zip</code> from <a href="https://github.com/la-matatena/mttn-autosubs-tool/releases/latest">GitHub Releases</a> or clone the repository.</p>
+            <p>Download and unzip <code>MTTN_AutoSubs_Tool.zip</code> from <a href="https://github.com/la-matatena/mttn-autosubs-tool/releases/latest">GitHub Releases</a> (or clone the repository).</p>
           </li>
           <li>
             <span class="step-num">02</span>
             <h3>Install</h3>
-            <p>The installer sets up <code>whisper-cpp</code> and <code>ffmpeg</code> through Homebrew, creates the macOS app, copies the Resolve scripts, and downloads the Spanish model.</p>
+            <p>Open Terminal inside the unzipped folder and run the installer. It uses Homebrew to install <code>whisper-cpp</code> and <code>ffmpeg</code>, builds the macOS app, copies the Resolve scripts, and downloads the Spanish model:</p>
             <pre><code>./install_imac.sh</code></pre>
           </li>
           <li>
             <span class="step-num">03</span>
             <h3>Open the studio</h3>
-            <p>Launch <strong>MTTN AutoSubs Tool</strong> from Applications or transcribe from Terminal:</p>
+            <p>Launch <strong>MTTN AutoSubs Tool</strong> from your Applications folder (like any Mac app) or transcribe from Terminal:</p>
             <pre><code>python3 -B autosubs_server.py \
   --cli video.mp4 --model turbo-q8 \
   --output-srt video.srt</code></pre>

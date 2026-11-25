@@ -1022,6 +1022,52 @@ section.alt {
   }
 }
 
+/* Install prerequisite callout (Homebrew) */
+.prereq {
+  display: grid;
+  gap: 16px 32px;
+  align-items: start;
+  padding: 24px;
+  margin-bottom: 40px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-card);
+}
+
+@media (min-width: 860px) {
+  .prereq {
+    grid-template-columns: 5fr 7fr;
+    align-items: center;
+  }
+}
+
+.prereq-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.prereq-label {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--accent-ink);
+}
+
+.prereq-cmd {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.prereq-cmd pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prereq-hint {
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
 /* Install steps: open architectural columns with top hairline */
 .steps {
   display: grid;
@@ -1184,9 +1230,14 @@ footer a:hover {
 .portrait-duo > *,
 .workflow-export > *,
 .media-pair > *,
+.prereq > *,
 .steps > *,
 .docs-grid > * {
   min-width: 0;
+}
+
+.nowrap {
+  white-space: nowrap;
 }
 
 @media (max-width: 600px) {

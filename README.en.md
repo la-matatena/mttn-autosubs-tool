@@ -106,6 +106,21 @@ Spanish board-game channels mix regional Spanish grammar with English mechanics,
 
 ## Install MTTN AutoSubs Tool on macOS
 
+### Prerequisites
+
+You need **macOS**, **Python 3.10+**, and **[Homebrew](https://brew.sh/)** (DaVinci Resolve is optional).
+
+- **What is Homebrew?** It is the standard free open-source package manager for macOS (like a command-line app store run inside **Terminal**). Our installer relies on it to safely fetch and install the local speech-to-text engine (`whisper-cpp`) and audio/video tools (`ffmpeg` and `ffmpeg-full`) so you do not have to search for or compile binaries by hand.
+- **How to install Homebrew (once per Mac):** open **Terminal** (`⌘ + Space` → type *Terminal*), paste the official command from [brew.sh](https://brew.sh/), and follow the on-screen prompts:
+
+  ```bash
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  ```
+
+  On Apple Silicon Macs (`M1`–`M4`), Homebrew prints two commands at the end to add `brew` to your `PATH`; run them before continuing.
+
+### Installation steps
+
 The installer sets up the `whisper-cpp`, `ffmpeg`, and `ffmpeg-full` packages through Homebrew (`ffmpeg-full` ships `libass`, required for MP4 burn-in), creates the standalone `~/Applications/MTTN AutoSubs Tool.app` macOS application bundle, copies the DaVinci Resolve 20 Lua bridge scripts and Fusion templates, and downloads the default `ggml-large-v3-turbo-q8_0.bin` Spanish model.
 
 1. Open **Terminal** and clone or change to the `mttn-autosubs-tool` directory:
